@@ -1,0 +1,43 @@
+# Mode machine + locomotion backends (module::Locomotion)
+backend: kinematic # kinematic | policy
+
+prepare_blend_time: 1.0 # seconds, cubic blend into the ready pose on ChangeMode(PREPARE)
+
+kinematic:
+  # Standing base height servo target (m). MUST match the model's natural
+  # straight-leg PD standing height (measured: 0.5517 for the vendored
+  # K1_22dof.xml + gains.yaml ready pose, tilt servo on / height servo off).
+  # A lower target (e.g. the 0.53 spawn height from the old Webots world)
+  # makes the servo command a persistent downward root velocity that the
+  # floor cancels every 1 ms step -- a 1 kHz ram whose inertial load (several
+  # g equivalent, coupled through the mass matrix) is strong enough to pin
+  # the (kp=4) head joints against their limits and defeat RotateHead
+  # tracking.
+  z0: 0.5517
+  servo_gain: 20.0 # 1/s, height + upright root servo gain
+  animate_steps: true # procedural stepping animation while moving
+  step_phase_gain: 6.0 # rad of gait phase per metre of commanded travel (phase ∝ speed)
+  step_height: 0.03 # m, approximate foot clearance target for the stepping animation
+
+policy:
+  # 47-obs / 12-action (legs only) + gait clock — see training/OBS_ACTION_CONTRACT.md.
+  # A trained policy MUST use the same action_scale + gait_frequency it sees here.
+  path: "" # .onnx file; required when backend: policy (build with -DK1_WITH_ONNX=ON)
+  action_scale: 0.5 # leg target = ready_pose + action_scale * action
+  inference_divisor: 20 # physics steps per inference (1 kHz / 20 = 50 Hz)
+  gait_frequency: 1.5 # Hz, gait-clock rate while moving
+  stand_threshold: 0.05 # command speed (m/s+rad/s) below which the robot stands (gait → 0)
+
+getup: # GettingUp transient (GetUpRequest/GetUpWithMode, any mode -> target mode)
+  duration: 2.0 # seconds, scripted joint interpolation (current -> crouch -> ready)
+
+liedown: # LyingDown transient (LieDownRequest -> DAMPING)
+  duration: 1.5 # seconds, scripted joint interpolation toward the lying_front keyframe
+
+kick: # Kicking transient (VisualKickRequest, only from WALKING/SOCCER)
+  duration: 0.5 # seconds, scripted single-leg swing; root held via the kinematic servo
+
+fall:
+  falling_tilt: 0.35 # rad — tilt beyond this (with |gyro| > falling_gyro) => IS_FALLING
+  fallen_tilt: 1.0 # rad — tilt beyond this => HAS_FALLEN
+  falling_gyro: 1.0 # rad/s — |gyro| threshold paired with falling_tilt for IS_FALLING

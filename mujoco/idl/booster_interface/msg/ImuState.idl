@@ -1,0 +1,17 @@
+// Clean-room re-implementation of the Booster SDK wire type registered as
+// booster_interface::msg::dds_::ImuState_. Field layout verified against
+// include/booster/idl/b1/ImuState.h (fastddsgen-generated header) in the pinned
+// SDK commit 324946e7 — see module/SdkBridge/PROTOCOL.md. Do not reorder fields:
+// declaration order is CDR wire order.
+
+module booster_interface {
+    module msg {
+        module dds_ {
+            struct ImuState_ {
+                float rpy[3];
+                float gyro[3];
+                float acc[3];
+            };
+        };
+    };
+};

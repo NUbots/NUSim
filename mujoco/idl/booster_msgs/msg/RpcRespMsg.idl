@@ -1,0 +1,15 @@
+// booster_msgs::msg::dds_::RpcRespMsg_ — see PROTOCOL.md.
+// Field layout verified against include/booster/idl/rpc/RpcRespMsg.h.
+// header/body are JSON-encoded strings (see PROTOCOL.md §3 for the schemas).
+
+module booster_msgs {
+    module msg {
+        module dds_ {
+            struct RpcRespMsg_ {
+                string uuid;
+                string header;
+                string body;
+            };
+        };
+    };
+};

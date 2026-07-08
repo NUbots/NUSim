@@ -1,0 +1,15 @@
+// booster_interface::msg::dds_::BatteryState_ — see PROTOCOL.md.
+// Field layout verified against include/booster/idl/b1/BatteryState.h.
+
+module booster_interface {
+    module msg {
+        module dds_ {
+            struct BatteryState_ {
+                float voltage;
+                float current;
+                float soc;
+                float average_voltage;
+            };
+        };
+    };
+};

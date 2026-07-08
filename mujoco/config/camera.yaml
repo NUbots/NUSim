@@ -1,0 +1,29 @@
+# Head camera offscreen render -> shared-memory bridge (module::Camera)
+#
+# Renders the MJCF "head" camera (models/k1/K1_22dof.xml, mounted on the
+# Head_2 body) offscreen at width x height @ fps and publishes rgb8 frames
+# into a Boost.Interprocess shared-memory segment matching NUbots'
+# input::K1Camera SharedImageHeader byte-for-byte. `segment` must match the
+# corresponding entry's `segment:` in NUbots_K1's
+# module/input/K1Camera/data/config/K1Camera.yaml (default below matches that
+# file's default: _boostercamera_head_rgb).
+#
+# Lens intrinsics (focal_length/fov/centre/k1/k2) are NOT configured here --
+# they're derived at runtime from the MJCF camera's fovy + width/height below
+# (MuJoCo is an ideal pinhole: the principal point is always the image centre
+# and there is no distortion model, so centre_x/centre_y/k1/k2 are always 0).
+# See module/Camera/src/Camera.cpp.
+
+segment: _boostercamera_head_rgb
+
+# rgb8, so the segment carries width*height*3 pixel bytes after the header --
+# 640x480 (921600 bytes) stays well under K1Camera's 2 MiB MAX_IMAGE_BYTES and
+# matches the MuJoCo default offscreen buffer size (models/k1/K1_22dof.xml and
+# the scene files don't override <visual><global offwidth/offheight/>).
+width: 640
+height: 480
+fps: 30
+
+# Name of the <camera> element the model attaches to the head (see
+# models/k1/K1_22dof.xml's Head_2 body).
+mjcf_camera: head

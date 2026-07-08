@@ -1,0 +1,14 @@
+// booster_interface::msg::dds_::Odometer_ — see PROTOCOL.md.
+// Field layout verified against include/booster/idl/b1/Odometer.h.
+
+module booster_interface {
+    module msg {
+        module dds_ {
+            struct Odometer_ {
+                float x;
+                float y;
+                float theta;
+            };
+        };
+    };
+};

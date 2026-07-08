@@ -1,0 +1,20 @@
+// booster_interface::msg::dds_::LowCmd_ — see PROTOCOL.md.
+// Field layout verified against include/booster/idl/b1/LowCmd.h.
+
+#include "MotorCmd.idl"
+
+module booster_interface {
+    module msg {
+        module dds_ {
+            enum CmdType_ {
+                PARALLEL,
+                SERIAL
+            };
+
+            struct LowCmd_ {
+                CmdType_ cmd_type;
+                sequence<booster_interface::msg::dds_::MotorCmd_> motor_cmd;
+            };
+        };
+    };
+};

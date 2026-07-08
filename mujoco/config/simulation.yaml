@@ -1,0 +1,6 @@
+# Physics / stepping configuration (module::Simulation)
+model: models/k1/k1_scene_robocup.xml # MJCF scene, relative to mujoco/
+
+real_time_factor: 1.0 # 0 = free-run (tests/training)
+state_publish_divisor: 20 # physics steps per SimStateUpdate (1 kHz / 20 = 50 Hz LowState)
+resync_threshold: 0.05 # seconds behind schedule before the pacing deadline resyncs

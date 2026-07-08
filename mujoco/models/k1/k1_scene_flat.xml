@@ -1,0 +1,31 @@
+<!--
+  Minimal flat-floor scene: the K1 on an empty plane, no field or ball.
+  Use this (not K1_22dof.xml directly) when you want just the robot:
+  K1_22dof.xml is the robot *component* — standalone it has no floor and no
+  lights, so the robot free-falls out of view and the viewer shows black.
+
+    K1_MODEL=mujoco/models/k1/k1_scene_flat.xml scripts/k1/run_mujoco.sh
+-->
+<mujoco model="K1 flat">
+  <include file="K1_22dof.xml"/>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.35 0.55 0.75" rgb2="0 0 0" width="512" height="512"/>
+    <texture name="floor_tex" type="2d" builtin="checker" rgb1="0.22 0.24 0.28" rgb2="0.18 0.20 0.24"
+             width="300" height="300" mark="edge" markrgb="0.3 0.32 0.36"/>
+    <material name="floor_mat" texture="floor_tex" texrepeat="10 10" texuniform="true" reflectance="0.1"/>
+  </asset>
+
+  <visual>
+    <headlight ambient="0.35 0.35 0.35" diffuse="0.5 0.5 0.5" specular="0.2 0.2 0.2"/>
+  </visual>
+
+  <worldbody>
+    <light name="sun1" directional="true" pos="3 2 6" dir="-0.4 -0.3 -1" diffuse="0.7 0.7 0.65"
+           specular="0.2 0.2 0.2" castshadow="true"/>
+    <light name="sun2" directional="true" pos="-3 -2 6" dir="0.3 0.2 -1" diffuse="0.35 0.35 0.35"
+           specular="0.05 0.05 0.05" castshadow="false"/>
+    <geom name="floor" type="plane" pos="0 0 0" size="5 5 0.1" material="floor_mat" condim="3"
+          friction="0.8 0.02 0.001"/>
+  </worldbody>
+</mujoco>

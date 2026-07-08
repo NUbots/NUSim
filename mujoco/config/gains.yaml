@@ -1,0 +1,25 @@
+# Per-joint PD gains and ready pose, JointIndexK1 order:
+#   [head_yaw, head_pitch,
+#    l_shoulder_pitch, l_shoulder_roll, l_elbow_pitch, l_elbow_yaw,
+#    r_shoulder_pitch, r_shoulder_roll, r_elbow_pitch, r_elbow_yaw,
+#    l_hip_pitch, l_hip_roll, l_hip_yaw, l_knee, l_ankle_pitch, l_ankle_roll,
+#    r_hip_pitch, r_hip_roll, r_hip_yaw, r_knee, r_ankle_pitch, r_ankle_roll]
+# Seeded from Booster's official K1 deploy config
+# (BoosterRobotics/booster_deploy booster_deploy/robots/booster.py K1_CFG), with the ankle
+# pitch/roll kp/kd (indices 14,15,20,21) raised from the seed 30/2 to 150/8.
+#
+# Why: those seed values are tuned for the real robot's mck, which runs active CoM/ZMP
+# balance on top of the joint servos. module::Simulation's PD-fallback controller (used
+# whenever no StepController is attached, e.g. test_pd_stand) is pure per-joint position
+# PD with no balance loop, so standing reduces to a single inverted pendulum pivoting at
+# the ankles: linear stability needs ankle stiffness (summed over both legs) to exceed
+# m*g*h ~= 19.7kg * 9.81 * 0.43m (CoM height above the ankles at the ready pose) ~= 83
+# N*m/rad. At kp=30 (60 total) this is unstable — verified by simulation: the robot tips
+# over and falls within ~2s. At kp=150 (300 total) it holds the ready pose indefinitely
+# (verified stable 60s, tilt <0.1 deg) and stays within the actuator's forcerange (20 N*m)
+# for all but large disturbances. Hip/knee gains are untouched (not the limiting mode here).
+kp: [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 80, 80, 80, 80, 150, 150, 80, 80, 80, 80, 150, 150]
+kd: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 8, 8, 2, 2, 2, 2, 8, 8]
+
+# Standing pose: arms tucked (shoulder roll -/+1.3 rad), legs straight.
+ready_pose: [0, 0, 0, -1.3, 0, 0, 0, 1.3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]

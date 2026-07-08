@@ -1,0 +1,55 @@
+# GameController-aware sim-side supervisor (module::Supervisor). Listens to
+# the RoboCup GameController UDP broadcast and places MuJoCo bodies per game
+# phase, mirroring the Supervisor role Webots used to provide. NUbots hears
+# the GameController directly and independently over its own socket — this
+# is a no-op (idle, no errors) whenever no GameController is on the network.
+
+# Default OFF: when NUbots runs on the same host (--network host) it binds the
+# GameController port 3838 itself; a second binder here steals it and breaks
+# NUbots' GameController ("Unable to bind the UDP socket: Address already in use").
+# Enable only when running the sim STANDALONE (no NUbots GameController on host).
+enabled: false
+gc_port: 3838 # RoboCup GameController broadcast port (protocol version 20)
+
+# Optional extra ball-centre resets beyond the core kickoff rule (entering
+# READY, or entering PLAYING — see SupervisorLogic::process for why those two
+# alone already cover the SET->PLAYING kickoff whistle).
+reset_ball_on:
+  finished: true # end of a half/game
+  goal: true # either team's score increments
+  half_change: true # first_half flag flips
+
+# Field geometry reference (models/k1/k1_scene_robocup.xml): playing area
+# 9x6 m centred on the origin (touchlines y=+-3.0, goal lines x=+-4.5),
+# floor plane extends to +-5.5 x +-4.0 (the 1 m border), centre circle
+# radius 0.75 m.
+ball:
+  enabled: true
+  body: ball
+  geom: ball
+  x: 0.0
+  y: 0.0
+  z: -1.0 # < 0 => rest exactly on the floor at the geom's own radius
+
+# One entry per managed robot body. team_id/team_index pick which of the
+# GameController packet's two Team entries governs this robot (team_id >= 0
+# matches Team::team_id; otherwise team_index positionally picks packet slot
+# 0 or 1 — the default below assumes a lone robot is always the first team in
+# the packet, which is all local/single-robot testing needs). player_id is
+# 1-based, RoboCup convention.
+robots:
+  - body: Trunk # K1_22dof.xml's root body (freejoint "root")
+    team_id: -1
+    team_index: 0
+    player_id: 1
+    # Own-half / kickoff spawn: k1_scene_robocup.xml's "kickoff" keyframe
+    # (red K1 at the old Webots world's translation -2.71 0 0.53, facing +x
+    # toward the ball and the +x goal; z retuned to 0.555 like the "ready"
+    # keyframe so it doesn't spawn interpenetrating the floor).
+    home_pose: {x: -2.71, y: 0.0, z: 0.555, yaw: 0.0}
+    # Side line, just outside the y=3.0 touchline but still on the modelled
+    # floor (which extends to y=4.0) — an approximate penalty spot; RoboCup's
+    # exact per-player spacing rules aren't implemented, this is a single
+    # configurable spot (see the task brief: "make it general over a
+    # configurable list of body names", not exact rule fidelity).
+    penalty_pose: {x: 2.0, y: 3.5, z: 0.555, yaw: 0.0}

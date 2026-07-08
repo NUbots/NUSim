@@ -1,0 +1,11 @@
+# Full soccer simulation: physics + DDS bridge + locomotion + head camera +
+# GameController supervisor + viewer. ConsoleLog first so it captures startup logs.
+k1sim_role(
+    ConsoleLog
+    Simulation
+    SdkBridge
+    Locomotion
+    Camera
+    Supervisor
+    Viewer
+)

@@ -1,0 +1,19 @@
+// booster_interface::msg::dds_::MotorState_ — see PROTOCOL.md.
+// Field layout verified against include/booster/idl/b1/MotorState.h.
+
+module booster_interface {
+    module msg {
+        module dds_ {
+            struct MotorState_ {
+                octet mode;
+                float q;
+                float dq;
+                float ddq;
+                float tau_est;
+                octet temperature;
+                unsigned long lost;
+                unsigned long reserve[2];
+            };
+        };
+    };
+};

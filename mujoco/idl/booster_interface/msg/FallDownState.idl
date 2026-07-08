@@ -1,0 +1,20 @@
+// booster_interface::msg::dds_::FallDownState_ — see PROTOCOL.md.
+// Field layout verified against include/booster/idl/b1/FallDownState.h.
+
+module booster_interface {
+    module msg {
+        module dds_ {
+            enum FallDownStateType_ {
+                IS_READY,
+                IS_FALLING,
+                HAS_FALLEN,
+                IS_GETTING_UP
+            };
+
+            struct FallDownState_ {
+                FallDownStateType_ fall_down_state;
+                boolean is_recovery_available;
+            };
+        };
+    };
+};

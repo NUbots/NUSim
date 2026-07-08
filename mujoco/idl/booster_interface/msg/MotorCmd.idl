@@ -1,0 +1,18 @@
+// booster_interface::msg::dds_::MotorCmd_ — see PROTOCOL.md.
+// Field layout verified against include/booster/idl/b1/MotorCmd.h.
+
+module booster_interface {
+    module msg {
+        module dds_ {
+            struct MotorCmd_ {
+                octet mode;
+                float q;
+                float dq;
+                float tau;
+                float kp;
+                float kd;
+                float weight;
+            };
+        };
+    };
+};

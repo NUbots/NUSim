@@ -1,0 +1,2 @@
+add_library(k1sim_module_consolelog STATIC src/ConsoleLog.cpp)
+target_link_libraries(k1sim_module_consolelog PUBLIC k1sim_shared)

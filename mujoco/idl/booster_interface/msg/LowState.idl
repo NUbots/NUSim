@@ -1,0 +1,17 @@
+// booster_interface::msg::dds_::LowState_ — see PROTOCOL.md.
+// Field layout verified against include/booster/idl/b1/LowState.h.
+
+#include "ImuState.idl"
+#include "MotorState.idl"
+
+module booster_interface {
+    module msg {
+        module dds_ {
+            struct LowState_ {
+                booster_interface::msg::dds_::ImuState_ imu_state;
+                sequence<booster_interface::msg::dds_::MotorState_> motor_state_parallel;
+                sequence<booster_interface::msg::dds_::MotorState_> motor_state_serial;
+            };
+        };
+    };
+};

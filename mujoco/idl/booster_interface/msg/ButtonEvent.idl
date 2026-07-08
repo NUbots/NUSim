@@ -1,0 +1,28 @@
+// booster_interface::msg::dds_::ButtonEventMsg_ — see PROTOCOL.md.
+// Field layout verified against include/booster/idl/b1/ButtonEvent.h. Field order
+// is button (long) then event (enum) — matches the generated header's private
+// member order, NOT the (stale) robocup_demo_nubots ROS2 .msg mirror, which lists
+// event first and uses an ambiguous overlapping-int8-constants encoding. See
+// PROTOCOL.md §1 for the full discrepancy note.
+
+module booster_interface {
+    module msg {
+        module dds_ {
+            enum ButtonEventType_ {
+                PRESS_DOWN,
+                PRESS_UP,
+                SINGLE_CLICK,
+                DOUBLE_CLICK,
+                TRIPLE_CLICK,
+                LONG_PRESS_START,
+                LONG_PRESS_HOLD,
+                LONG_PRESS_END
+            };
+
+            struct ButtonEventMsg_ {
+                long button;
+                ButtonEventType_ event;
+            };
+        };
+    };
+};

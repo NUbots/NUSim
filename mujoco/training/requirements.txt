@@ -1,0 +1,11 @@
+# MJX (JAX) training stack for K1 locomotion policies.
+# GPU (recommended): install jax[cuda12] to match your CUDA (RTX 3080 Ti = CUDA 12).
+# CPU-only smoke test: replace with plain `jax`.
+jax[cuda12]==0.7.2
+brax>=0.12.1
+mujoco==3.3.6
+mujoco-mjx==3.3.6
+onnx>=1.16
+onnxruntime>=1.18
+numpy
+pyyaml

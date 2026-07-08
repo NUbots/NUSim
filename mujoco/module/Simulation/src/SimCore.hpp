@@ -1,0 +1,112 @@
+#ifndef K1SIM_MODULE_SIMULATION_SIMCORE_HPP
+#define K1SIM_MODULE_SIMULATION_SIMCORE_HPP
+
+#include <array>
+#include <atomic>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <mujoco/mujoco.h>
+#include <mutex>
+#include <string>
+#include <thread>
+
+#include "shared/k1/JointIndex.hpp"
+#include "shared/message/SimMessages.hpp"
+#include "shared/sim/ModelMap.hpp"
+#include "shared/sim/PdController.hpp"
+#include "shared/sim/StepController.hpp"
+
+namespace k1sim {
+
+// SimCore owns the mjModel/mjData and the dedicated physics thread. It is deliberately
+// decoupled from NUClear (no Reactor/Environment dependency) so it can be driven directly
+// by unit tests; module::Simulation is a thin NUClear wrapper around it (config loading,
+// SimHandles/SimStateUpdate wiring, Startup/Shutdown lifecycle).
+//
+// Threading contract: mjData (d()) is only ever touched with mutex() held. The physics
+// thread holds it for control+step+snapshot only; callers (e.g. the viewer) should acquire
+// it briefly. set_controller()/controller() are lock-free (std::atomic<StepController*>)
+// so a controller can be installed after start() without racing the physics thread.
+class SimCore {
+public:
+    using StateCallback = std::function<void(std::unique_ptr<message::SimStateUpdate>)>;
+
+    struct Config {
+        std::string model_path;  // resolved via k1sim::config::resolve_path by the caller
+        double rtf = 1.0;        // real-time factor; 0 = free-run (no pacing sleep)
+        int state_publish_divisor = 20;    // physics steps per SimStateUpdate
+        double resync_threshold   = 0.05;  // seconds behind schedule before the deadline resyncs
+
+        std::array<double, JOINT_COUNT> kp{};                  // PD fallback gains (gains.yaml)
+        std::array<double, JOINT_COUNT> kd{};                  // PD fallback gains (gains.yaml)
+        std::array<double, JOINT_COUNT> ready_pose_fallback{};  // used only if the model has no
+                                                                 // "ready" keyframe
+    };
+
+    explicit SimCore(Config config, StateCallback on_state = {});
+    ~SimCore();
+
+    SimCore(const SimCore&)            = delete;
+    SimCore& operator=(const SimCore&) = delete;
+
+    // Loads the MJCF at config.model_path, builds the ModelMap, allocates mjData, and (if a
+    // keyframe named "ready" exists) resets to it and records its joint pose as the PD
+    // fallback target; otherwise the fallback target is config.ready_pose_fallback.
+    // Throws std::runtime_error on failure (missing file, missing joints/actuators, no free
+    // root joint — see ModelMap::build). Must be called exactly once, before start().
+    void load_model();
+
+    const mjModel* model() const noexcept { return m_; }
+    mjData* data() const noexcept { return d_; }
+    const ModelMap& model_map() const noexcept { return map_; }
+    std::mutex& mutex() noexcept { return mutex_; }
+    std::atomic<double>& measured_rtf() noexcept { return measured_rtf_; }
+
+    // Thread-safe; may be called before or after start(), any number of times.
+    void set_controller(StepController* controller) noexcept {
+        controller_.store(controller, std::memory_order_release);
+    }
+    StepController* controller() const noexcept { return controller_.load(std::memory_order_acquire); }
+
+    // Spawns the physics thread. Requires load_model() to have already succeeded. Idempotent:
+    // calling start() again while already running is a no-op.
+    void start();
+
+    // Signals the physics thread to stop and joins it. Safe to call multiple times, or if the
+    // thread was never started.
+    void stop();
+
+    // Frees mjData/mjModel. Call after stop(). Safe to call multiple times.
+    void unload();
+
+    uint64_t step_count() const noexcept { return step_count_.load(std::memory_order_relaxed); }
+    uint64_t dropped_deadlines() const noexcept { return dropped_deadlines_.load(std::memory_order_relaxed); }
+
+private:
+    void physics_loop();
+    // Requires the caller to hold mutex_. Reads d_/map_/controller state into a fresh message.
+    std::unique_ptr<message::SimStateUpdate> make_snapshot(uint64_t steps) const;
+
+    Config config_;
+    StateCallback on_state_;
+
+    mjModel* m_ = nullptr;
+    mjData* d_  = nullptr;
+    ModelMap map_{};
+    std::array<double, JOINT_COUNT> ready_target_{};
+    PdController pd_{};
+
+    std::mutex mutex_;
+    std::atomic<double> measured_rtf_{0.0};
+    std::atomic<StepController*> controller_{nullptr};
+
+    std::atomic<bool> running_{false};
+    std::thread thread_;
+    std::atomic<uint64_t> step_count_{0};
+    std::atomic<uint64_t> dropped_deadlines_{0};
+};
+
+}  // namespace k1sim
+
+#endif  // K1SIM_MODULE_SIMULATION_SIMCORE_HPP
