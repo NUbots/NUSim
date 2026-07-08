@@ -1,4 +1,4 @@
-# NUMuJoCo K1
+# NUSim
 
 A self-contained, docker-based **MuJoCo** simulator for the **Booster Robotics K1** humanoid, used by
 [NUbots](https://nubots.net) for RoboCup development. It replaces **both** Booster's gated Webots build
