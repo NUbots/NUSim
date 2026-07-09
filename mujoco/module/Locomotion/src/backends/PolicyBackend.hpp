@@ -20,9 +20,9 @@ namespace k1sim::module::backends {
 
 // The policy controls the 12 leg joints only (JointIndexK1 10..21); arms are held
 // at the ready pose and the head is driven by RotateHead. Contract (the single
-// source of truth): mujoco/training/OBS_ACTION_CONTRACT.md — 47-dim obs, 12-dim
-// action, matching the proven booster_gym/htwk-gym base-walk format so a policy
-// trained by mujoco/training/ (MJX) drops straight in.
+// source of truth): mujoco/training_mjlab/OBS_ACTION_CONTRACT.md — 47-dim obs, 12-dim
+// action, matching the proven gym base-walk format so a policy trained by
+// mujoco/training_mjlab/ (mjlab) drops straight in.
 inline constexpr std::size_t LEG_START = JointIndexK1::LeftHipPitch;  // 10
 inline constexpr std::size_t LEG_COUNT = 12;                          // 10..21
 inline constexpr std::size_t OBS_DIM   = 47;

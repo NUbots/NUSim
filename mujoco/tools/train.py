@@ -1,57 +1,28 @@
-"""./b train <policy.py> [args] — train a locomotion policy with the MJX framework.
+"""./b train [task] [overrides] — train a K1 locomotion policy with mjlab (rsl_rl + MuJoCo Warp).
 
-`./b train walk.py` runs mujoco/training/train.py against training/policies/walk.py
-(the Policy subclass whose reward/commands define that policy). Extra args pass
-through (e.g. --iterations, --num-envs, --render). Training runs on the host in a
-Python venv (JAX/MJX GPU) — see mujoco/training/README.md for setup; it is NOT the
-docker sim build.
+Defaults to the K1 walk task. A leading `--flag` (with no task named) is fine — everything
+is forwarded to mjlab's tyro CLI, e.g.:
+
+    ./b train                                   # walk task, default settings
+    ./b train --env.scene.num-envs 4096         # override, default task
+    ./b train Mjlab-Walk-Flat-Booster-K1 --agent.max-iterations 5000
+
+Auto-exports an ONNX (obs[1,47] → actions[1,12]) on checkpoint save, drop-in for the
+C++ PolicyBackend. Runs on the host uv venv — `uv sync --extra train` first.
 """
-import argparse
-import glob
-import os
-import subprocess
-import sys
+from _util import mjlab_run
 
-import b
+RAW_ARGS = True  # b.py hands us the untouched arg tail (see b.py)
+DEFAULT_TASK = "Mjlab-Walk-Flat-Booster-K1"
 
 
-def _cuda_env(python):
-    """LD_LIBRARY_PATH with the venv's bundled nvidia-*-cu12 libs prepended.
-
-    jax[cuda12]'s pip wheels ship their own CUDA libs, but a system CUDA on
-    LD_LIBRARY_PATH (e.g. /usr/local/cuda) shadows them with an older, mismatched
-    libcusparse → 'cuSPARSE not found' and a silent CPU fallback. Prepending the
-    wheel dirs makes the loader pick the versions jax was built against.
-    """
-    env = dict(os.environ)
-    venv = os.path.dirname(os.path.dirname(python))  # .../.venv/bin/python -> .../.venv
-    nvidia_libs = sorted(glob.glob(os.path.join(venv, "lib", "python*", "site-packages", "nvidia", "*", "lib")))
-    if nvidia_libs:
-        env["LD_LIBRARY_PATH"] = os.pathsep.join(nvidia_libs + [env.get("LD_LIBRARY_PATH", "")]).rstrip(os.pathsep)
-    return env
-
-
-def register(command):
-    command.description = "Train a locomotion policy (MJX/JAX)"
-    command.add_argument("policy", help="policy script under training/policies/, e.g. walk.py")
-    # REMAINDER (not "*"): pass flags like --render / --iterations straight through
-    # to training/train.py instead of argparse trying to parse them.
-    command.add_argument("args", nargs=argparse.REMAINDER, help="arguments forwarded to training/train.py")
-
-
-def run(policy, args, **kwargs):
-    train_py = os.path.join(b.mujoco_dir, "training", "train.py")
-    if not os.path.isfile(train_py):
-        sys.exit("training/train.py not found — the MJX training framework is not set up yet")
-    policy_path = os.path.join("policies", policy)
-    # Prefer the uv-managed venv (populated by `uv sync --extra train`, which holds
-    # jax/mjx/brax); fall back to K1SIM_TRAIN_PYTHON, then whatever ran ./b.
-    venv_python = os.path.join(b.repo_dir, ".venv", "bin", "python")
-    default_python = venv_python if os.path.isfile(venv_python) else sys.executable
-    python = os.environ.get("K1SIM_TRAIN_PYTHON", default_python)
-    rc = subprocess.call(
-        [python, train_py, "--policy", policy_path, *args],
-        cwd=os.path.join(b.mujoco_dir, "training"),
-        env=_cuda_env(python),
-    )
-    sys.exit(rc)
+def run(argv):
+    if argv and argv[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return
+    # First token is the task id unless it's a flag; otherwise use the default.
+    if argv and not argv[0].startswith("-"):
+        task, rest = argv[0], argv[1:]
+    else:
+        task, rest = DEFAULT_TASK, argv
+    mjlab_run("train", task, rest)

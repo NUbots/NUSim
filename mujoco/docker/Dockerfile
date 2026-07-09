@@ -34,7 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # MuJoCo python (contract/model tests) — matches the C++ MuJoCo pin.
-RUN pip3 install --no-cache-dir mujoco==3.9.0
+RUN pip3 install --no-cache-dir mujoco==3.10.0
 
 # Pinned deps (MuJoCo prebuilt, Fast-DDS stack, fastddsgen) via the same script
 # used for native fallback builds — single source of truth for versions.
@@ -42,6 +42,12 @@ COPY tools/install_deps.sh /tmp/install_deps.sh
 RUN DEPS=/tmp/k1sim-deps-src PREFIX=/opt/k1sim-deps SRC=/tmp/k1sim-deps-src/src \
     bash /tmp/install_deps.sh --with-fastddsgen \
     && rm -rf /tmp/k1sim-deps-src /tmp/install_deps.sh
+
+# The MuJoCo release tarball extracts its top dir as root-only (0700); the sim
+# builds as the invoking --user (non-root, see docker/k1sim.sh), which then can't
+# traverse it and cmake's find_library(mujoco) fails "not found". Make the deps
+# tree world-readable. Own layer so it doesn't bust the slow deps build above.
+RUN chmod -R a+rX /opt/k1sim-deps
 
 # Kept as a separate layer so changes here don't invalidate the deps build above.
 # cmake-curses-gui provides ccmake for `./b configure -i` (role toggle TUI).

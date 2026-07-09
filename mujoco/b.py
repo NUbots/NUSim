@@ -58,10 +58,17 @@ def main():
         sys.exit(0 if not argv else 1)
 
     module = _load(candidates[match])
+    rest = argv[len(match):]
+    # Tools that forward a raw arg tail to another CLI (e.g. mjlab's tyro) set
+    # RAW_ARGS = True: argparse can't pass a leading `--flag` through REMAINDER, so
+    # we hand them the untouched tail and let them parse it themselves.
+    if getattr(module, "RAW_ARGS", False):
+        module.run(rest)
+        return
     parser = argparse.ArgumentParser(prog="./b " + " ".join(match))
     if hasattr(module, "register"):
         module.register(parser)
-    args = parser.parse_args(argv[len(match):])
+    args = parser.parse_args(rest)
     module.run(**vars(args))
 
 

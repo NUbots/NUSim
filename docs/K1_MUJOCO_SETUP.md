@@ -109,19 +109,19 @@ There are **two separate environments** — keep them straight:
 | Environment | Manages | Lives in | Used by |
 | --- | --- | --- | --- |
 | **docker image** | C++ sim toolchain: cmake/ninja, the **MuJoCo C library**, Fast-DDS, NUClear (`tools/install_deps.sh`) | the `k1sim` image | `./b configure` / `build` / `run` |
-| **host uv venv** | Python: the `./b` formatters + the **MJX/JAX/warp training stack** | repo-root `.venv` (`pyproject.toml` + `uv.lock`) | `./b train`, formatters |
+| **host uv venv** | Python: the `./b` formatters + the **mjlab training stack** (MuJoCo Warp + rsl_rl/torch) | repo-root `.venv` (`pyproject.toml` + `uv.lock`) | `./b train` / `./b play`, formatters |
 
 The Python dependency manager is [uv](https://docs.astral.sh/uv/) (as in NUbots). From the repo root:
 
 ```bash
 uv sync                 # host tooling only (formatters) — light
-uv sync --extra train   # + the training stack: jax[cuda12], mujoco-mjx, mujoco-warp, brax
+uv sync --extra train   # + the mjlab training stack: torch + MuJoCo Warp + rsl_rl
 ```
 
-The `train` extra is heavy and GPU-oriented, so it is **not** in the default sync. `./b train` runs on the
-**host** and prefers `.venv/bin/python`, so you must `uv sync --extra train` before training — otherwise
-warp and the CUDA jaxlib are missing (see [Troubleshooting](#troubleshooting)). Warp is **not** in the docker
-image; it lives only in the host venv.
+The `train` extra is heavy and GPU-oriented, so it is **not** in the default sync. `./b train` / `./b play`
+run on the **host** and prefer `.venv/bin/python`, so you must `uv sync --extra train` before training —
+otherwise mjlab/torch/warp are missing (see [Troubleshooting](#troubleshooting)). The training stack is
+**not** in the docker image; it lives only in the host venv.
 
 The training MuJoCo version is kept **in lockstep** with the C++ deploy MuJoCo (`cmake/MuJoCoTarget.cmake`,
 `docker/Dockerfile`, `tools/install_deps.sh`, and the `train` extra in `pyproject.toml`) — same physics, no
@@ -147,11 +147,11 @@ joint targets once in `WALKING`/`SOCCER` mode (`config/locomotion.yaml`, `backen
   by its own gait, because the root is velocity-servoed rather than driven purely by joint torques and
   contact forces. It exists to give every NUbots role a robot that walks around the field *today*, with real
   contact for the ball (so dribbling/kicking work).
-- **`policy` (opt-in, no policy ships).** Feeds a 50 Hz ONNX policy (trained via the `training/` template —
-  see `training/README.md`) that outputs PD target offsets, driven purely through the same 22 torque
+- **`policy` (opt-in, no policy ships).** Feeds a 50 Hz ONNX policy (trained with mjlab —
+  see `training_mjlab/README.md`) that outputs PD target offsets, driven purely through the same 22 torque
   actuators as the real robot. This is the dynamics-faithful upgrade path: build with
-  `K1SIM_CMAKE_ARGS="-DK1_WITH_ONNX=ON" ./docker/k1sim.sh build`, drop a trained `.onnx` per
-  `mujoco/training/models/README.md`, and point `config/locomotion.yaml`'s `policy.path` at it.
+  `K1SIM_CMAKE_ARGS="-DK1_WITH_ONNX=ON" ./docker/k1sim.sh build`, drop a trained `.onnx` in, and point
+  `config/locomotion.yaml`'s `policy.path` at it.
 
 Getting knocked over is still meaningful either way: `module::SdkBridge` reports `rt/fall_down` from the
 base's actual tilt (`config/locomotion.yaml`'s `fall:` thresholds), and `GetUp`/`GetUpWithMode` run a
@@ -194,13 +194,23 @@ shares `/dev/shm` across the containers. Config: `mujoco/config/camera.yaml` (se
 intrinsics). Renders via **EGL** (offscreen, no window), so it works **headless** too — just needs a render
 device (`./b run` passes `/dev/dri` + GPU). No device ⇒ logs and disables, no crash.
 
-## 7. Training a locomotion policy (`mujoco/training/`)
+## 7. Training a locomotion policy (`mujoco/training_mjlab/`)
 
-Real dynamic walking = a trained RL policy. Training is **MJX (JAX), GPU-parallel**, in the same MuJoCo
-physics the sim deploys (no sim2sim gap). Subclass `Policy`, override the cost, `./b train walk.py`, export
-ONNX, drop it in (`config/locomotion.yaml: backend: policy`, build `-DK1_WITH_ONNX=ON`). Full contract in
-`mujoco/training/OBS_ACTION_CONTRACT.md` (47-obs / 12-leg-action + gait clock); setup + workflow in
-`mujoco/training/README.md`. Framework only — you run the training (GPU + reward tuning).
+Real dynamic walking = a trained RL policy, trained with **[mjlab](https://github.com/mujocolab/mjlab)**
+(IsaacLab manager API + MuJoCo Warp + rsl_rl) — walk contract + Booster K1 actuators. It exports the
+ONNX contract (`obs[1,47] → actions[1,12]`, `mujoco/training_mjlab/OBS_ACTION_CONTRACT.md`) the C++
+`PolicyBackend` loads (`config/locomotion.yaml: backend: policy`, build `-DK1_WITH_ONNX=ON`):
+
+```bash
+uv sync --extra train      # torch + MuJoCo Warp + rsl_rl (one-time)
+./b train                  # train the K1 walk policy (auto-exports ONNX on checkpoint save)
+./b play --checkpoint-file logs/rsl_rl/k1_walk/<run>/model_<n>.pt
+```
+
+Setup, task structure, and the contract are in **`mujoco/training_mjlab/README.md`**. GPU-parallel in the
+same MuJoCo physics the sim deploys (no sim2sim gap). MuJoCo is standardized on **3.10.0** everywhere
+(mjlab pins it) — after a version bump, `./b image` then `./b build` to rebuild the C++ toolchain.
+Framework only — you run the training (GPU + reward tuning).
 
 ## 8. GameController supervisor (`module::Supervisor`)
 
@@ -221,16 +231,14 @@ on the network ⇒ idle no-op. Config: `mujoco/config/supervisor.yaml`.
 - **No GPU / rendering looks software-y.** The container falls back to Mesa software or integrated-GPU
   rendering via `/dev/dri` when `nvidia-container-toolkit` isn't installed — slower, but functional; the
   physics and DDS surface are unaffected either way. Headless mode sidesteps rendering entirely.
-- **Training logs `Failed to import warp` / `No module named 'warp'`, or falls back to `device=cpu`.** The
-  `train` extra isn't synced into the host venv. Run `uv sync --extra train` (installs `warp-lang`,
-  `mujoco-warp`, and the CUDA jaxlib), then re-run `./b train`. Training is host-side (the uv `.venv`), not
-  in the docker image.
-- **Training falls back to `device=cpu` with `Unable to load cuSPARSE` / `cuSPARSE library was not found`,
-  even though `jax[cuda12]` is installed.** A system CUDA on `LD_LIBRARY_PATH` (e.g. `/usr/local/cuda`)
-  shadows the CUDA libs bundled in jax's pip wheels with an older, mismatched `libcusparse`. `./b train`
-  fixes this automatically by prepending the venv's `nvidia-*-cu12` lib dirs; if you run `training/train.py`
-  directly, do the same or drop the system CUDA from `LD_LIBRARY_PATH` for that shell. Verify with
-  `.venv/bin/python -c "import jax; print(jax.devices())"` → should list `CudaDevice`.
+- **Training errors `No module named 'mjlab'` / `'warp'`, or runs on CPU.** The `train` extra isn't synced
+  into the host venv. Run `uv sync --extra train` (installs mjlab + torch + `mujoco-warp`), then re-run
+  `./b train`. Training is host-side (the uv `.venv`), not in the docker image.
+- **Training runs on CPU with a CUDA-lib load error (e.g. `cuSPARSE library was not found`), even though
+  the GPU torch stack is installed.** A system CUDA on `LD_LIBRARY_PATH` (e.g. `/usr/local/cuda`) shadows
+  the CUDA libs bundled in the pip wheels with an older, mismatched lib. `./b train` / `./b play` fix this
+  automatically by prepending the venv's `nvidia-*-cu12` lib dirs (`tools/_util.py`); if you invoke mjlab
+  directly, do the same or drop the system CUDA from `LD_LIBRARY_PATH` for that shell.
 - **`MuJoCo <version> not found` during `./b configure`.** The docker image still has the old MuJoCo C
   library baked in. Rebuild it: `./b image`, then `./b configure --clean && ./b build` (`--clean` clears
   cmake's cached `NOTFOUND`). Pointing `-DMUJOCO_DIR=...` only helps if a matching install already exists
@@ -244,8 +252,8 @@ on the network ⇒ idle no-op. Config: `mujoco/config/supervisor.yaml`.
 - **Camera needs a render device.** `module::Camera` renders offscreen via EGL — works headless, but needs
   `/dev/dri` or an NVIDIA device (both passed by `./b run`). With no device it disables gracefully.
 - **No trained walk policy ships.** The kinematic backend (glide) is the default; dynamic walking needs a
-  policy trained via `mujoco/training/` (§7). See §3.
+  policy trained via `mujoco/training_mjlab/` (§7). See §3.
 - **Single robot, one DDS domain.** One robot on domain 0. A multi-robot field needs one sim process per
   robot, each on its own domain.
 - **Kinematic backend is not dynamics-faithful.** See §3 — it's a working default, not a physically accurate
-  gait; the ONNX policy backend is the upgrade path once a policy is trained via `mujoco/training/`.
+  gait; the ONNX policy backend is the upgrade path once a policy is trained via `mujoco/training_mjlab/`.

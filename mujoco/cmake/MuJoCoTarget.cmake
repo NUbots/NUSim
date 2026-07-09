@@ -1,6 +1,6 @@
 # Imported target for the prebuilt MuJoCo installed by tools/install_deps.sh.
 # Override the location with -DMUJOCO_DIR=... or the MUJOCO_DIR environment variable.
-set(MUJOCO_VERSION 3.9.0)
+set(MUJOCO_VERSION 3.10.0)
 
 set(_mj_hints "")
 if(MUJOCO_DIR)

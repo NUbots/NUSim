@@ -2,23 +2,23 @@
 
 **Single source of truth** for the ONNX policy interface used by
 `module::Locomotion::backends::PolicyBackend` (built with `-DK1_WITH_ONNX=ON`) and
-by the MJX training framework (`mujoco/training/`). Anything that trains a policy for
-this sim must produce a graph matching this contract exactly.
+by the mjlab training pipeline (`mujoco/training_mjlab/`). Anything that trains a
+policy for this sim must produce a graph matching this contract exactly.
 
-This is the proven **base-walk** contract (booster_gym `play_mujoco.py` /
-htwk-gym `deploy_base_walk`): the policy controls the **12 leg joints only**; the
-2 arms-per-side are held at the ready pose and the 2 head joints are driven by the
-RotateHead command. A **gait clock** is part of the observation — essential for a
-periodic gait.
+This is the proven **base-walk** contract (gym `Base_Walk` / booster_gym
+`play_mujoco.py`): the policy controls the **12 leg joints only**; the 2 arms-per-side
+are held at the ready pose and the 2 head joints are driven by the RotateHead command.
+A **gait clock** is part of the observation — essential for a periodic gait.
 
 ## ONNX graph I/O
 
 | Tensor | Name | Shape | Type |
 |---|---|---|---|
 | Input | `obs` | `[1, 47]` | `float32` |
-| Output | `action` | `[1, 12]` | `float32` |
+| Output | `actions` | `[1, 12]` | `float32` |
 
-`PolicyBackend` calls `Ort::Session::Run` with exactly these names/shapes.
+`PolicyBackend` calls `Ort::Session::Run` with exactly these names/shapes (`actions`
+plural — rsl_rl's ONNX export name; `PolicyBackend.cpp` `kInputNames`/`kOutputNames`).
 
 ## Leg joint order (the 12 controlled joints)
 
@@ -62,9 +62,9 @@ q_ref[head]  = clamp(RotateHead cmd)  + gravity feed-forward  (HeadPitch, HeadYa
 ```
 
 `action_scale` is `config/locomotion.yaml: policy.action_scale` (default **0.5**).
-**Training MUST use the same `action_scale`** — document the value used and keep the
-two in sync. `gait_frequency` (default 1.5 Hz) and `stand_threshold` are also under
-`policy:` in `locomotion.yaml`.
+**Training MUST use the same `action_scale`** (mjlab `JointPositionActionCfg.scale`) —
+keep the two in sync. `gait_frequency` (default 1.5 Hz) and `stand_threshold` are also
+under `policy:` in `locomotion.yaml`.
 
 ### Gait clock
 
@@ -83,15 +83,14 @@ and this doc's dims accordingly.
 ## `test/unit/assets/random_policy.onnx`
 
 A tiny deterministic **untrained** MLP `obs[1,47] → Gemm(47,64) → Relu → Gemm(64,12)
-→ Tanh → action[1,12]` (seed 1234, `N(0,0.1²)` weights) — smoke-tests the ONNX
+→ Tanh → actions[1,12]` (seed 1234, `N(0,0.1²)` weights) — smoke-tests the ONNX
 plumbing only (`test/unit/test_locomotion.cpp`'s `#ifdef K1_WITH_ONNX` case: loads,
-runs 2 s under `backend: policy`, asserts finite ctrl/qpos). Regenerate with the
-snippet in this repo's history; not a locomotion policy.
+runs 2 s under `backend: policy`, asserts finite ctrl/qpos). Regenerate with
+`test/unit/assets/make_random_policy.py`; not a locomotion policy.
 
-## Training (MJX) — see `training/README.md`
+## Training (mjlab) — see `training_mjlab/README.md`
 
-`training/policy.py` builds exactly this obs and applies exactly this action;
-subclasses (`training/policies/walk.py`) only shape the reward/commands. Export the
-trained actor's deterministic mean to the `obs[1,47] → action[1,12]` graph via
-`training/export_onnx.py`, drop it in, set `backend: policy` + `policy.path`, build
-`-DK1_WITH_ONNX=ON`.
+The mjlab K1 walk task builds exactly this obs and applies exactly this action
+(legs only, `action_scale`, gait-clock gating). rsl_rl auto-exports the trained actor
+to the `obs[1,47] → actions[1,12]` graph on checkpoint save; drop the `.onnx` in, set
+`backend: policy` + `policy.path`, build `-DK1_WITH_ONNX=ON`.

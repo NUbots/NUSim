@@ -6,3 +6,5 @@ __pycache__/
 *.py[cod]
 agent/
 .agents/
+skills-lock.json
+logs/

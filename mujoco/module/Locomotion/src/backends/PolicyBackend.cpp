@@ -18,7 +18,7 @@ constexpr double kHeadPitchMin = -0.3;
 constexpr double kHeadPitchMax = 1.0;
 constexpr double kHeadYawLimit = 0.785;
 constexpr double kTwoPi        = 6.283185307179586;
-constexpr double kDofVelScale  = 0.1;  // obs normalization on joint velocity (booster/htwk)
+constexpr double kDofVelScale  = 0.1;  // obs normalization on joint velocity
 
 // Resolves policy.path (relative to the mujoco/ source root, like every other
 // config path) and fatal-throws if the file is missing.
@@ -124,7 +124,9 @@ void PolicyBackend::run_inference(const mjModel* m, mjData* d, const LocoCommand
         Ort::Value::CreateTensor<float>(mem_info_, obs.data(), obs.size(), obs_shape.data(), obs_shape.size());
 
     static constexpr const char* kInputNames[]  = {"obs"};
-    static constexpr const char* kOutputNames[] = {"action"};
+    // "actions" (plural) is what mjlab/rsl_rl's ONNX export names the output tensor
+    // (see training_mjlab/OBS_ACTION_CONTRACT.md).
+    static constexpr const char* kOutputNames[] = {"actions"};
     auto outputs = session_.Run(Ort::RunOptions{nullptr}, kInputNames, &obs_tensor, 1, kOutputNames, 1);
 
     const float* action_data = outputs.front().GetTensorData<float>();
