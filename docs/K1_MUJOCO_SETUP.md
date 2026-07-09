@@ -44,8 +44,10 @@ sim/soccer  (docker container, NUClear)
 | GPU | Optional. `nvidia-container-toolkit` gives GPU-accelerated rendering (`--gpus all`); otherwise the container falls back to `/dev/dri` (Mesa). The sim also runs fully **headless** on a machine with no GPU/display at all. |
 | Display | Optional. Only needed for the GLFW viewer window; `--headless` (or `K1_HEADLESS=1`, see below) skips it entirely — useful for CI, training, or a bare server. |
 
-Nothing else to install: `mujoco/docker/k1sim.sh` builds the image (Ubuntu 22.04 + pinned MuJoCo/Fast-DDS/
-NUClear/GLFW versions — see `mujoco/tools/install_deps.sh`) the first time it's needed.
+Nothing else to install for the **sim** itself: `mujoco/docker/k1sim.sh` builds the image (Ubuntu 22.04 +
+pinned MuJoCo/Fast-DDS/NUClear/GLFW versions — see `mujoco/tools/install_deps.sh`) the first time it's
+needed. **Training** (§7) additionally needs [uv](https://docs.astral.sh/uv/) on the host — see
+[Host tooling & dependencies](#host-tooling--dependencies-uv) below.
 
 ## 2. Quick start
 
@@ -99,6 +101,39 @@ build the explicit output `bin/keyboardwalk`.)
 [K1_WEBOTS_SETUP.md](K1_WEBOTS_SETUP.md#building-nubots_k1-generic-from-scratch--required-patches)), so its
 DDS reaches `k1_mujoco_sim` on the host (domain 0) the same way it reached `mck` before. No further NUbots_K1
 patches beyond what that doc already describes are needed — the wire protocol is unchanged.
+
+## Host tooling & dependencies (uv)
+
+There are **two separate environments** — keep them straight:
+
+| Environment | Manages | Lives in | Used by |
+| --- | --- | --- | --- |
+| **docker image** | C++ sim toolchain: cmake/ninja, the **MuJoCo C library**, Fast-DDS, NUClear (`tools/install_deps.sh`) | the `k1sim` image | `./b configure` / `build` / `run` |
+| **host uv venv** | Python: the `./b` formatters + the **MJX/JAX/warp training stack** | repo-root `.venv` (`pyproject.toml` + `uv.lock`) | `./b train`, formatters |
+
+The Python dependency manager is [uv](https://docs.astral.sh/uv/) (as in NUbots). From the repo root:
+
+```bash
+uv sync                 # host tooling only (formatters) — light
+uv sync --extra train   # + the training stack: jax[cuda12], mujoco-mjx, mujoco-warp, brax
+```
+
+The `train` extra is heavy and GPU-oriented, so it is **not** in the default sync. `./b train` runs on the
+**host** and prefers `.venv/bin/python`, so you must `uv sync --extra train` before training — otherwise
+warp and the CUDA jaxlib are missing (see [Troubleshooting](#troubleshooting)). Warp is **not** in the docker
+image; it lives only in the host venv.
+
+The training MuJoCo version is kept **in lockstep** with the C++ deploy MuJoCo (`cmake/MuJoCoTarget.cmake`,
+`docker/Dockerfile`, `tools/install_deps.sh`, and the `train` extra in `pyproject.toml`) — same physics, no
+sim2sim gap. Bumping one means bumping **all four** and rebuilding the image (`./b image`).
+
+### Extra `./b` commands
+
+- **`./b image`** — (re)build the docker toolchain image. `./b build` only builds it when it's *missing*, so
+  after changing a baked dependency (e.g. the MuJoCo version) you must run this explicitly.
+- **`./b configure --clean`** — wipe the build dir (`build-docker/`, incl. `CMakeCache.txt`) before
+  configuring. Needed when a cached path goes stale — e.g. cmake caches `MUJOCO_INCLUDE_DIR-NOTFOUND` after a
+  version bump and keeps failing until it's cleared.
 
 ## 3. The mode / locomotion story
 
@@ -186,6 +221,20 @@ on the network ⇒ idle no-op. Config: `mujoco/config/supervisor.yaml`.
 - **No GPU / rendering looks software-y.** The container falls back to Mesa software or integrated-GPU
   rendering via `/dev/dri` when `nvidia-container-toolkit` isn't installed — slower, but functional; the
   physics and DDS surface are unaffected either way. Headless mode sidesteps rendering entirely.
+- **Training logs `Failed to import warp` / `No module named 'warp'`, or falls back to `device=cpu`.** The
+  `train` extra isn't synced into the host venv. Run `uv sync --extra train` (installs `warp-lang`,
+  `mujoco-warp`, and the CUDA jaxlib), then re-run `./b train`. Training is host-side (the uv `.venv`), not
+  in the docker image.
+- **Training falls back to `device=cpu` with `Unable to load cuSPARSE` / `cuSPARSE library was not found`,
+  even though `jax[cuda12]` is installed.** A system CUDA on `LD_LIBRARY_PATH` (e.g. `/usr/local/cuda`)
+  shadows the CUDA libs bundled in jax's pip wheels with an older, mismatched `libcusparse`. `./b train`
+  fixes this automatically by prepending the venv's `nvidia-*-cu12` lib dirs; if you run `training/train.py`
+  directly, do the same or drop the system CUDA from `LD_LIBRARY_PATH` for that shell. Verify with
+  `.venv/bin/python -c "import jax; print(jax.devices())"` → should list `CudaDevice`.
+- **`MuJoCo <version> not found` during `./b configure`.** The docker image still has the old MuJoCo C
+  library baked in. Rebuild it: `./b image`, then `./b configure --clean && ./b build` (`--clean` clears
+  cmake's cached `NOTFOUND`). Pointing `-DMUJOCO_DIR=...` only helps if a matching install already exists
+  inside the container.
 - **`docker/k1sim.sh build` fails on a fresh machine.** First run builds the toolchain image
   (`mujoco/docker/Dockerfile`), which can take a few minutes; check `docker images | grep k1sim` if it seems
   stuck, and re-run — layers are cached after the first build.

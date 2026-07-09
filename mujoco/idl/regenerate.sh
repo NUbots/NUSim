@@ -2,8 +2,8 @@
 # Regenerates mujoco/idl_gen/ from mujoco/idl/**/*.idl using the fastddsgen baked
 # into the k1sim docker image (/opt/k1sim-deps/bin/fastddsgen). Run via e.g.:
 #
-#   docker run --rm -v $(pwd)/..:/workspace/NUWebots_K1 \
-#     -w /workspace/NUWebots_K1/mujoco --user $(id -u):$(id -g) \
+#   docker run --rm -v $(pwd)/..:/workspace/NUSim \
+#     -w /workspace/NUSim/mujoco --user $(id -u):$(id -g) \
 #     k1sim:latest ./idl/regenerate.sh
 #
 # fastddsgen version recorded at last run: "fastddsgen version 3.2.1" (OpenJDK 11.0.31)

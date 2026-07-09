@@ -3,7 +3,7 @@
     Vendored from BoosterRobotics/booster_assets (BSD-3-Clause), commit
     486da0f864016676de6dab724fd60a8a551655d1, robots/K1/K1_22dof.xml.
     See VENDORED.md for full provenance. Local modifications made for the
-    NUWebots_K1 MuJoCo port (see VENDORED.md "Local modifications" for detail):
+    NUSim (see VENDORED.md "Local modifications" for detail):
       1. Converted the trunk's `<joint type="free">` root into an explicit
          `<freejoint name="root"/>` (upstream already rooted the trunk with a
          free joint; this just names it and uses the canonical MJCF idiom).

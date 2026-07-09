@@ -24,7 +24,7 @@ import sys
 import time
 
 MUJOCO_DIR = pathlib.Path(__file__).resolve().parents[2]  # .../mujoco
-REPO_DIR = MUJOCO_DIR.parent  # .../NUWebots_K1
+REPO_DIR = MUJOCO_DIR.parent  # .../NUSim
 HOST_CLIENT_DIR = pathlib.Path(__file__).resolve().parent / "host_client"
 CONTAINER_NAME = "k1sim_contract_roundtrip"
 IMAGE = os.environ.get("K1SIM_IMAGE", "k1sim:latest")
@@ -76,8 +76,8 @@ def start_sim(build_dir: str, synthetic: bool) -> None:
         # Fast-DDS SHM segments in the shared /dev/shm that the host client
         # can't write to -> host->sim RPC silently times out. See PROTOCOL.md §4.
         "--user", f"{os.getuid()}:{os.getgid()}",
-        "-v", f"{REPO_DIR}:/workspace/NUWebots_K1",
-        "-w", "/workspace/NUWebots_K1/mujoco",
+        "-v", f"{REPO_DIR}:/workspace/NUSim",
+        "-w", "/workspace/NUSim/mujoco",
         IMAGE,
     ] + [binary] + ([] if synthetic else ["--headless"])
     print(f"[roundtrip] starting sim: {binary}" + (" (synthetic state source)" if synthetic else ""), flush=True)

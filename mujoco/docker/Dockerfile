@@ -1,5 +1,5 @@
 # Build/run environment for k1_mujoco_sim.
-# The repo is bind-mounted at /workspace/NUWebots_K1 by docker/k1sim.sh; this image
+# The repo is bind-mounted at /workspace/NUSim by docker/k1sim.sh; this image
 # only bakes the toolchain and the pinned dependencies (tools/install_deps.sh).
 FROM ubuntu:22.04
 
@@ -34,7 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # MuJoCo python (contract/model tests) — matches the C++ MuJoCo pin.
-RUN pip3 install --no-cache-dir mujoco==3.3.6
+RUN pip3 install --no-cache-dir mujoco==3.9.0
 
 # Pinned deps (MuJoCo prebuilt, Fast-DDS stack, fastddsgen) via the same script
 # used for native fallback builds — single source of truth for versions.
@@ -49,4 +49,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends pkg-config cmak
     && rm -rf /var/lib/apt/lists/*
 
 ENV K1SIM_DEPS_PREFIX=/opt/k1sim-deps
-WORKDIR /workspace/NUWebots_K1/mujoco
+WORKDIR /workspace/NUSim/mujoco

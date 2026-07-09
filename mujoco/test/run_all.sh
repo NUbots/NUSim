@@ -11,7 +11,7 @@ BUILD_DIR="${K1SIM_BUILD_DIR:-build-docker}"
 
 echo "=== 1/3 build + unit tests (docker, $BUILD_DIR) ==="
 "$HERE/docker/k1sim.sh" build
-docker run --rm -v "$(dirname "$HERE"):/workspace/NUWebots_K1" -w /workspace/NUWebots_K1/mujoco \
+docker run --rm -v "$(dirname "$HERE"):/workspace/NUSim" -w /workspace/NUSim/mujoco \
     --user "$(id -u):$(id -g)" "${K1SIM_IMAGE:-k1sim:latest}" \
     bash -c "ctest --test-dir $BUILD_DIR --output-on-failure"
 

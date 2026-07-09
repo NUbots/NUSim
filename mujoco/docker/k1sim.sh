@@ -6,6 +6,7 @@
 #   docker/k1sim.sh image             build/refresh the toolchain image
 #   docker/k1sim.sh configure         cmake configure only (inside the container)
 #   docker/k1sim.sh build [targets]   ninja (configures first if needed)
+#   docker/k1sim.sh clean             wipe the build dir (force a fresh configure)
 #   docker/k1sim.sh test              ctest (headless, inside the container)
 #   docker/k1sim.sh run <bin> [args]  run a role binary (X11 + GPU passthrough); default bin/sim/soccer
 #   docker/k1sim.sh shell             interactive shell in the build environment
@@ -16,7 +17,7 @@
 # falls back to /dev/dri (mesa). See docs/K1_MUJOCO_SETUP.md.
 set -euo pipefail
 
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" # NUWebots_K1/
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" # NUSim/
 IMAGE="${K1SIM_IMAGE:-k1sim:latest}"
 BUILD_DIR="${K1SIM_BUILD_DIR:-build-docker}"
 CMAKE_ARGS=${K1SIM_CMAKE_ARGS:-}
@@ -31,7 +32,7 @@ ensure_image() {
 
 # Common flags for every container invocation.
 common_flags() {
-    echo -n "--rm -v $REPO:/workspace/NUWebots_K1 -w /workspace/NUWebots_K1/mujoco"
+    echo -n "--rm -v $REPO:/workspace/NUSim -w /workspace/NUSim/mujoco"
     # Run as the invoking user so build artifacts in the bind mount aren't root-owned
     echo -n " --user $(id -u):$(id -g)"
 }
@@ -71,8 +72,16 @@ configure() {
     docker run $(common_flags) "$IMAGE" bash -c "cmake -S . -B $BUILD_DIR -GNinja $CMAKE_ARGS"
 }
 
+clean() {
+    # Build artifacts are user-owned (see --user in common_flags), so a host-side
+    # rm is enough — no container needed. Removes the whole dir incl. CMakeCache.txt.
+    rm -rf "${REPO:?}/mujoco/$BUILD_DIR"
+    echo "removed mujoco/$BUILD_DIR"
+}
+
 case "${1:-}" in
     image) image ;;
+    clean) clean ;;
     configure) configure ;;
     ccmake)
         ensure_image

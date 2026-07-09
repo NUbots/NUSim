@@ -6,17 +6,22 @@ Framework only — you run the training (it needs a GPU and reward tuning).
 
 ## Setup
 
+Training deps are the `train` extra in the repo-root `pyproject.toml` (managed by
+[uv](https://docs.astral.sh/uv/)). From the repo root:
+
 ```bash
-python3 -m venv .venv && . .venv/bin/activate
-pip install -r training/requirements.txt      # jax[cuda12] for GPU; plain `jax` for CPU smoke
+uv sync --extra train      # installs jax[cuda12]/mjx/brax into .venv; ./b train uses it
 ```
+
+CPU-only smoke test: swap `jax[cuda12]` for plain `jax` in the `train` extra, then
+re-sync. GPU needs CUDA 12 (RTX 3080 Ti).
 
 ## Train
 
 ```bash
 ./b train walk.py                              # = python training/train.py --policy policies/walk.py
 ./b train walk.py --iterations 400 --num-envs 4096
-./b train walk.py --render                     # watch the policy live in the MuJoCo viewer
+./b train walk.py --render                     # watch the policy live in the MuJoCo viewer after the training is finished
 ```
 
 Metrics (episode reward, x-velocity) print each eval; params checkpoint to
@@ -25,8 +30,12 @@ current policy out in `mujoco.viewer`.
 
 ## Deploy
 
+Export the trained checkpoint to the deploy ONNX — either in one shot at the end of
+training, or standalone from a saved checkpoint:
+
 ```bash
-python training/export_onnx.py --checkpoint checkpoints/walk.pkl --out models/walk.onnx
+./b train walk.py --export                                              # train, then export → models/walk.onnx
+python training/export_onnx.py --checkpoint checkpoints/walk.pkl --out models/walk.onnx   # standalone
 ```
 
 Then point the sim at it and build with ONNX:

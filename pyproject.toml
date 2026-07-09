@@ -1,3 +1,46 @@
+[project]
+name = "nusim"
+version = "0.1.0"
+description = "Host-side tooling (the ./b dispatcher + formatters) for the NUSim K1 MuJoCo simulator."
+readme = "README.md"
+# Floor 3.11: jax 0.7.2 (train extra) needs it. Cap <3.13: pinned black 20.8b1
+# pulls typed-ast, no 3.13 wheel. Lift the cap once black is bumped. uv fetches a
+# matching interpreter automatically.
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "cmake-format==0.6.13",
+    "isort==5.7.0",
+    "black==20.8b1",
+    # black 20.8b1 imports click._unicodefun, removed in click 8.1. Drop this pin
+    # when black is bumped.
+    "click<8.1",
+    "termcolor",
+    "jax>=0.7.2",
+    "brax>=0.14.2",
+]
+
+[project.optional-dependencies]
+# MJX/JAX locomotion-training stack — heavy + GPU, so NOT in the default sync.
+# Install with `uv sync --extra train`; `./b train` then uses the .venv (see train.py).
+# jax[cuda12] for GPU (RTX 3080 Ti = CUDA 12); swap to plain `jax` for CPU-only smoke.
+train = [
+    "jax[cuda12]==0.7.2",
+    "brax>=0.12.1",
+    # Kept in lockstep with the C++ deploy MuJoCo (cmake/MuJoCoTarget.cmake,
+    # docker/Dockerfile, tools/install_deps.sh) — same physics, no sim2sim gap.
+    "mujoco==3.9.0",
+    "mujoco-mjx==3.9.0",
+    "mujoco-warp",
+    "onnx>=1.16",
+    "onnxruntime>=1.18",
+    "numpy",
+    "pyyaml",
+]
+
+[tool.uv]
+# Pure tooling + scripts (mujoco/b.py is stdlib-only); nothing to build/install.
+package = false
+
 [tool.black]
 line-length = 120
 

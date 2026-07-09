@@ -16,6 +16,8 @@ import functools
 import importlib.util
 import os
 import pickle
+import subprocess
+import sys
 import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -41,6 +43,9 @@ def main():
     ap.add_argument("--checkpoint", default="checkpoints/walk.pkl")
     ap.add_argument("--render", action="store_true", help="roll out the trained policy in the viewer")
     ap.add_argument("--load", default="", help="load params from a checkpoint before training/render")
+    ap.add_argument("--export", nargs="?", const="", default=None, metavar="OUT",
+                    help="after training, export the deploy ONNX via export_onnx.py "
+                         "(optional out path; default models/<checkpoint-stem>.onnx)")
     args = ap.parse_args()
 
     # Imported lazily so --help works without jax/brax installed.
@@ -94,6 +99,14 @@ def main():
     with open(ckpt, "wb") as f:
         pickle.dump({"params": params, "hidden": hidden}, f)
     print(f"[train] saved checkpoint → {ckpt}")
+
+    if args.export is not None:
+        out = args.export or os.path.join("models", os.path.splitext(os.path.basename(ckpt))[0] + ".onnx")
+        export_py = os.path.join(_HERE, "export_onnx.py")
+        print(f"[train] exporting ONNX → {out}")
+        rc = subprocess.call([sys.executable, export_py, "--checkpoint", ckpt, "--out", out], cwd=_HERE)
+        if rc != 0:
+            raise SystemExit(f"export_onnx.py failed (exit {rc})")
 
     if args.render:
         render_rollout(env, make_inference_fn, params)
