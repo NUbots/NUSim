@@ -18,21 +18,22 @@
 
 namespace k1sim::module::backends {
 
-// The policy controls the 12 leg joints only (JointIndexK1 10..21); arms are held
-// at the ready pose and the head is driven by RotateHead. Contract (the single
-// source of truth): mujoco/training_mjlab/OBS_ACTION_CONTRACT.md — 47-dim obs, 12-dim
-// action, matching the proven gym base-walk format so a policy trained by
-// mujoco/training_mjlab/ (mjlab) drops straight in.
-inline constexpr std::size_t LEG_START = JointIndexK1::LeftHipPitch;  // 10
-inline constexpr std::size_t LEG_COUNT = 12;                          // 10..21
-inline constexpr std::size_t OBS_DIM   = 47;
+// The policy controls all 22 joints (full-body, JointIndexK1 order); the head
+// targets are overridden with the RotateHead command after inference. Contract
+// (the single source of truth): docs/OBS_ACTION_CONTRACT.md — 82-dim obs, 22-dim
+// action, matching the mujoco_playground K1Joystick* tasks so a policy trained
+// by the NUbots mujoco_playground fork drops straight in.
+inline constexpr std::size_t ACT_DIM = JOINT_COUNT;                        // 22
+inline constexpr std::size_t OBS_DIM = 3 + 3 + 3 + 3 + 3 * ACT_DIM + 4;   // 82
 
 // ONNX Runtime CPU policy backend. Every `inference_divisor` physics steps builds
-// the 47-dim observation and runs the network for a fresh 12-dim leg action;
-// between inferences, PD-tracks q_ref = ready + action_scale*action at 1 kHz. A
-// gait clock (cos/sin of a phase advanced at `gait_frequency`) is part of the obs;
-// when commanded speed is below `stand_threshold` the gait+command terms are zeroed
-// (standing). Head handling matches KinematicBackend (RotateHead + gravity comp).
+// the 82-dim observation and runs the network for a fresh 22-dim action; between
+// inferences, PD-tracks q_ref = default_pose + action_scale_joint*action at 1 kHz
+// with the training-time gains (policy.kp/kd — NOT gains.yaml, which is tuned for
+// the kinematic/stand controllers). A two-foot gait phase (cos/sin pairs advanced
+// at `gait_frequency`) is part of the obs; when commanded speed is below
+// `stand_threshold` the phase observation is pinned to [pi, pi] (standing).
+// Head handling matches KinematicBackend (RotateHead + gravity comp).
 class PolicyBackend : public LocomotionBackend {
 public:
     PolicyBackend(const ModelMap& map,
@@ -54,16 +55,17 @@ private:
     void run_inference(const mjModel* m, mjData* d, const LocoCommand& cmd);
 
     const ModelMap& map_;
-    PdController pd_;
-    std::array<double, JOINT_COUNT> ready_pose_;
-    double action_scale_;
-    double gait_frequency_;   // Hz, applied while moving
-    double stand_threshold_;  // command speed below which the robot stands (gait_freq → 0)
+    PdController pd_;  // gains overridden from policy.kp/kd (training-time gains)
+    std::array<double, JOINT_COUNT> default_pose_;        // policy.default_pose (training keyframe)
+    std::array<double, JOINT_COUNT> action_scale_joint_;  // policy.action_scale_joint * action_scale
+    double gait_frequency_;   // Hz, phase advance rate
+    double stand_threshold_;  // command norm below which the phase obs pins to [pi, pi]
     int inference_divisor_;
 
-    int step_counter_    = 0;
-    double gait_phase_   = 0.0;  // [0,1), advanced at gait_frequency each inference
-    std::array<double, LEG_COUNT> last_action_{};
+    int step_counter_ = 0;
+    // Per-foot gait phase, anti-phase [0, pi] (reset() re-establishes this).
+    std::array<double, 2> phase_{0.0, 3.141592653589793};
+    std::array<double, ACT_DIM> last_action_{};
 
     Ort::Env env_;
     Ort::Session session_;

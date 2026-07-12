@@ -1,9 +1,0 @@
-# Policy eval / rollout harness: physics + locomotion + viewer, no DDS/camera/GC.
-# Load a trained policy (config/locomotion.yaml backend: policy) and watch it walk;
-# runs headless with --headless for batch evaluation.
-k1sim_role(
-    ConsoleLog
-    Simulation
-    Locomotion
-    Viewer
-)

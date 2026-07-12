@@ -102,7 +102,11 @@ void reset_to_keyframe(const mjModel* m, mjData* d, const char* keyframe) {
 }
 
 YAML::Node locomotion_cfg() {
-    return k1sim::config::load("locomotion.yaml");
+    YAML::Node cfg = k1sim::config::load("locomotion.yaml");
+    // The suite tests the kinematic backend regardless of the shipped default
+    // (test_policy_backend_smoke overrides back to policy itself).
+    cfg["backend"] = "kinematic";
+    return cfg;
 }
 YAML::Node gains_cfg() {
     return k1sim::config::load("gains.yaml");

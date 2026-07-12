@@ -12,7 +12,7 @@
 
 int main() {
     // MuJoCo links and reports the pinned version
-    if (std::strncmp(mj_versionString(), "3.3", 3) != 0) {
+    if (std::strncmp(mj_versionString(), "3.10", 4) != 0) {
         std::fprintf(stderr, "unexpected MuJoCo version: %s\n", mj_versionString());
         return 1;
     }

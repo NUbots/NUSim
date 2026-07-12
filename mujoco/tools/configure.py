@@ -4,7 +4,7 @@
   ./b configure --clean                 # wipe the build dir first, then reconfigure
   ./b configure -i                      # ccmake TUI: toggle roles / options interactively
   ./b configure --unset-role sim/soccer # disable a role (repeatable)
-  ./b configure --set-role sim/training # enable a role  (repeatable)
+  ./b configure --set-role sim/soccer   # enable a role  (repeatable)
 
 Roles are named in path form (sim/soccer) or target form (sim-soccer). After
 toggling, `./b build` only builds the enabled roles.

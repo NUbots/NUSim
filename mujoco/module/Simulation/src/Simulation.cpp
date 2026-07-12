@@ -71,6 +71,24 @@ Simulation::Simulation(std::unique_ptr<NUClear::Environment> environment) : Reac
         log<NUClear::LogLevel::INFO>("Simulation: controller attached");
     });
 
+    // Base-pose heartbeat: one INFO line every ~5 s of sim time (updates arrive at
+    // 50 Hz), so headless runs show whether the robot is actually moving.
+    on<Trigger<message::SimStateUpdate>>().then([this](const message::SimStateUpdate& s) {
+        if (s.sim_time >= next_pose_log_) {
+            next_pose_log_ = s.sim_time + 5.0;
+            log<NUClear::LogLevel::INFO>("Simulation: t =",
+                                          s.sim_time,
+                                          "s, base x =",
+                                          s.base.x,
+                                          "y =",
+                                          s.base.y,
+                                          "z =",
+                                          s.base.z,
+                                          ", mode =",
+                                          s.mode);
+        }
+    });
+
     on<Shutdown>().then([this] {
         log<NUClear::LogLevel::INFO>("Simulation shutting down (measured RTF",
                                       sim_->measured_rtf().load(),

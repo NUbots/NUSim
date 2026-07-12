@@ -11,7 +11,7 @@ from _util import k1sim
 
 def register(command):
     command.description = "Run a sim role binary in docker"
-    command.add_argument("role", help="role in path form, e.g. sim/soccer or sim/training")
+    command.add_argument("role", help="role in path form, e.g. sim/soccer")
     command.add_argument("args", nargs=argparse.REMAINDER, help="arguments forwarded to the role binary")
 
 

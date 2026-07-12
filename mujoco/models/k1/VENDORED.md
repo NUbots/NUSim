@@ -44,6 +44,15 @@ full `robots/K1/meshes/` directory, which also contains meshes for the
    `gyro "angular-velocity"`.
 4. **Added a `<keyframe>`** with `ready`, `lying_front`, `lying_back` (see
    below for how the numbers were derived/verified).
+5. **Raised the 12 leg motor forceranges** from upstream's conservative
+   values (hip pitch/roll/yaw &plusmn;30/35/20, knee &plusmn;40, ankle
+   &plusmn;20 N&middot;m) to the Booster actuator catalog effort limits
+   (&plusmn;68/76/38.3, &plusmn;112, &plusmn;38.3) used by booster_train and
+   the mujoco_playground K1 training model (`k1_mjx_feetonly.xml`'s
+   `actuatorfrcrange`). The RL walk policy is trained against the catalog
+   limits; the lower upstream caps would clamp its torques and break the
+   sim-to-sim transfer. Head/arm limits (&plusmn;6/&plusmn;14) already
+   matched. (Also listed in the file's top-of-file comment.)
 
 ## Keyframe derivation and settle verification
 

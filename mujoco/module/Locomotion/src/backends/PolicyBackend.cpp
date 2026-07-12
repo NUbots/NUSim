@@ -17,8 +17,8 @@ namespace {
 constexpr double kHeadPitchMin = -0.3;
 constexpr double kHeadPitchMax = 1.0;
 constexpr double kHeadYawLimit = 0.785;
+constexpr double kPi           = 3.141592653589793;
 constexpr double kTwoPi        = 6.283185307179586;
-constexpr double kDofVelScale  = 0.1;  // obs normalization on joint velocity
 
 // Resolves policy.path (relative to the mujoco/ source root, like every other
 // config path) and fatal-throws if the file is missing.
@@ -44,26 +44,51 @@ Ort::SessionOptions make_session_options() {
     return opts;
 }
 
+// Loads a 22-element sequence from policy.<key>; fatal-throws on wrong length so a
+// half-edited config can't silently skew the obs/action mapping.
+std::array<double, JOINT_COUNT> load_joint_array(const YAML::Node& policy_cfg, const char* key) {
+    const YAML::Node node = policy_cfg[key];
+    if (!node || node.size() != JOINT_COUNT) {
+        throw std::runtime_error(std::string("config/locomotion.yaml: policy.") + key + " must be a list of "
+                                 + std::to_string(JOINT_COUNT) + " values (JointIndexK1 order)");
+    }
+    std::array<double, JOINT_COUNT> out{};
+    for (std::size_t i = 0; i < JOINT_COUNT; ++i) {
+        out[i] = node[i].as<double>();
+    }
+    return out;
+}
+
 }  // namespace
 
 PolicyBackend::PolicyBackend(const ModelMap& map,
                               PdController pd,
-                              std::array<double, JOINT_COUNT> ready_pose,
+                              std::array<double, JOINT_COUNT> /*ready_pose — unused; the policy
+                              tracks policy.default_pose (the training keyframe) instead*/,
                               const YAML::Node& policy_cfg)
     : map_(map)
     , pd_(std::move(pd))
-    , ready_pose_(ready_pose)
-    , action_scale_(policy_cfg["action_scale"].as<double>(0.5))
+    , default_pose_(load_joint_array(policy_cfg, "default_pose"))
+    , action_scale_joint_(load_joint_array(policy_cfg, "action_scale_joint"))
     , gait_frequency_(policy_cfg["gait_frequency"].as<double>(1.5))
-    , stand_threshold_(policy_cfg["stand_threshold"].as<double>(0.05))
+    , stand_threshold_(policy_cfg["stand_threshold"].as<double>(0.01))
     , inference_divisor_(std::max(1, policy_cfg["inference_divisor"].as<int>(20)))
     , env_(ORT_LOGGING_LEVEL_WARNING, "k1sim_policy_backend")
     , session_(env_, resolve_and_validate_path(policy_cfg).c_str(), make_session_options())
-    , mem_info_(Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeCPU)) {}
+    , mem_info_(Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeCPU)) {
+    // The policy runs against the gains it was trained with, not gains.yaml (which
+    // is tuned for the stand/kinematic controllers).
+    pd_.kp = load_joint_array(policy_cfg, "kp");
+    pd_.kd = load_joint_array(policy_cfg, "kd");
+    const double global_scale = policy_cfg["action_scale"].as<double>(1.0);
+    for (double& s : action_scale_joint_) {
+        s *= global_scale;
+    }
+}
 
 void PolicyBackend::reset(const mjModel* /*m*/, mjData* /*d*/) {
     step_counter_ = 0;  // forces an inference on the very next update()
-    gait_phase_   = 0.0;
+    phase_        = {0.0, kPi};
     last_action_.fill(0.0);
 }
 
@@ -71,16 +96,23 @@ std::array<float, OBS_DIM> PolicyBackend::build_obs(const mjModel* /*m*/, mjData
     std::array<float, OBS_DIM> obs{};
     std::size_t idx = 0;
 
-    // [0:3] projected gravity: world "down" in the body frame (unit vector).
+    // [0:3] base linear velocity, body frame (velocimeter at the imu site; falls
+    // back to the root qvel rotated into the body frame if the sensor is absent).
     const double* quat = &d->qpos[map_.root_qpos_adr + 3];  // wxyz, body->world
-    double inv_quat[4];
-    mju_negQuat(inv_quat, quat);
-    const double down_world[3] = {0.0, 0.0, -1.0};
-    double grav_body[3];
-    mju_rotVecQuat(grav_body, down_world, inv_quat);
-    obs[idx++] = static_cast<float>(grav_body[0]);
-    obs[idx++] = static_cast<float>(grav_body[1]);
-    obs[idx++] = static_cast<float>(grav_body[2]);
+    if (map_.sens_linvel >= 0) {
+        obs[idx++] = static_cast<float>(d->sensordata[map_.sens_linvel + 0]);
+        obs[idx++] = static_cast<float>(d->sensordata[map_.sens_linvel + 1]);
+        obs[idx++] = static_cast<float>(d->sensordata[map_.sens_linvel + 2]);
+    }
+    else {
+        double inv_quat[4];
+        mju_negQuat(inv_quat, quat);
+        double linvel_body[3];
+        mju_rotVecQuat(linvel_body, &d->qvel[map_.root_dof_adr], inv_quat);
+        obs[idx++] = static_cast<float>(linvel_body[0]);
+        obs[idx++] = static_cast<float>(linvel_body[1]);
+        obs[idx++] = static_cast<float>(linvel_body[2]);
+    }
 
     // [3:6] base angular velocity (gyro), body frame.
     if (map_.sens_gyro >= 0) {
@@ -92,28 +124,44 @@ std::array<float, OBS_DIM> PolicyBackend::build_obs(const mjModel* /*m*/, mjData
         idx += 3;
     }
 
-    // [6:9] command, [9:11] gait clock — both zeroed while standing.
-    const double speed  = std::sqrt(cmd.vx * cmd.vx + cmd.vy * cmd.vy + cmd.vyaw * cmd.vyaw);
-    const bool moving   = speed > stand_threshold_;
-    obs[idx++] = moving ? static_cast<float>(cmd.vx) : 0.0f;
-    obs[idx++] = moving ? static_cast<float>(cmd.vy) : 0.0f;
-    obs[idx++] = moving ? static_cast<float>(cmd.vyaw) : 0.0f;
-    obs[idx++] = moving ? static_cast<float>(std::cos(kTwoPi * gait_phase_)) : 0.0f;
-    obs[idx++] = moving ? static_cast<float>(std::sin(kTwoPi * gait_phase_)) : 0.0f;
+    // [6:9] projected gravity: world "down" in the body frame (unit vector).
+    {
+        double inv_quat[4];
+        mju_negQuat(inv_quat, quat);
+        const double down_world[3] = {0.0, 0.0, -1.0};
+        double grav_body[3];
+        mju_rotVecQuat(grav_body, down_world, inv_quat);
+        obs[idx++] = static_cast<float>(grav_body[0]);
+        obs[idx++] = static_cast<float>(grav_body[1]);
+        obs[idx++] = static_cast<float>(grav_body[2]);
+    }
 
-    // [11:23] leg (q - default), [23:35] leg dq*scale.
-    for (std::size_t k = 0; k < LEG_COUNT; ++k) {
-        const std::size_t j = LEG_START + k;
-        obs[idx++] = static_cast<float>(d->qpos[map_.qpos_adr[j]] - ready_pose_[j]);
+    // [9:12] command [vx, vy, vyaw] — passed through as-is (the standing gate
+    // only pins the phase observation, matching the playground task).
+    obs[idx++] = static_cast<float>(cmd.vx);
+    obs[idx++] = static_cast<float>(cmd.vy);
+    obs[idx++] = static_cast<float>(cmd.vyaw);
+
+    // [12:34] q - default_pose, [34:56] dq (unscaled), all 22 joints.
+    for (std::size_t j = 0; j < JOINT_COUNT; ++j) {
+        obs[idx++] = static_cast<float>(d->qpos[map_.qpos_adr[j]] - default_pose_[j]);
     }
-    for (std::size_t k = 0; k < LEG_COUNT; ++k) {
-        const std::size_t j = LEG_START + k;
-        obs[idx++] = static_cast<float>(d->qvel[map_.dof_adr[j]] * kDofVelScale);
+    for (std::size_t j = 0; j < JOINT_COUNT; ++j) {
+        obs[idx++] = static_cast<float>(d->qvel[map_.dof_adr[j]]);
     }
-    // [35:47] previous action.
-    for (std::size_t k = 0; k < LEG_COUNT; ++k) {
+    // [56:78] previous action (raw network output).
+    for (std::size_t k = 0; k < ACT_DIM; ++k) {
         obs[idx++] = static_cast<float>(last_action_[k]);
     }
+
+    // [78:82] two-foot gait phase [cos(ph0), cos(ph1), sin(ph0), sin(ph1)];
+    // pinned to [pi, pi] while standing (cos = -1, sin = 0).
+    const double speed = std::sqrt(cmd.vx * cmd.vx + cmd.vy * cmd.vy + cmd.vyaw * cmd.vyaw);
+    const std::array<double, 2> ph = speed >= stand_threshold_ ? phase_ : std::array<double, 2>{kPi, kPi};
+    obs[idx++] = static_cast<float>(std::cos(ph[0]));
+    obs[idx++] = static_cast<float>(std::cos(ph[1]));
+    obs[idx++] = static_cast<float>(std::sin(ph[0]));
+    obs[idx++] = static_cast<float>(std::sin(ph[1]));
     return obs;
 }
 
@@ -124,13 +172,13 @@ void PolicyBackend::run_inference(const mjModel* m, mjData* d, const LocoCommand
         Ort::Value::CreateTensor<float>(mem_info_, obs.data(), obs.size(), obs_shape.data(), obs_shape.size());
 
     static constexpr const char* kInputNames[]  = {"obs"};
-    // "actions" (plural) is what mjlab/rsl_rl's ONNX export names the output tensor
-    // (see training_mjlab/OBS_ACTION_CONTRACT.md).
-    static constexpr const char* kOutputNames[] = {"actions"};
+    // "continuous_actions" is what the playground brax-to-ONNX export names the
+    // output tensor (see docs/OBS_ACTION_CONTRACT.md).
+    static constexpr const char* kOutputNames[] = {"continuous_actions"};
     auto outputs = session_.Run(Ort::RunOptions{nullptr}, kInputNames, &obs_tensor, 1, kOutputNames, 1);
 
     const float* action_data = outputs.front().GetTensorData<float>();
-    for (std::size_t k = 0; k < LEG_COUNT; ++k) {
+    for (std::size_t k = 0; k < ACT_DIM; ++k) {
         last_action_[k] = static_cast<double>(action_data[k]);
     }
 }
@@ -138,24 +186,22 @@ void PolicyBackend::run_inference(const mjModel* m, mjData* d, const LocoCommand
 void PolicyBackend::update(const mjModel* m, mjData* d, const LocoCommand& cmd) {
     if (step_counter_ % inference_divisor_ == 0) {
         run_inference(m, d, cmd);
-        // Advance the gait clock once per inference (50 Hz), at gait_frequency
-        // while moving; frozen at 0 while standing so cos/sin stay well-defined.
-        const double speed = std::sqrt(cmd.vx * cmd.vx + cmd.vy * cmd.vy + cmd.vyaw * cmd.vyaw);
-        if (speed > stand_threshold_) {
-            const double dt = static_cast<double>(inference_divisor_) * m->opt.timestep;
-            gait_phase_     = std::fmod(gait_phase_ + dt * gait_frequency_, 1.0);
-        }
-        else {
-            gait_phase_ = 0.0;
+        // Advance the gait phase once per inference (50 Hz), wrapped to [-pi, pi).
+        // It advances regardless of the command; standing only pins the *observed*
+        // phase (build_obs), matching the playground deployment reference
+        // (mujoco_playground experimental/sim2sim).
+        const double dt = static_cast<double>(inference_divisor_) * m->opt.timestep;
+        for (double& ph : phase_) {
+            ph = std::fmod(ph + kTwoPi * dt * gait_frequency_ + kPi, kTwoPi) - kPi;
         }
     }
     ++step_counter_;
 
-    // Base target = ready pose (holds arms + torso); overwrite the 12 legs with
-    // the policy action and the head with the RotateHead command.
-    std::array<double, JOINT_COUNT> q_ref = ready_pose_;
-    for (std::size_t k = 0; k < LEG_COUNT; ++k) {
-        q_ref[LEG_START + k] = ready_pose_[LEG_START + k] + action_scale_ * last_action_[k];
+    // Target = training default pose + per-joint-scaled action for all 22 joints;
+    // overwrite the head with the RotateHead command (the sim owns the head).
+    std::array<double, JOINT_COUNT> q_ref{};
+    for (std::size_t j = 0; j < JOINT_COUNT; ++j) {
+        q_ref[j] = default_pose_[j] + action_scale_joint_[j] * last_action_[j];
     }
     q_ref[JointIndexK1::HeadPitch] = std::clamp(cmd.head_pitch, kHeadPitchMin, kHeadPitchMax);
     q_ref[JointIndexK1::HeadYaw]   = std::clamp(cmd.head_yaw, -kHeadYawLimit, kHeadYawLimit);

@@ -22,6 +22,7 @@ private:
     // across reactors are not guaranteed to be ordered/serialized by NUClear, so
     // on<Trigger<ControllerHandle>> could otherwise race the construction of sim_.
     std::unique_ptr<SimCore> sim_;
+    double next_pose_log_ = 0.0;  // sim-time (s) of the next base-pose heartbeat log
 };
 
 }  // namespace k1sim::module

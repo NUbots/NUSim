@@ -81,6 +81,19 @@ LocomotionController::LocomotionController(const YAML::Node& locomotion_cfg, con
         throw std::runtime_error("config/locomotion.yaml: unknown backend '" + backend_name_
                                   + "' (expected 'kinematic' or 'policy')");
     }
+
+    // The real robot boots into DAMPING (limp until an operator sends Prepare), but a
+    // sim robot spawns standing at the ready pose — idling in DAMPING just collapses it
+    // before any client connects, and the RL policy can't recover from flat. Default to
+    // holding PREPARE until the first ChangeMode arrives.
+    const std::string initial_mode = locomotion_cfg_["initial_mode"].as<std::string>("prepare");
+    if (initial_mode == "prepare") {
+        request_mode_change(booster::PREPARE);
+    }
+    else if (initial_mode != "damping") {
+        throw std::runtime_error("config/locomotion.yaml: unknown initial_mode '" + initial_mode
+                                  + "' (expected 'prepare' or 'damping')");
+    }
 }
 
 void LocomotionController::ensure_initialized(const mjModel* m) {

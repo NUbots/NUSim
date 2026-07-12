@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Host-side tooling (the ./b dispatcher + formatters) for the NUSim K1 MuJoCo simulator."
 readme = "README.md"
 # Cap <3.13: pinned black 20.8b1 pulls typed-ast, no 3.13 wheel (lift once black is
-# bumped). Floor 3.11 covers the mjlab train stack. uv fetches a matching interpreter.
+# bumped). uv fetches a matching interpreter.
 requires-python = ">=3.11,<3.13"
 dependencies = [
     "cmake-format==0.6.13",
@@ -16,36 +16,9 @@ dependencies = [
     "termcolor",
 ]
 
-[project.optional-dependencies]
-# Training stack: mjlab = IsaacLab manager API + MuJoCo Warp + rsl_rl (torch). Heavy +
-# GPU, so NOT in the default sync — `uv sync --extra train`; `./b train` uses the .venv.
-# mjlab pins mujoco ~=3.10.0 / mujoco-warp ~=3.10.0.1, which is why the C++ deploy is
-# standardized on MuJoCo 3.10.0 (cmake/MuJoCoTarget.cmake, docker/Dockerfile,
-# tools/install_deps.sh) — same physics, no sim2sim gap. See mujoco/training_mjlab/.
-train = [
-    "mjlab==1.5.0",
-    # torch/torchvision pinned to the CUDA 12.8 build (see [tool.uv.sources] below).
-    # PyPI's default torch wheels are now CUDA 13, which needs driver ~580+; the cu128
-    # build runs on any CUDA 12.x driver (e.g. 535 / CUDA 12.2) via minor-version
-    # compat. torchvision is an rsl_rl dep and must match torch's CUDA build.
-    "torch==2.8.0",
-    "torchvision==0.23.0",
-]
-
 [tool.uv]
 # Pure tooling + scripts (mujoco/b.py is stdlib-only); nothing to build/install.
 package = false
-
-# Pull torch/torchvision from PyTorch's CUDA 12.8 wheel index instead of PyPI's
-# CUDA-13 default (see the train extra above).
-[tool.uv.sources]
-torch = [{ index = "pytorch-cu128" }]
-torchvision = [{ index = "pytorch-cu128" }]
-
-[[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
-explicit = true
 
 [tool.black]
 line-length = 120
