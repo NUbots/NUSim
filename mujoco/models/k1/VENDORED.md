@@ -169,7 +169,7 @@ friction attribute would have been silently overridden to the floor's
 naive per-geom dampratio tuning behave very differently, and considerably
 less stably, than the same numbers used in an explicit `<pair>`). Tuned by
 a drop-test sweep (`solref="0.02 0.11"`, `solimp="0.9 0.95 0.001 0.5 2"`,
-`friction="0.5 0.5 0.005 0.0001 0.0001"`): a 1 m drop's first-bounce apex
+`friction="0.5 0.5 0.005 0.01 0.01"`): a 1 m drop's first-bounce apex
 ratio measures **0.5755**, within 0.4% of the target `0.76^2 = 0.5776`
 (Webots' RoboCup ball/grass bounce coefficient 0.76, ball-grass friction
 0.5, general floor friction 0.8 per `worlds/k1_robocup.wbt`'s
@@ -183,6 +183,13 @@ explicit-`<pair>` form -- it produced a nonphysical energy-injecting
 pre-impact impact velocity) -- which is why the final tuned values differ
 from that first attempt; see git history / scratch notes if reproducing
 this tuning.
+
+**Ball rolling friction.** The pair's last two friction values (rolling
+friction) were raised from the sweep's original `0.0001` (billiard-table:
+the ball never stopped rolling) to `0.01`, which gives a natural
+grass-like roll-out over a few metres. This is independent of the bounce
+tuning above (restitution lives in `solref`/`solimp`); only the drop-test
+friction string differs from the values recorded in the sweep notes.
 
 Solver settings (`timestep=0.001`, `solver="Newton"`, `impratio=10`) are
 inherited from `K1_22dof.xml`'s own `<option>` via `<include>` and are not

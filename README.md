@@ -30,7 +30,8 @@ Requirements: **Docker** (everything else is baked into the image). Full setup, 
 troubleshooting are in **[docs/K1_MUJOCO_SETUP.md](docs/K1_MUJOCO_SETUP.md)**.
 
 ```bash
-./b configure && ./b build      # build the sim in docker (first run builds the image)
+K1SIM_CMAKE_ARGS="-DK1_WITH_ONNX=ON" ./b configure   # ONNX build: the RL walk policy is the default backend
+./b build                       # build the sim in docker (first run builds the image)
 ./b run sim/soccer              # launch the soccer sim (viewer + DDS + camera + supervisor)
 ```
 
@@ -40,21 +41,26 @@ create its DDS participant (`Failed to create participant`):
 
 ```bash
 cd ~/NUbots_K1
-./b run keyboardwalk --environment FASTRTPS_DEFAULT_PROFILES_FILE=/home/nubots/NUbots/tools/fastdds_default_profiles.xml
+./b run keyboardwalk --environment=FASTRTPS_DEFAULT_PROFILES_FILE=/home/nubots/NUbots/tools/fastdds_default_profiles.xml
 # e = walk on/off, w/s/a/d = velocity (0.01 m/s per press — tap ~10x), z/x = turn, arrows = head
 ```
 
-See [docs/K1_MUJOCO_SETUP.md](docs/K1_MUJOCO_SETUP.md) for the full end-to-end walkthrough.
+The full autonomous stack works too — `./b run test/behaviour` (same `--environment=` flag) has the robot
+find the ball by vision and dribble it goalward. See
+[docs/K1_MUJOCO_SETUP.md](docs/K1_MUJOCO_SETUP.md) for the end-to-end walkthrough and the NUbots_K1-side
+requirements (`skill::K1Walk` in the role, `VisualMesh.yaml` camera entry).
 
 ## Locomotion policy
 
 NUSim does **one thing: simulate**. It does not train policies. Real walking comes from a trained
 velocity-tracking RL policy in ONNX form, produced by the NUbots
 **[mujoco_playground fork](https://github.com/Tom0Brien/mujoco_playground)** (branch `feat/k1-training`,
-`K1JoystickFlatTerrain` task). Drop the exported `.onnx` in, set `config/locomotion.yaml: backend: policy`
-+ `policy.path`, and build with `-DK1_WITH_ONNX=ON`. The exact observation/action interface the sim
-expects is pinned in **[docs/OBS_ACTION_CONTRACT.md](docs/OBS_ACTION_CONTRACT.md)** — anything that
-trains a policy for this sim must match it.
+`K1JoystickFlatTerrain` task). A trained policy **ships** at `mujoco/models/k1/policies/k1_walk.onnx` and
+is the default backend (`config/locomotion.yaml: backend: policy`; build with `-DK1_WITH_ONNX=ON`). To
+replace it, drop a new exported `.onnx` in and point `policy.path` at it. The exact observation/action
+interface the sim expects is pinned in
+**[docs/OBS_ACTION_CONTRACT.md](docs/OBS_ACTION_CONTRACT.md)** — anything that trains a policy for this
+sim must match it.
 
 ## Layout
 

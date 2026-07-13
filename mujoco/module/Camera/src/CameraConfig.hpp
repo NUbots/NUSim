@@ -13,8 +13,8 @@ namespace k1sim::module::camera {
 struct CameraConfig {
     // POSIX shared-memory segment name. Must match the corresponding entry's
     // `segment:` in NUbots_K1's module/input/K1Camera/data/config/K1Camera.yaml
-    // (default below matches that file's default).
-    std::string segment = "_boostercamera_head_rgb";
+    // (default below matches that file's "Left Camera" entry).
+    std::string segment = "_boostercamera_head_raw_rgb";
 
     // Render resolution. rgb8, so the segment carries width*height*3 pixel bytes
     // after the header -- keep this under K1Camera's MAX_IMAGE_BYTES (2 MiB); the

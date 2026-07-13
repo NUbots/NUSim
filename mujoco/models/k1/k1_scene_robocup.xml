@@ -47,6 +47,10 @@
     <material name="grass_mat" texture="grass_tex" texrepeat="22 16" texuniform="true" reflectance="0.05" specular="0.1"/>
     <material name="post_mat" rgba="0.95 0.95 0.95 1"/>
     <material name="ball_mat" rgba="0.85 0.25 0.05 1"/>
+    <!-- NUpbr ball_001 asset (mesh normalised to unit radius in Blender, UVs preserved) -->
+    <mesh name="ball_visual" file="ball_001.obj" scale="0.0785 0.0785 0.0785"/>
+    <texture name="ball_tex" type="2d" file="meshes/ball_001_color.png"/>
+    <material name="ball_tex_mat" texture="ball_tex" specular="0.3" shininess="0.4"/>
   </asset>
 
   <visual>
@@ -149,14 +153,21 @@
     -->
     <body name="ball" pos="0 0 0">
       <freejoint name="ball_free"/>
+      <!-- Collision sphere kept invisible (group 3); visuals come from the textured
+           NUpbr ball mesh below so rendered imagery matches the Yolo training data. -->
       <geom name="ball" type="sphere" size="0.0785" pos="1.38 0 0.0785" mass="0.29"
-            friction="0.5 0.005 0.0001" material="ball_mat" priority="1"/>
+            friction="0.5 0.005 0.0001" material="ball_mat" priority="1"
+            group="3" rgba="0.85 0.25 0.05 0"/>
+      <geom type="mesh" mesh="ball_visual" pos="1.38 0 0.0785" material="ball_tex_mat"
+            contype="0" conaffinity="0" density="0" group="1"/>
     </body>
   </worldbody>
 
   <contact>
-    <!-- Ball-vs-floor: friction 0.5 (grass), solref tuned to bounce coefficient 0.76 (see VENDORED.md). -->
-    <pair geom1="ball" geom2="floor" friction="0.5 0.5 0.005 0.0001 0.0001" solref="0.02 0.11" solimp="0.9 0.95 0.001 0.5 2"/>
+    <!-- Ball-vs-floor: friction 0.5 (grass), solref tuned to bounce coefficient 0.76 (see VENDORED.md).
+         condim="6" is required or the torsional/rolling components of the friction vector are
+         ignored (pair condim defaults to 3 = sliding only) and the ball never stops rolling. -->
+    <pair geom1="ball" geom2="floor" condim="6" friction="0.5 0.5 0.005 0.01 0.01" solref="0.02 0.11" solimp="0.9 0.95 0.001 0.5 2"/>
   </contact>
 
   <keyframe>

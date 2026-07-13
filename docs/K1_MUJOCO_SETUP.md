@@ -102,6 +102,29 @@ build the explicit output `bin/keyboardwalk`.)
 DDS reaches `k1_mujoco_sim` on the host (domain 0) the same way it reached `mck` before. No further NUbots_K1
 patches beyond what that doc already describes are needed — the wire protocol is unchanged.
 
+### Autonomous behaviour / dribble test
+
+The full vision→localisation→behaviour stack runs against the sim too (verified: the robot finds the ball
+by vision and dribbles it goalward autonomously):
+
+```bash
+# terminal 1 — the sim (confirm "Camera: rendering 640 x 480" appears)
+cd ~/NUSim && ./b run sim/soccer
+# terminal 2 — the Tester purpose (find_ball / walk_to_ball / align_ball_to_goal)
+cd ~/NUbots_K1
+./b build -- bin/test/behaviour
+./b run test/behaviour --environment=FASTRTPS_DEFAULT_PROFILES_FILE=/home/nubots/NUbots/tools/fastdds_default_profiles.xml
+```
+
+Two NUbots_K1-side requirements, both easy to miss:
+
+- The role **must use `skill::K1Walk`, not `skill::Walk`** — upstream `Walk` is the NUgus joint-trajectory
+  engine whose servo output the Booster runner ignores; only `K1Walk` translates `Walk` tasks into the
+  Booster `Move` RPC. (`roles/test/behaviour.role` and `roles/keyboardwalk.role` are already correct.)
+- `VisualMesh.yaml` needs a `cameras:` entry whose key matches the camera **name** in `K1Camera.yaml`
+  ("Left Camera") — with no entry the mesh silently drops every frame
+  (`VisualMesh Stats: ... Processing 0/s`).
+
 ## Host tooling & dependencies (uv)
 
 There are **two separate environments** — keep them straight:
@@ -135,23 +158,28 @@ The sim owns a Booster-style mode state machine (`module::Locomotion`): `ChangeM
 `GetUp`/kick RPCs drive it exactly like the real robot's firmware. Two interchangeable **backends** compute
 joint targets once in `WALKING`/`SOCCER` mode (`config/locomotion.yaml`, `backend:`):
 
-- **`kinematic` (default, ships working today).** Directly servos the robot's root velocity/height/upright
-  attitude from the commanded `vx/vy/vyaw`, with a PD-held ready pose and a procedural stepping animation on
-  top. **This is honestly not dynamics-faithful** — the robot doesn't fall over from being pushed off-balance
-  by its own gait, because the root is velocity-servoed rather than driven purely by joint torques and
-  contact forces. It exists to give every NUbots role a robot that walks around the field *today*, with real
-  contact for the ball (so dribbling/kicking work).
-- **`policy` (opt-in, no policy ships).** Feeds a 50 Hz ONNX policy (trained in the mujoco_playground
-  fork — see §7) that outputs PD target offsets, driven purely through the same 22 torque
-  actuators as the real robot. This is the dynamics-faithful upgrade path: build with
-  `K1SIM_CMAKE_ARGS="-DK1_WITH_ONNX=ON" ./docker/k1sim.sh build`, drop a trained `.onnx` in, and point
-  `config/locomotion.yaml`'s `policy.path` at it. The interface the sim expects is pinned in
-  [OBS_ACTION_CONTRACT.md](OBS_ACTION_CONTRACT.md).
+- **`policy` (the default; a trained policy ships).** Feeds a 50 Hz ONNX policy (trained in the
+  mujoco_playground fork — see §7) that outputs PD target offsets, driven purely through the same 22
+  torque actuators as the real robot: dynamics-faithful walking. The shipped policy lives at
+  `models/k1/policies/k1_walk.onnx` (`config/locomotion.yaml`'s `policy.path`; requires the ONNX build,
+  `K1SIM_CMAKE_ARGS="-DK1_WITH_ONNX=ON"`). The interface the sim expects is pinned in
+  [OBS_ACTION_CONTRACT.md](OBS_ACTION_CONTRACT.md) — retraining/replacing the policy must match it.
+- **`kinematic` (fallback).** Directly servos the robot's root velocity/height/upright attitude from the
+  commanded `vx/vy/vyaw`, with a PD-held ready pose and a procedural stepping animation on top. **Not
+  dynamics-faithful** — the robot doesn't fall over from being pushed off-balance by its own gait, because
+  the root is velocity-servoed rather than driven purely by joint torques and contact forces. Useful when
+  the ONNX build is unavailable or a deterministic glide is preferable.
+
+The sim boots holding **PREPARE** (standing at the ready pose) until the first `ChangeMode` arrives
+(`locomotion.yaml`'s `initial_mode`; set `damping` for the real robot's limp-at-boot behaviour — but note
+the RL policy cannot get up from a collapsed start).
 
 Getting knocked over is still meaningful either way: `module::SdkBridge` reports `rt/fall_down` from the
 base's actual tilt (`config/locomotion.yaml`'s `fall:` thresholds), and `GetUp`/`GetUpWithMode` run a
 scripted recovery. In the viewer, **double-click a body then Ctrl+right-drag** to apply a push force and
-test this interactively (see `module/Viewer` below).
+test this interactively (see `module/Viewer` below). The sim also logs a base-pose heartbeat
+(`Simulation: t = ..., base x = ...`) every 5 s of sim time, so headless runs show whether the robot is
+actually moving.
 
 ## 4. Config files reference (`mujoco/config/`)
 
@@ -181,22 +209,32 @@ A GLFW + MuJoCo GPU-rendered window, skipped entirely under `--headless`. Standa
 ## 6. Camera → NUsight (`module::Camera`)
 
 `sim/soccer` renders the K1's head camera (a `<camera name="head">` in the model) offscreen and writes rgb8
-frames into a **Boost.Interprocess shared-memory segment** (`_boostercamera_head_rgb`) laid out exactly like
-NUbots' `input::K1Camera` `SharedImageHeader`. So the sim impersonates NUbridge: the **unchanged** NUbots
-`robocup`/`behaviour` role reads the segment → `ImageCompressor` → `NetworkForwarder` → **NUsight** shows
-`CompressedImage`, same as on the real robot. `--ipc host` (already used by `./b run` and NUbots' `./b run`)
-shares `/dev/shm` across the containers. Config: `mujoco/config/camera.yaml` (segment name, resolution, fps,
-intrinsics). Renders via **EGL** (offscreen, no window), so it works **headless** too — just needs a render
-device (`./b run` passes `/dev/dri` + GPU). No device ⇒ logs and disables, no crash.
+frames into a **Boost.Interprocess shared-memory segment** (`_boostercamera_head_raw_rgb` — the left-camera
+entry in NUbots_K1's `K1Camera.yaml`) laid out exactly like NUbots' `input::K1Camera` `SharedImageHeader`.
+So the sim impersonates NUbridge: the **unchanged** NUbots `robocup`/`behaviour` role reads the segment →
+`ImageCompressor` → `NetworkForwarder` → **NUsight** shows `CompressedImage`, same as on the real robot.
+`--ipc host` (already used by `./b run` and NUbots' `./b run`) shares `/dev/shm` across the containers.
+Config: `mujoco/config/camera.yaml` (segment name, resolution, fps, intrinsics). Renders via **EGL**
+(offscreen, no window), so it works **headless** too — just needs a render device (`./b run` passes
+`/dev/dri` + GPU). No device ⇒ logs and disables, no crash — but then vision receives **zero** frames
+(`VisualMesh Stats: Receiving 0/s`): confirm the sim log shows `Camera: rendering 640 x 480 ...` before
+blaming the NUbots side. The right-camera segment (`_boostercamera_head_raw_right_rgb`) is not rendered
+yet; K1Camera warn-retries on it harmlessly (stereo is future work).
 
 ## 7. Getting a locomotion policy
 
-NUSim does not train policies — it only simulates. Policies are trained in the NUbots
+NUSim does not train policies — it only simulates. A trained walk policy **ships** at
+`mujoco/models/k1/policies/k1_walk.onnx` (200M-step PPO, `K1JoystickFlatTerrain`, domain randomization).
+To retrain or replace it: policies are trained in the NUbots
 **[mujoco_playground fork](https://github.com/Tom0Brien/mujoco_playground)** (branch `feat/k1-training`,
-MJX/brax PPO, `K1JoystickFlatTerrain` / `K1JoystickRoughTerrain` tasks) and exported to ONNX. The C++
-`PolicyBackend` loads the ONNX (`config/locomotion.yaml: backend: policy`, build `-DK1_WITH_ONNX=ON`).
-Anything that trains a policy for this sim must match the interface pinned in
-**[OBS_ACTION_CONTRACT.md](OBS_ACTION_CONTRACT.md)**.
+MJX/brax PPO, `K1JoystickFlatTerrain` / `K1JoystickRoughTerrain` tasks) —
+`learning/train_jax_ppo.py --env_name=K1JoystickFlatTerrain --domain_randomization`, then export a
+checkpoint with `learning/export_k1_onnx.py` (bakes the brax observation normalization into the graph).
+The C++ `PolicyBackend` loads the ONNX (`config/locomotion.yaml: backend: policy`, build
+`-DK1_WITH_ONNX=ON`). Anything that trains a policy for this sim must match the interface pinned in
+**[OBS_ACTION_CONTRACT.md](OBS_ACTION_CONTRACT.md)**; a quick sim2sim sanity check for an exported policy
+is `test/contract/policy_walk_check.py --onnx <file> --vx 0.3` (pure-python PolicyBackend replica,
+reports displacement + uprightness).
 
 ## 8. GameController supervisor (`module::Supervisor`)
 
@@ -236,10 +274,13 @@ on the network ⇒ idle no-op. Config: `mujoco/config/supervisor.yaml`.
 ## Known limitations
 
 - **Camera needs a render device.** `module::Camera` renders offscreen via EGL — works headless, but needs
-  `/dev/dri` or an NVIDIA device (both passed by `./b run`). With no device it disables gracefully.
-- **No trained walk policy ships.** The kinematic backend (glide) is the default; dynamic walking needs a
-  policy trained in the mujoco_playground fork (§7). See §3.
+  `/dev/dri` or an NVIDIA device (both passed by `./b run`). With no device it disables gracefully (and
+  vision on the NUbots side starves — see §6).
+- **Mono camera only.** The K1 has stereo head cameras; the sim renders the left one. NUbots' K1Camera
+  retries the right segment forever (harmless warning spam).
 - **Single robot, one DDS domain.** One robot on domain 0. A multi-robot field needs one sim process per
   robot, each on its own domain.
-- **Kinematic backend is not dynamics-faithful.** See §3 — it's a working default, not a physically accurate
-  gait; the ONNX policy backend is the upgrade path once a policy is trained (§7).
+- **Render fidelity vs vision networks.** The field is a procedural green checker with box-geom lines and a
+  plain orange ball (the Webots textures aren't redistributable). The Webots-trained visual-mesh network and
+  the RoboCup-imagery YOLO work on these renders, but detection margins are thinner than on real imagery —
+  detector thresholds on the NUbots side may need loosening.

@@ -79,7 +79,14 @@ void StatePublisher::publish(const k1sim::message::SimStateUpdate& update) {
         motors.push_back(to_motor_state(update.joints[i]));
     }
     low_state.motor_state_serial(motors);
-    low_state.motor_state_parallel(motors);  // K1 has no true parallel actuation — mirrored 1:1
+    // motor_state_parallel mirrors the real firmware's layout: the 12 leg motors only
+    // (JointIndexK1 kLeftHipPitch..kCrankDownRight => vector indices 0..11), with the
+    // crank slots carrying the serial-equivalent ankle pitch/roll values (the sim has
+    // no true parallel actuation). Clients (e.g. NUbots HardwareIO) index this vector
+    // as joint_index - kLeftHipPitch.
+    std::vector<booster_interface::msg::dds_::MotorState_> legs(motors.begin() + JointIndexK1::LeftHipPitch,
+                                                                 motors.end());
+    low_state.motor_state_parallel(legs);
     low_state_writer_->write(&low_state);
 
     // --- rt/odometer_state ---

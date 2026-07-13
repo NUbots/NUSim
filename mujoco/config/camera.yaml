@@ -6,7 +6,9 @@
 # input::K1Camera SharedImageHeader byte-for-byte. `segment` must match the
 # corresponding entry's `segment:` in NUbots_K1's
 # module/input/K1Camera/data/config/K1Camera.yaml (default below matches that
-# file's default: _boostercamera_head_rgb).
+# file's "Left Camera" entry: _boostercamera_head_raw_rgb. The right-camera
+# segment (_boostercamera_head_raw_right_rgb) is not rendered yet — K1Camera
+# warn-retries on it harmlessly; stereo is future work).
 #
 # Lens intrinsics (focal_length/fov/centre/k1/k2) are NOT configured here --
 # they're derived at runtime from the MJCF camera's fovy + width/height below
@@ -14,7 +16,7 @@
 # and there is no distortion model, so centre_x/centre_y/k1/k2 are always 0).
 # See module/Camera/src/Camera.cpp.
 
-segment: _boostercamera_head_rgb
+segment: _boostercamera_head_raw_rgb
 
 # rgb8, so the segment carries width*height*3 pixel bytes after the header --
 # 640x480 (921600 bytes) stays well under K1Camera's 2 MiB MAX_IMAGE_BYTES and
