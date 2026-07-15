@@ -53,6 +53,17 @@ full `robots/K1/meshes/` directory, which also contains meshes for the
    limits; the lower upstream caps would clamp its torques and break the
    sim-to-sim transfer. Head/arm limits (&plusmn;6/&plusmn;14) already
    matched. (Also listed in the file's top-of-file comment.)
+6. **Training-parity contact geometry.** The head (`Head_2`) and arm
+   (`*_Arm_3`, `*hand_link`) bodies collide via the same primitives as the
+   mujoco_playground training model (`k1_mjx_fullcollisions.xml`): a head
+   sphere and upper-arm/forearm cylinders, masked `contype="2"
+   conaffinity="1"` (floor contact only, no body-body contacts). The
+   previous duplicate *mesh* collision geoms on those bodies were replaced:
+   the RL get-up policy's contact dynamics must match training or it fails
+   (measured offline: mesh collisions 0/10 recoveries, playground
+   primitives 10/10). All other body collision primitives (trunk box +
+   cylinder, shoulder/thigh/knee/shank) carry the same `2/1` mask for the
+   same reason; the feet keep their original setup (walking-verified).
 
 ## Keyframe derivation and settle verification
 

@@ -5,10 +5,12 @@
 
 #include <atomic>
 #include <cstdio>
+#include <functional>
 #include <mutex>
 
 #include "shared/CliOptions.hpp"
 #include "shared/k1/BoosterApi.hpp"
+#include "shared/message/Commands.hpp"
 #include "shared/message/SimMessages.hpp"
 
 namespace k1sim::module {
@@ -43,6 +45,10 @@ std::atomic<double>* g_measured_rtf = nullptr;
 std::atomic<double> g_sim_time{0.0};
 std::atomic<int> g_mode{-1};
 
+// Set by the Viewer constructor; lets the plain-C GLFW key callback emit a
+// NUClear message (SimResetRequest) without holding a Reactor pointer here.
+std::function<void()> g_request_reset;
+
 // Mouse state for the simulate-style camera + perturb controls.
 bool button_left   = false;
 bool button_middle = false;
@@ -73,6 +79,21 @@ void keyboard_cb(GLFWwindow* w, int key, int /*scancode*/, int act, int /*mods*/
     }
     if (key == GLFW_KEY_ESCAPE) {
         glfwSetWindowShouldClose(w, GLFW_TRUE);
+    }
+    // BACKSPACE (MuJoCo simulate convention): reset the sim to its startup state.
+    if (key == GLFW_KEY_BACKSPACE && g_request_reset) {
+        end_perturb();  // a reset mid-drag must not leave a perturb force pinned
+        g_request_reset();
+    }
+    // F: shove the robot over (deterministic fall for testing FallRecovery/GetUp —
+    // mouse-drag perturbs are usually within what the push-randomised policy rides out).
+    if (key == GLFW_KEY_F && g_model != nullptr && g_data != nullptr && g_mutex != nullptr) {
+        std::lock_guard<std::mutex> lock(*g_mutex);
+        if (g_model->njnt > 0 && g_model->jnt_type[0] == mjJNT_FREE) {
+            const int dof = g_model->jnt_dofadr[0];
+            g_data->qvel[dof + 0] += 1.5;  // linear kick, world x
+            g_data->qvel[dof + 4] += 6.0;  // pitch rate — guarantees a topple
+        }
     }
     // SPACE (pause) is intentionally NOT wired here: pausing physics is
     // module::Simulation's domain (it owns the 1 kHz stepping thread), and
@@ -203,6 +224,10 @@ void scroll_cb(GLFWwindow* /*w*/, double /*xoffset*/, double yoffset) {
 }  // namespace
 
 Viewer::Viewer(std::unique_ptr<NUClear::Environment> environment) : Reactor(std::move(environment)) {
+
+    // Bridge for the plain-C GLFW key callback (Backspace = sim reset). emit() is
+    // thread-safe, and the callback only ever runs on the MainThread glfwPollEvents pump.
+    g_request_reset = [this] { emit(std::make_unique<message::SimResetRequest>()); };
 
     on<Startup, MainThread>().then([this] {
         if (cli().headless) {

@@ -34,6 +34,7 @@ public:
 
     struct Config {
         std::string model_path;  // resolved via k1sim::config::resolve_path by the caller
+        std::string initial_keyframe = "ready";  // keyframe to spawn (and reset) into
         double rtf = 1.0;        // real-time factor; 0 = free-run (no pacing sleep)
         int state_publish_divisor = 20;    // physics steps per SimStateUpdate
         double resync_threshold   = 0.05;  // seconds behind schedule before the deadline resyncs
@@ -69,6 +70,13 @@ public:
     }
     StepController* controller() const noexcept { return controller_.load(std::memory_order_acquire); }
 
+    // Resets mjData back to the state load_model() established (the "ready" keyframe, or
+    // zeros if the model has none) — robot pose, ball, velocities, controls. Thread-safe
+    // (takes the sim mutex); callable while the physics thread runs. Does NOT reset the
+    // attached StepController: it keeps its mode and last commands, mirroring a real robot
+    // being picked up and placed back on its start point mid-program.
+    void reset();
+
     // Spawns the physics thread. Requires load_model() to have already succeeded. Idempotent:
     // calling start() again while already running is a no-op.
     void start();
@@ -93,6 +101,7 @@ private:
 
     mjModel* m_ = nullptr;
     mjData* d_  = nullptr;
+    int reset_key_ = -1;  // keyframe id load_model() reset to; reused by reset()
     ModelMap map_{};
     std::array<double, JOINT_COUNT> ready_target_{};
     PdController pd_{};

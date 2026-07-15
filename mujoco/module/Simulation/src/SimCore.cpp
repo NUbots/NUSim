@@ -76,9 +76,22 @@ void SimCore::load_model() {
         throw std::runtime_error("mj_makeData failed for '" + resolved + "'");
     }
 
+    // Spawn keyframe (configurable, e.g. lying_front for get-up testing); the PD
+    // fallback target always tracks the "ready" pose regardless of where we spawn.
+    int spawn_key = mj_name2id(m_, mjOBJ_KEY, config_.initial_keyframe.c_str());
+    if (spawn_key < 0 && config_.initial_keyframe != "ready") {
+        std::fprintf(stderr,
+                     "SimCore: model has no keyframe '%s'; falling back to 'ready'\n",
+                     config_.initial_keyframe.c_str());
+        spawn_key = mj_name2id(m_, mjOBJ_KEY, "ready");
+    }
+    reset_key_ = spawn_key;
+    if (spawn_key >= 0) {
+        mj_resetDataKeyframe(m_, d_, spawn_key);
+    }
+
     const int ready_key = mj_name2id(m_, mjOBJ_KEY, "ready");
     if (ready_key >= 0) {
-        mj_resetDataKeyframe(m_, d_, ready_key);
         for (std::size_t i = 0; i < JOINT_COUNT; ++i) {
             ready_target_[i] = m_->key_qpos[ready_key * m_->nq + map_.qpos_adr[i]];
         }
@@ -89,6 +102,19 @@ void SimCore::load_model() {
 
     // Populate derived quantities (xquat, sensordata, ...) for the reset pose before the
     // physics thread's first mj_step; harmless if nothing reads them this early.
+    mj_forward(m_, d_);
+}
+
+void SimCore::reset() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (reset_key_ >= 0) {
+        mj_resetDataKeyframe(m_, d_, reset_key_);
+    }
+    else {
+        mj_resetData(m_, d_);
+    }
+    // Repopulate derived quantities so snapshots/viewer frames between now and the next
+    // mj_step see the reset pose, not stale kinematics.
     mj_forward(m_, d_);
 }
 

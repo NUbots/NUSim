@@ -53,6 +53,11 @@ struct ControllerHandle {
     StepController* controller = nullptr;
 };
 
+// Emitted by module::Viewer (Backspace key); consumed by module::Simulation, which
+// resets mjData to the startup keyframe. Physics-state only: the attached
+// StepController keeps its mode/targets (see SimCore::reset).
+struct SimResetRequest {};
+
 }  // namespace k1sim::message
 
 #endif  // K1SIM_SHARED_MESSAGE_COMMANDS_HPP

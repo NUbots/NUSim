@@ -19,6 +19,8 @@ SimCore::Config build_sim_config() {
 
     SimCore::Config cfg;
     cfg.model_path = !cli().model.empty() ? cli().model : sim_cfg["model"].as<std::string>();
+    cfg.initial_keyframe =
+        !cli().keyframe.empty() ? cli().keyframe : sim_cfg["initial_keyframe"].as<std::string>("ready");
     // CliOptions.rtf < 0 means "use config"; the config's real_time_factor may itself be 0
     // (free-run) — SimCore treats rtf <= 0 as free-run.
     cfg.rtf                   = cli().rtf >= 0.0 ? cli().rtf : sim_cfg["real_time_factor"].as<double>(1.0);
@@ -69,6 +71,13 @@ Simulation::Simulation(std::unique_ptr<NUClear::Environment> environment) : Reac
     on<Trigger<message::ControllerHandle>>().then([this](const message::ControllerHandle& handle) {
         sim_->set_controller(handle.controller);
         log<NUClear::LogLevel::INFO>("Simulation: controller attached");
+    });
+
+    // Viewer Backspace (or any other emitter): snap mjData back to the startup keyframe.
+    // Physics state only — the attached controller keeps its mode/commands (SimCore::reset).
+    on<Trigger<message::SimResetRequest>>().then([this] {
+        sim_->reset();
+        log<NUClear::LogLevel::INFO>("Simulation: state reset to startup keyframe");
     });
 
     // Base-pose heartbeat: one INFO line every ~5 s of sim time (updates arrive at

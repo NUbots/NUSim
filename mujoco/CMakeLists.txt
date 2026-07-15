@@ -13,7 +13,6 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
 
-option(K1_WITH_ONNX "Build the ONNX policy locomotion backend" OFF)
 
 # Dependency prefix: the docker image (docker/Dockerfile) bakes deps into
 # /opt/k1sim-deps; a native fallback build (tools/install_deps.sh) uses .deps/install.

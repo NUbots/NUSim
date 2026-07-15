@@ -14,6 +14,7 @@
 #include "module/Camera/src/CameraConfig.hpp"
 #include "module/Camera/src/EglContext.hpp"
 #include "module/Camera/src/SharedImageWriter.hpp"
+#include "module/Camera/src/SharedPoseWriter.hpp"
 #include "shared/util/Config.hpp"
 
 namespace k1sim::module {
@@ -120,6 +121,27 @@ void Camera::render_loop(camera::CameraConfig cfg) {
     mjData* data            = handles_.data;
     std::mutex* sim_mutex   = handles_.mutex;
 
+    // Head-pose segment for K1Sensors (the "NBPO" pose NUbridge publishes on the
+    // real robot). Torso tilt reaches NUbots only through this pose, so it is
+    // what makes fall detection / GetUp work in sim.
+    std::unique_ptr<camera::SharedPoseWriter> pose_writer;
+    if (!cfg.pose_segment.empty()) {
+        try {
+            pose_writer = std::make_unique<camera::SharedPoseWriter>(cfg.pose_segment);
+        }
+        catch (const std::exception& e) {
+            log<NUClear::LogLevel::ERROR>("Camera: failed to create head-pose segment",
+                                           cfg.pose_segment.c_str(),
+                                           ":",
+                                           e.what());
+        }
+    }
+    const int head_body_id = mj_name2id(model, mjOBJ_BODY, "Head_2");
+    if (pose_writer != nullptr && head_body_id < 0) {
+        log<NUClear::LogLevel::ERROR>("Camera: body 'Head_2' not found — head pose will not be published");
+        pose_writer.reset();
+    }
+
     const int cam_id = mj_name2id(model, mjOBJ_CAMERA, cfg.mjcf_camera.c_str());
     if (cam_id < 0) {
         log<NUClear::LogLevel::ERROR>("Camera: mjcf camera",
@@ -194,9 +216,42 @@ void Camera::render_loop(camera::CameraConfig cfg) {
     auto next_frame         = std::chrono::steady_clock::now();
 
     while (running_.load(std::memory_order_acquire)) {
+        mjtNum head_p[3]{};
+        mjtNum head_q[4]{1, 0, 0, 0};  // wxyz
+        mjtNum base_xy[2]{};
+        mjtNum base_q[4]{1, 0, 0, 0};  // wxyz, free-joint qpos[3:7]
         {
             std::lock_guard<std::mutex> lock(*sim_mutex);
             mjv_updateScene(model, data, &opt, nullptr, &cam, mjCAT_ALL, &scn);
+            if (pose_writer != nullptr) {
+                for (int i = 0; i < 3; ++i) {
+                    head_p[i] = data->xpos[3 * head_body_id + i];
+                }
+                for (int i = 0; i < 4; ++i) {
+                    head_q[i] = data->xquat[4 * head_body_id + i];
+                    base_q[i] = data->qpos[3 + i];
+                }
+                base_xy[0] = data->qpos[0];
+                base_xy[1] = data->qpos[1];
+            }
+        }
+        if (pose_writer != nullptr) {
+            // Hrh = (translate(base_x, base_y, 0) * rotz(base_yaw))^-1 * Hwh: head pose in
+            // the yaw-only base footprint frame, so K1Sensors' yaw-only odometry (Hwr) can
+            // recompose the true world pose — including torso tilt when fallen.
+            const mjtNum yaw = std::atan2(2.0 * (base_q[0] * base_q[3] + base_q[1] * base_q[2]),
+                                          1.0 - 2.0 * (base_q[2] * base_q[2] + base_q[3] * base_q[3]));
+            const mjtNum axis[3]{0, 0, 1};
+            mjtNum neg_yaw_q[4];
+            mju_axisAngle2Quat(neg_yaw_q, axis, -yaw);
+            const mjtNum rel_w[3]{head_p[0] - base_xy[0], head_p[1] - base_xy[1], head_p[2]};
+            mjtNum rel_p[3];
+            mju_rotVecQuat(rel_p, rel_w, neg_yaw_q);
+            mjtNum rel_q[4];
+            mju_mulQuat(rel_q, neg_yaw_q, head_q);
+            const double pos[3]{rel_p[0], rel_p[1], rel_p[2]};
+            const double quat_xyzw[4]{rel_q[1], rel_q[2], rel_q[3], rel_q[0]};
+            pose_writer->publish(pos, quat_xyzw);
         }
         mjr_render(viewport, &scn, &con);
         mjr_readPixels(raw.data(), nullptr, viewport, &con);

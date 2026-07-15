@@ -21,8 +21,8 @@ sim/soccer  (docker container, NUClear)
         │  RoboCup GameController (UDP 3838, direct)
 ```
 
-- **`sim/soccer`** (the role binary) owns the physics (`module::Simulation`), the mode state machine +
-  locomotion backends (`module::Locomotion`), the DDS publishers/RPC server (`module::SdkBridge`), the head
+- **`sim/soccer`** (the role binary) owns the physics (`module::Simulation`), the reduced mode machine +
+  LowCmd servo tracking (`module::Locomotion`), the DDS publishers/RPC server (`module::SdkBridge`), the head
   camera → shared-memory bridge (`module::Camera`), the GameController-aware body-placement supervisor
   (`module::Supervisor`), and the GLFW viewer (`module::Viewer`) — one process, all in this repo.
 - **Locomotion**: NUbots sends only high-level `Move(vx,vy,vyaw)`; the sim owns the gait. The default
@@ -87,9 +87,26 @@ cd ~/NUbots_K1
 ./b target generic
 ./b configure
 ./b build -- bin/keyboardwalk   # the TOP-LEVEL keyboardwalk role (see note below)
-./b run keyboardwalk --environment FASTRTPS_DEFAULT_PROFILES_FILE=/home/nubots/NUbots/tools/fastdds_default_profiles.xml
+
+# One-time: the image's OpenVINO has no CPU device (built ENABLE_INTEL_CPU=OFF); the
+# policy skills need one. Mount the official 2024.6.0 runtime over it:
+#   curl -L -o /tmp/openvino.tgz https://storage.openvinotoolkit.org/repositories/openvino/packages/2024.6/linux/l_openvino_toolkit_ubuntu22_2024.6.0.17404.4c0f47d2335_x86_64.tgz
+#   mkdir -p /tmp/ov_overlay && tar xzf /tmp/openvino.tgz -C /tmp/ov_overlay --strip-components=1
+
+./b run --volume /tmp/ov_overlay/runtime/lib/intel64:/usr/local/runtime/lib/intel64:ro \
+    keyboardwalk \
+    --environment "FASTRTPS_DEFAULT_PROFILES_FILE=/home/nubots/NUbots/tools/fastdds_default_profiles.xml,LD_LIBRARY_PATH=/usr/local/runtime/lib/intel64"
 # focus this terminal: e = walk on/off, w/s/a/d = velocity, z/x = turn, arrows = head
 ```
+
+> **`--environment` takes ONE comma-separated argument.** Passing a second
+> `--environment` flag silently replaces the first — and losing
+> `FASTRTPS_DEFAULT_PROFILES_FILE` kills the whole Booster SDK participant (`Failed to
+> create participant`): vision keeps running off shared memory while LowState/RPCs
+> silently vanish, and the robot collapses when a policy skill switches to CUSTOM with
+> nothing streaming. (The sim now PD-holds the entry pose in that case, but the robot
+> still won't move.) Check the K1 log for `Loaded walk policy` + no
+> `Failed to get current mode` spam before debugging anything else.
 
 Use the **top-level `keyboardwalk` role**, not `webots/keyboardwalk`: upstream's `roles/webots/*.role`
 still load the legacy NUgus TCP modules (`platform::Webots`), while the top-level roles use
@@ -113,14 +130,17 @@ cd ~/NUSim && ./b run sim/soccer
 # terminal 2 — the Tester purpose (find_ball / walk_to_ball / align_ball_to_goal)
 cd ~/NUbots_K1
 ./b build -- bin/test/behaviour
-./b run test/behaviour --environment=FASTRTPS_DEFAULT_PROFILES_FILE=/home/nubots/NUbots/tools/fastdds_default_profiles.xml
+./b run --volume /tmp/ov_overlay/runtime/lib/intel64:/usr/local/runtime/lib/intel64:ro \
+    test/behaviour \
+    --environment "FASTRTPS_DEFAULT_PROFILES_FILE=/home/nubots/NUbots/tools/fastdds_default_profiles.xml,LD_LIBRARY_PATH=/usr/local/runtime/lib/intel64"
 ```
 
 Two NUbots_K1-side requirements, both easy to miss:
 
-- The role **must use `skill::K1Walk`, not `skill::Walk`** — upstream `Walk` is the NUgus joint-trajectory
-  engine whose servo output the Booster runner ignores; only `K1Walk` translates `Walk` tasks into the
-  Booster `Move` RPC. (`roles/test/behaviour.role` and `roles/keyboardwalk.role` are already correct.)
+- The role **must use `skill::K1WalkPolicy` (+ `skill::K1GetUpPolicy`), not `skill::Walk`** — upstream
+  `Walk` is the NUgus joint-trajectory engine whose servo output goes nowhere on the K1; the policy skills
+  run the ONNX locomotion policies and stream `rt/joint_ctrl`.
+  (`roles/test/behaviour.role` and `roles/keyboardwalk.role` are already correct.)
 - `VisualMesh.yaml` needs a `cameras:` entry whose key matches the camera **name** in `K1Camera.yaml`
   ("Left Camera") — with no entry the mesh silently drops every frame
   (`VisualMesh Stats: ... Processing 0/s`).
@@ -154,32 +174,34 @@ version to avoid a sim2sim gap; bumping one means bumping **all** and rebuilding
 
 ## 3. The mode / locomotion story
 
-The sim owns a Booster-style mode state machine (`module::Locomotion`): `ChangeMode`/`Move`/`RotateHead`/
-`GetUp`/kick RPCs drive it exactly like the real robot's firmware. Two interchangeable **backends** compute
-joint targets once in `WALKING`/`SOCCER` mode (`config/locomotion.yaml`, `backend:`):
+**Locomotion policies live in NUbots_K1, not in the sim.** The sim is a servo-command listener: the NUbots
+stack runs ONNX inference on its side (`module/skill/K1WalkPolicy` for walking, `module/skill/K1GetUpPolicy`
+for fall recovery — OpenVINO, 50 Hz) and streams the resulting joint targets over the Booster SDK's
+low-level topic (`rt/joint_ctrl`, `LowCmd`), which the sim PD-tracks at 1 kHz in **CUSTOM** mode with the
+per-motor `kp`/`kd`/`tau` carried in each message (torques clamped to the model's motor `forcerange`).
 
-- **`policy` (the default; a trained policy ships).** Feeds a 50 Hz ONNX policy (trained in the
-  mujoco_playground fork — see §7) that outputs PD target offsets, driven purely through the same 22
-  torque actuators as the real robot: dynamics-faithful walking. The shipped policy lives at
-  `models/k1/policies/k1_walk.onnx` (`config/locomotion.yaml`'s `policy.path`; requires the ONNX build,
-  `K1SIM_CMAKE_ARGS="-DK1_WITH_ONNX=ON"`). The interface the sim expects is pinned in
-  [OBS_ACTION_CONTRACT.md](OBS_ACTION_CONTRACT.md) — retraining/replacing the policy must match it.
-- **`kinematic` (fallback).** Directly servos the robot's root velocity/height/upright attitude from the
-  commanded `vx/vy/vyaw`, with a PD-held ready pose and a procedural stepping animation on top. **Not
-  dynamics-faithful** — the robot doesn't fall over from being pushed off-balance by its own gait, because
-  the root is velocity-servoed rather than driven purely by joint torques and contact forces. Useful when
-  the ONNX build is unavailable or a deterministic glide is preferable.
+`module::Locomotion` keeps only a reduced Booster-style mode machine:
 
-The sim boots holding **PREPARE** (standing at the ready pose) until the first `ChangeMode` arrives
-(`locomotion.yaml`'s `initial_mode`; set `damping` for the real robot's limp-at-boot behaviour — but note
-the RL policy cannot get up from a collapsed start).
+- **DAMPING** — motors limp (zero ctrl).
+- **PREPARE** — cubic blend to and PD-hold of the `gains.yaml` ready pose (boot convenience: the sim spawns
+  standing, and idling limp would just collapse before a client connects). `RotateHead` still steers the
+  head here.
+- **CUSTOM** — PD-track the latest `rt/joint_ctrl` LowCmd (the path every NUbots_K1 policy uses).
 
-Getting knocked over is still meaningful either way: `module::SdkBridge` reports `rt/fall_down` from the
-base's actual tilt (`config/locomotion.yaml`'s `fall:` thresholds), and `GetUp`/`GetUpWithMode` run a
-scripted recovery. In the viewer, **double-click a body then Ctrl+right-drag** to apply a push force and
-test this interactively (see `module/Viewer` below). The sim also logs a base-pose heartbeat
-(`Simulation: t = ..., base x = ...`) every 5 s of sim time, so headless runs show whether the robot is
-actually moving.
+For SDK wire compatibility the old high-level RPCs are still answered: `ChangeMode(WALKING/SOCCER)` maps to
+PREPARE with a warning, and `Move`/`GetUp`/`LieDown`/`VisualKick` are accepted but ignored (warn-once) —
+drive the robot with CUSTOM + LowCmd instead.
+
+The sim boots holding **PREPARE** until the first `ChangeMode` arrives (`locomotion.yaml`'s `initial_mode`;
+set `damping` for the real robot's limp-at-boot behaviour). `--keyframe lying_front` spawns the robot on
+the floor instead — the standard way to exercise the NUbots get-up policy end to end.
+
+Getting knocked over is still meaningful: `module::SdkBridge` reports `rt/fall_down` from the base's actual
+tilt/height (`config/locomotion.yaml`'s `fall:` thresholds), which is what triggers the NUbots
+FallRecovery → GetUpPlanner → `K1GetUpPolicy` chain. In the viewer, **double-click a body then
+Ctrl+right-drag** to apply a push force and test this interactively (see `module/Viewer` below). The sim
+also logs a base-pose heartbeat (`Simulation: t = ..., base x = ...`) every 5 s of sim time, so headless
+runs show whether the robot is actually moving.
 
 ## 4. Config files reference (`mujoco/config/`)
 
@@ -187,7 +209,7 @@ actually moving.
 | --- | --- |
 | `simulation.yaml` | `module::Simulation` — model path, real-time factor, state-publish rate |
 | `gains.yaml` | Per-joint PD stiffness/damping + ready pose (seeded from Booster's official K1 deploy config) |
-| `locomotion.yaml` | `module::Locomotion` — mode/backend selection, kinematic servo gains, getup/liedown/kick timings, fall thresholds |
+| `locomotion.yaml` | `module::Locomotion` — initial mode, prepare blend time, fall thresholds |
 | `dds.yaml` | `module::SdkBridge` — DDS domain, UDP-only fallback, battery SOC, unknown-RPC status |
 
 All are read at startup (`--config-dir` or `$K1SIM_CONFIG_DIR` to point elsewhere); `--model`/`--rtf` on the
@@ -203,14 +225,23 @@ A GLFW + MuJoCo GPU-rendered window, skipped entirely under `--headless`. Standa
   to twist it (rotate) — handy for shoving the robot over to test `fall_down`/`GetUp` recovery.
 - **Esc** closes the window (shuts the whole sim down). **Overlay** (top-left) shows sim time, measured
   real-time factor, and the current mode.
+- **F** shoves the robot over (adds root velocity under the sim mutex) — deterministic fall for testing
+  FallRecovery/GetUp; mouse-drag perturbs are usually within what the push-randomised policy survives.
+- **Backspace** resets the simulation to its startup state (the model's `ready` keyframe: robot pose, ball
+  position, all velocities). Physics state only — the Locomotion controller keeps its current mode and last
+  commands, like picking a real robot up and placing it back on the start mark mid-program. (Viewer emits
+  `SimResetRequest`; `module::Simulation` handles it, so headless/scripted resets can emit the same message.)
 - Pausing physics from the viewer is **not** wired up (that's `module::Simulation`'s pacing thread, not the
   viewer's, and there's currently no pause switch to hook into) — noted here as future work, not a bug.
 
 ## 6. Camera → NUsight (`module::Camera`)
 
 `sim/soccer` renders the K1's head camera (a `<camera name="head">` in the model) offscreen and writes rgb8
-frames into a **Boost.Interprocess shared-memory segment** (`_boostercamera_head_raw_rgb` — the left-camera
-entry in NUbots_K1's `K1Camera.yaml`) laid out exactly like NUbots' `input::K1Camera` `SharedImageHeader`.
+frames into a **Boost.Interprocess shared-memory segment** (`_boostercamera_head_rgb` — the left-camera
+entry in NUbots_K1's `K1Camera.yaml`; NUbridge dropped the "raw" from the topic during RoboCup 2026) laid
+out exactly like NUbots' `input::K1Camera` `SharedImageHeader` **including the leading magic/version fields
+robocup2026 added** — a layout mismatch shifts the interprocess mutex offset and aborts the reader with a
+glibc `pthread_mutex_lock` owner assertion on the first frame.
 So the sim impersonates NUbridge: the **unchanged** NUbots `robocup`/`behaviour` role reads the segment →
 `ImageCompressor` → `NetworkForwarder` → **NUsight** shows `CompressedImage`, same as on the real robot.
 `--ipc host` (already used by `./b run` and NUbots' `./b run`) shares `/dev/shm` across the containers.
@@ -221,20 +252,26 @@ Config: `mujoco/config/camera.yaml` (segment name, resolution, fps, intrinsics).
 blaming the NUbots side. The right-camera segment (`_boostercamera_head_raw_right_rgb`) is not rendered
 yet; K1Camera warn-retries on it harmlessly (stereo is future work).
 
+The same render thread also publishes the **head-pose segment** (`_head_pose`, K1Sensors' "NBPO" layout,
+`pose_segment:` in `camera.yaml`): the `Head_2` pose in the yaw-only base footprint frame, exactly what
+NUbridge publishes on the real robot. This matters more than it looks: NUbots' odometry is yaw-only, so
+`Sensors.Htw` gets its pitch/roll **only** from this pose — without it `GetUpPlanner` never sees the robot
+as fallen and the whole FallRecovery → GetUpPlanner → `K1GetUpPolicy` chain stays dead. The NUbots-side
+walk policy (`K1WalkPolicy`) also masks the head joints out of its observation: the policy trained with a
+pinned head, and real K1Look scan amplitudes push the raw observation out of distribution and topple the
+robot within seconds.
+
 ## 7. Getting a locomotion policy
 
-NUSim does not train policies — it only simulates. A trained walk policy **ships** at
-`mujoco/models/k1/policies/k1_walk.onnx` (200M-step PPO, `K1JoystickFlatTerrain`, domain randomization).
-To retrain or replace it: policies are trained in the NUbots
+NUSim neither trains nor runs policies — it only simulates. Policies are trained in the NUbots
 **[mujoco_playground fork](https://github.com/Tom0Brien/mujoco_playground)** (branch `feat/k1-training`,
-MJX/brax PPO, `K1JoystickFlatTerrain` / `K1JoystickRoughTerrain` tasks) —
-`learning/train_jax_ppo.py --env_name=K1JoystickFlatTerrain --domain_randomization`, then export a
-checkpoint with `learning/export_k1_onnx.py` (bakes the brax observation normalization into the graph).
-The C++ `PolicyBackend` loads the ONNX (`config/locomotion.yaml: backend: policy`, build
-`-DK1_WITH_ONNX=ON`). Anything that trains a policy for this sim must match the interface pinned in
-**[OBS_ACTION_CONTRACT.md](OBS_ACTION_CONTRACT.md)**; a quick sim2sim sanity check for an exported policy
-is `test/contract/policy_walk_check.py --onnx <file> --vx 0.3` (pure-python PolicyBackend replica,
-reports displacement + uprightness).
+MJX/brax PPO: `K1JoystickFlatTerrain` / `K1JoystickRoughTerrain` for walking, `K1Getup` for fall
+recovery) — `learning/train_jax_ppo.py --env_name=<task> --domain_randomization`, then export a checkpoint
+with `learning/export_k1_onnx.py` (bakes the brax observation normalization into the graph). The exported
+`.onnx` is **deployed into NUbots_K1** (`module/skill/K1WalkPolicy/data/k1_walk.onnx`,
+`module/skill/K1GetUpPolicy/data/k1_getup.onnx`), where it runs against this sim (or the real robot)
+through CUSTOM mode + `rt/joint_ctrl`. The walk interface is pinned in
+**[OBS_ACTION_CONTRACT.md](OBS_ACTION_CONTRACT.md)**.
 
 ## 8. GameController supervisor (`module::Supervisor`)
 

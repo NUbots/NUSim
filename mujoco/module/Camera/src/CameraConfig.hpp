@@ -14,7 +14,10 @@ struct CameraConfig {
     // POSIX shared-memory segment name. Must match the corresponding entry's
     // `segment:` in NUbots_K1's module/input/K1Camera/data/config/K1Camera.yaml
     // (default below matches that file's "Left Camera" entry).
-    std::string segment = "_boostercamera_head_raw_rgb";
+    std::string segment = "_boostercamera_head_rgb";
+
+    // Head-pose segment K1Sensors reads (K1Sensors.yaml `segment:`). Empty disables.
+    std::string pose_segment = "_head_pose";
 
     // Render resolution. rgb8, so the segment carries width*height*3 pixel bytes
     // after the header -- keep this under K1Camera's MAX_IMAGE_BYTES (2 MiB); the
@@ -34,7 +37,8 @@ struct CameraConfig {
 
 inline CameraConfig load_config(const YAML::Node& root) {
     CameraConfig cfg;
-    cfg.segment     = root["segment"].as<std::string>(cfg.segment);
+    cfg.segment      = root["segment"].as<std::string>(cfg.segment);
+    cfg.pose_segment = root["pose_segment"].as<std::string>(cfg.pose_segment);
     cfg.width       = root["width"].as<int>(cfg.width);
     cfg.height      = root["height"].as<int>(cfg.height);
     cfg.fps         = root["fps"].as<double>(cfg.fps);

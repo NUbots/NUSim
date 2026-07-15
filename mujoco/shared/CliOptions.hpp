@@ -12,6 +12,7 @@ struct CliOptions {
     bool headless = false;
     std::string model;       // override for simulation.yaml model path
     std::string config_dir;  // override for the config directory
+    std::string keyframe;    // override for the startup keyframe (default "ready")
     double rtf = -1.0;       // override real-time factor; <0 = use config (0 = free-run)
 };
 
@@ -41,6 +42,9 @@ inline CliOptions parse_cli(int argc, char** argv) {
         else if (arg == "--config-dir") {
             opts.config_dir = value("--config-dir");
         }
+        else if (arg == "--keyframe") {
+            opts.keyframe = value("--keyframe");
+        }
         else if (arg == "--rtf") {
             opts.rtf = std::stod(value("--rtf"));
         }
@@ -49,6 +53,7 @@ inline CliOptions parse_cli(int argc, char** argv) {
                         "  --headless          run without the viewer window\n"
                         "  --model <path>      MJCF scene to load (default: config simulation.yaml)\n"
                         "  --config-dir <dir>  config directory (default: mujoco/config)\n"
+                        "  --keyframe <name>   startup keyframe (default: ready; e.g. lying_front)\n"
                         "  --rtf <factor>      real-time factor; 0 = free-run\n");
             std::exit(0);
         }

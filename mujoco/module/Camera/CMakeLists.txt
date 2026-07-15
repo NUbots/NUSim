@@ -14,6 +14,7 @@ find_package(OpenGL REQUIRED COMPONENTS EGL)
 add_library(k1sim_module_camera STATIC
     src/Camera.cpp
     src/SharedImageWriter.cpp
+    src/SharedPoseWriter.cpp
 )
 target_link_libraries(
     k1sim_module_camera

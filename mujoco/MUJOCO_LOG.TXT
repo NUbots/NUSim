@@ -45,3 +45,33 @@ WARNING Sun Jul 12 14:16:14 2026: Nan, Inf or huge value in QACC at DOF 29. The 
 
 WARNING Mon Jul 13 10:33:11 2026: Nan, Inf or huge value in QACC at DOF 30. The simulation is unstable. Time = 1154.9900.
 
+WARNING Tue Jul 14 09:09:24 2026: OpenGL error 0x502 in or before mjr_makeContext
+
+WARNING Tue Jul 14 09:20:06 2026: OpenGL error 0x502 in or before mjr_makeContext
+
+WARNING Tue Jul 14 09:27:35 2026: OpenGL error 0x502 in or before mjr_makeContext
+
+WARNING Tue Jul 14 09:35:29 2026: OpenGL error 0x502 in or before mjr_makeContext
+
+WARNING Tue Jul 14 09:38:48 2026: OpenGL error 0x502 in or before mjr_makeContext
+
+WARNING Tue Jul 14 09:41:50 2026: OpenGL error 0x502 in or before mjr_makeContext
+
+WARNING Tue Jul 14 13:57:44 2026: OpenGL error 0x502 in or before mjr_makeContext
+
+WARNING Tue Jul 14 14:07:09 2026: OpenGL error 0x502 in or before mjr_makeContext
+
+WARNING Tue Jul 14 14:12:32 2026: OpenGL error 0x502 in or before mjr_makeContext
+
+WARNING Tue Jul 14 14:15:26 2026: OpenGL error 0x502 in or before mjr_makeContext
+
+WARNING Tue Jul 14 20:05:41 2026: OpenGL error 0x502 in or before mjr_makeContext
+
+WARNING Tue Jul 14 20:08:21 2026: OpenGL error 0x502 in or before mjr_makeContext
+
+WARNING Tue Jul 14 20:18:32 2026: OpenGL error 0x502 in or before mjr_makeContext
+
+WARNING Tue Jul 14 22:27:39 2026: OpenGL error 0x502 in or before mjr_makeContext
+
+WARNING Tue Jul 14 22:30:13 2026: OpenGL error 0x502 in or before mjr_makeContext
+

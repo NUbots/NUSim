@@ -20,6 +20,13 @@ namespace bip = boost::interprocess;
 // contract. If you change one, change the other; field order/types must match
 // exactly (mutex + condition first, so `this + 1` is the first pixel byte).
 struct SharedImageHeader {
+    // magic/version must lead the struct — RoboCup 2026 NUbridge added them and
+    // K1Camera's layout has them before the mutex; without them the reader's
+    // mutex offset lands 8 bytes into ours (glibc owner assertion on first lock).
+    static constexpr uint32_t MAGIC   = 0x4E42494D;  // "NBIM"
+    static constexpr uint32_t VERSION = 1;
+    uint32_t magic{MAGIC};
+    uint32_t version{VERSION};
     bip::interprocess_mutex mutex;
     bip::interprocess_condition has_new_frame;
     uint64_t sequence{0};

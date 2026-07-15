@@ -1,6 +1,7 @@
 #include "module/SdkBridge/src/StatePublisher.hpp"
 
 #include <cmath>
+#include <cstdio>
 
 #include "BatteryState.h"
 #include "BatteryStatePubSubTypes.h"
@@ -100,6 +101,12 @@ void StatePublisher::publish(const k1sim::message::SimStateUpdate& update) {
     const bool changed = !have_last_fall_state_ || last_fall_state_ != update.fall_state;
     const bool due_keepalive = (update.sim_time - last_fall_publish_time_) >= 1.0;
     if (changed || due_keepalive) {
+        if (changed) {
+            std::fprintf(stderr,
+                         "StatePublisher: fall_state -> %d (t=%.2f)\n",
+                         update.fall_state,
+                         update.sim_time);
+        }
         booster_interface::msg::dds_::FallDownState_ fall;
         fall.fall_down_state(
             static_cast<booster_interface::msg::dds_::FallDownStateType_>(update.fall_state));

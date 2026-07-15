@@ -30,7 +30,7 @@ Requirements: **Docker** (everything else is baked into the image). Full setup, 
 troubleshooting are in **[docs/K1_MUJOCO_SETUP.md](docs/K1_MUJOCO_SETUP.md)**.
 
 ```bash
-K1SIM_CMAKE_ARGS="-DK1_WITH_ONNX=ON" ./b configure   # ONNX build: the RL walk policy is the default backend
+./b configure                   # configure the sim build
 ./b build                       # build the sim in docker (first run builds the image)
 ./b run sim/soccer              # launch the soccer sim (viewer + DDS + camera + supervisor)
 ```
@@ -41,26 +41,35 @@ create its DDS participant (`Failed to create participant`):
 
 ```bash
 cd ~/NUbots_K1
-./b run keyboardwalk --environment=FASTRTPS_DEFAULT_PROFILES_FILE=/home/nubots/NUbots/tools/fastdds_default_profiles.xml
+# The OpenVINO runtime baked into the NUbots_K1 image has no CPU device (built with
+# ENABLE_INTEL_CPU=OFF), and the policy skills (K1WalkPolicy/K1GetUpPolicy) need one.
+# Until the image is fixed, mount the official 2024.6.0 runtime over it:
+#   curl -L -o /tmp/openvino.tgz https://storage.openvinotoolkit.org/repositories/openvino/packages/2024.6/linux/l_openvino_toolkit_ubuntu22_2024.6.0.17404.4c0f47d2335_x86_64.tgz
+#   mkdir -p /tmp/ov_overlay && tar xzf /tmp/openvino.tgz -C /tmp/ov_overlay --strip-components=1
+# NOTE: --environment takes ONE comma-separated argument; a second --environment flag
+# silently replaces the first (and losing FASTRTPS_DEFAULT_PROFILES_FILE kills all DDS).
+./b run --volume /tmp/ov_overlay/runtime/lib/intel64:/usr/local/runtime/lib/intel64:ro \
+    keyboardwalk \
+    --environment "FASTRTPS_DEFAULT_PROFILES_FILE=/home/nubots/NUbots/tools/fastdds_default_profiles.xml,LD_LIBRARY_PATH=/usr/local/runtime/lib/intel64"
 # e = walk on/off, w/s/a/d = velocity (0.01 m/s per press — tap ~10x), z/x = turn, arrows = head
 ```
 
 The full autonomous stack works too — `./b run test/behaviour` (same `--environment=` flag) has the robot
 find the ball by vision and dribble it goalward. See
 [docs/K1_MUJOCO_SETUP.md](docs/K1_MUJOCO_SETUP.md) for the end-to-end walkthrough and the NUbots_K1-side
-requirements (`skill::K1Walk` in the role, `VisualMesh.yaml` camera entry).
+requirements (`skill::K1WalkPolicy` + `skill::K1GetUpPolicy` in the role, `VisualMesh.yaml` camera entry).
 
 ## Locomotion policy
 
-NUSim does **one thing: simulate**. It does not train policies. Real walking comes from a trained
-velocity-tracking RL policy in ONNX form, produced by the NUbots
+NUSim does **one thing: simulate**. It neither trains nor runs locomotion policies: the sim is a
+servo-command listener (CUSTOM mode + `rt/joint_ctrl` LowCmd, PD-tracked at 1 kHz), and inference runs on
+the NUbots side (`NUbots_K1` `module/skill/K1WalkPolicy` and `module/skill/K1GetUpPolicy`, OpenVINO,
+50 Hz). Policies are trained in the NUbots
 **[mujoco_playground fork](https://github.com/Tom0Brien/mujoco_playground)** (branch `feat/k1-training`,
-`K1JoystickFlatTerrain` task). A trained policy **ships** at `mujoco/models/k1/policies/k1_walk.onnx` and
-is the default backend (`config/locomotion.yaml: backend: policy`; build with `-DK1_WITH_ONNX=ON`). To
-replace it, drop a new exported `.onnx` in and point `policy.path` at it. The exact observation/action
-interface the sim expects is pinned in
-**[docs/OBS_ACTION_CONTRACT.md](docs/OBS_ACTION_CONTRACT.md)** — anything that trains a policy for this
-sim must match it.
+`K1JoystickFlatTerrain` / `K1Getup` tasks) and exported to ONNX with `learning/export_k1_onnx.py`. The
+walk observation/action interface is pinned in
+**[docs/OBS_ACTION_CONTRACT.md](docs/OBS_ACTION_CONTRACT.md)** — anything that trains a walk policy for
+the K1 must match it.
 
 ## Layout
 

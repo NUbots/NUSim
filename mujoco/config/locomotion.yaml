@@ -1,68 +1,15 @@
-# Mode machine + locomotion backends (module::Locomotion)
-backend: policy # kinematic | policy
+# Reduced mode machine (module::Locomotion): Damping / Prepare / Custom.
+# Locomotion policies (walk, get-up, kick) live in NUbots_K1 and drive the sim
+# through CUSTOM mode + rt/joint_ctrl (LowCmd servo targets). The sim only
+# simulates servos, detects falls and publishes state.
 initial_mode: prepare # prepare (hold ready pose until first ChangeMode) | damping (real-robot boot behaviour)
 
 prepare_blend_time: 1.0 # seconds, cubic blend into the ready pose on ChangeMode(PREPARE)
-
-kinematic:
-  # Standing base height servo target (m). MUST match the model's natural
-  # straight-leg PD standing height (measured: 0.5517 for the vendored
-  # K1_22dof.xml + gains.yaml ready pose, tilt servo on / height servo off).
-  # A lower target (e.g. the 0.53 spawn height from the old Webots world)
-  # makes the servo command a persistent downward root velocity that the
-  # floor cancels every 1 ms step -- a 1 kHz ram whose inertial load (several
-  # g equivalent, coupled through the mass matrix) is strong enough to pin
-  # the (kp=4) head joints against their limits and defeat RotateHead
-  # tracking.
-  z0: 0.5517
-  servo_gain: 20.0 # 1/s, height + upright root servo gain
-  animate_steps: true # procedural stepping animation while moving
-  step_phase_gain: 6.0 # rad of gait phase per metre of commanded travel (phase ∝ speed)
-  step_height: 0.03 # m, approximate foot clearance target for the stepping animation
-
-policy:
-  # mujoco_playground K1Joystick* contract: 82-obs / 22-action full-body policy with a
-  # two-foot gait phase — see docs/OBS_ACTION_CONTRACT.md. All joint arrays below are
-  # in JointIndexK1 order (head x2, L arm x4, R arm x4, L leg x6, R leg x6).
-  path: "models/k1/policies/k1_walk.onnx" # .onnx; required when backend: policy (build with -DK1_WITH_ONNX=ON)
-  inference_divisor: 20 # physics steps per inference (1 kHz / 20 = 50 Hz = training ctrl_dt 0.02)
-  gait_frequency: 1.5 # Hz, phase advance rate (training randomizes U(1.25, 1.75))
-  stand_threshold: 0.01 # command norm below which the phase obs pins to [pi, pi] (standing)
-  action_scale: 1.0 # global multiplier on action_scale_joint (training config action_scale)
-  # Training-time actuation, mirrored from the playground k1_mjx_feetonly.xml: kp = its
-  # position-actuator gains; kd = its joint damping (the vendored K1_22dof.xml has no
-  # joint damping, so it lives in the PD's D term instead — same torque either way);
-  # action_scale_joint = 0.25 * effort_limit / kp (booster_train convention, effort
-  # limits from the Booster actuator catalog = the motor forceranges in K1_22dof.xml).
-  kp: [3.948, 3.948,
-       3.948, 3.948, 3.948, 3.948, 3.948, 3.948, 3.948, 3.948,
-       30.201, 21.448, 17.846, 60.402, 35.692, 35.692,
-       30.201, 21.448, 17.846, 60.402, 35.692, 35.692]
-  kd: [0.251, 0.251,
-       0.251, 0.251, 0.251, 0.251, 0.251, 0.251, 0.251, 0.251,
-       3.605, 2.56, 2.13, 4.807, 4.26, 4.26,
-       3.605, 2.56, 2.13, 4.807, 4.26, 4.26]
-  action_scale_joint: [0.3799, 0.3799,
-                       0.8865, 0.8865, 0.8865, 0.8865, 0.8865, 0.8865, 0.8865, 0.8865,
-                       0.5629, 0.8859, 0.5365, 0.4636, 0.2683, 0.2683,
-                       0.5629, 0.8859, 0.5365, 0.4636, 0.2683, 0.2683]
-  # Training keyframe ("home"): arms tucked, legs crouched — NOT gains.yaml's ready pose.
-  default_pose: [0, 0,
-                 0, -1.3, 0, 0,
-                 0, 1.3, 0, 0,
-                 -0.2, 0, 0, 0.4, -0.2, 0,
-                 -0.2, 0, 0, 0.4, -0.2, 0]
-
-getup: # GettingUp transient (GetUpRequest/GetUpWithMode, any mode -> target mode)
-  duration: 2.0 # seconds, scripted joint interpolation (current -> crouch -> ready)
-
-liedown: # LyingDown transient (LieDownRequest -> DAMPING)
-  duration: 1.5 # seconds, scripted joint interpolation toward the lying_front keyframe
-
-kick: # Kicking transient (VisualKickRequest, only from WALKING/SOCCER)
-  duration: 0.5 # seconds, scripted single-leg swing; root held via the kinematic servo
 
 fall:
   falling_tilt: 0.35 # rad — tilt beyond this (with |gyro| > falling_gyro) => IS_FALLING
   fallen_tilt: 1.0 # rad — tilt beyond this => HAS_FALLEN
   falling_gyro: 1.0 # rad/s — |gyro| threshold paired with falling_tilt for IS_FALLING
+  fallen_height: 0.35 # m — base below this => HAS_FALLEN even if the trunk is upright
+  # (collapsed/kneeling poses read IS_READY on tilt alone, which starves the
+  # NUbots get-up retry loop; standing ~0.55, walking crouch >= 0.45)
