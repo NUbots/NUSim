@@ -65,7 +65,15 @@ passthrough. Roles: `sim/soccer` (full sim). Args after the role pass through to
 ./b run sim/soccer --headless                            # no viewer window (CI / server)
 ./b run sim/soccer --model models/k1/k1_scene_flat.xml   # bare robot on a flat floor, no field/ball
 ./b run sim/soccer --rtf 0                                # free-run (uncapped real-time factor)
+./b run sim/soccer --robots 5                             # 4 extra K1s on the field (max 20 total)
 ```
+
+`--robots <n>` (1–20, default 1) attaches `n−1` extra K1 copies to the scene via MuJoCo's
+`mjSpec` attach API, each with a `subNN_` name prefix so the main robot's unprefixed
+joints/sensors (and every DDS/shm contract) are untouched. Extras spawn standing on a
+5×4 grid off the `y = 0` line (main-robot and ball spawn lane) and are PD-held at the
+`ready` pose — uncontrolled standing obstacles for dribbling/navigation practice. Sim
+resets (Backspace) re-place them. The `--keyframe` flag only affects the main robot.
 
 > `--model` must point at a **scene** (`k1_scene_robocup.xml`, `k1_scene_flat.xml`), not the bare
 > `K1_22dof.xml` component (no floor/lights → black screen).
@@ -89,13 +97,18 @@ cd ~/NUbots_K1
 ./b build -- bin/keyboardwalk   # the TOP-LEVEL keyboardwalk role (see note below)
 
 # One-time: the image's OpenVINO has no CPU device (built ENABLE_INTEL_CPU=OFF); the
-# policy skills need one. Mount the official 2024.6.0 runtime over it:
+# policy skills need one. Extract the official 2024.6.0 runtime to ~/.cache/ov_overlay
+# (NOT /tmp — a reboot wipes it, and docker then recreates /tmp/ov_overlay as an empty
+# root-owned stub that used to fool the auto-mount into mounting nothing):
 #   curl -L -o /tmp/openvino.tgz https://storage.openvinotoolkit.org/repositories/openvino/packages/2024.6/linux/l_openvino_toolkit_ubuntu22_2024.6.0.17404.4c0f47d2335_x86_64.tgz
-#   mkdir -p /tmp/ov_overlay && tar xzf /tmp/openvino.tgz -C /tmp/ov_overlay --strip-components=1
+#   mkdir -p ~/.cache/ov_overlay && tar xzf /tmp/openvino.tgz -C ~/.cache/ov_overlay --strip-components=1
+# `./b run` auto-mounts the overlay (tools/utility/dockerise/run.py checks
+# ~/.cache/ov_overlay then /tmp/ov_overlay for libopenvino_intel_cpu_plugin.so and sets
+# LD_LIBRARY_PATH) — no --volume flag needed. Symptom when the overlay is missing:
+# 'Device with "CPU" name is not registered in the OpenVINO Runtime' at policy load.
 
-./b run --volume /tmp/ov_overlay/runtime/lib/intel64:/usr/local/runtime/lib/intel64:ro \
-    keyboardwalk \
-    --environment "FASTRTPS_DEFAULT_PROFILES_FILE=/home/nubots/NUbots/tools/fastdds_default_profiles.xml,LD_LIBRARY_PATH=/usr/local/runtime/lib/intel64"
+./b run keyboardwalk \
+    --environment "FASTRTPS_DEFAULT_PROFILES_FILE=/home/nubots/NUbots/tools/fastdds_default_profiles.xml"
 # focus this terminal: e = walk on/off, w/s/a/d = velocity, z/x = turn, arrows = head
 ```
 
@@ -130,9 +143,8 @@ cd ~/NUSim && ./b run sim/soccer
 # terminal 2 — the Tester purpose (find_ball / walk_to_ball / align_ball_to_goal)
 cd ~/NUbots_K1
 ./b build -- bin/test/behaviour
-./b run --volume /tmp/ov_overlay/runtime/lib/intel64:/usr/local/runtime/lib/intel64:ro \
-    test/behaviour \
-    --environment "FASTRTPS_DEFAULT_PROFILES_FILE=/home/nubots/NUbots/tools/fastdds_default_profiles.xml,LD_LIBRARY_PATH=/usr/local/runtime/lib/intel64"
+./b run test/behaviour \
+    --environment "FASTRTPS_DEFAULT_PROFILES_FILE=/home/nubots/NUbots/tools/fastdds_default_profiles.xml"
 ```
 
 Two NUbots_K1-side requirements, both easy to miss:
@@ -272,6 +284,19 @@ with `learning/export_k1_onnx.py` (bakes the brax observation normalization into
 `module/skill/K1GetUpPolicy/data/k1_getup.onnx`), where it runs against this sim (or the real robot)
 through CUSTOM mode + `rt/joint_ctrl`. The walk interface is pinned in
 **[OBS_ACTION_CONTRACT.md](OBS_ACTION_CONTRACT.md)**.
+
+Reward shaping notes (July 2026, targeting observed policy failures):
+
+- **Walk (`joystick.py`)** — `arm_oscillation` cost penalises the *second difference* of the arm-joint
+  actions: hand shake reverses the action every control step (large second difference) while a smooth
+  running arm swing has near-constant action rate (small), so swinging arms stays cheap.
+- **GetUp (`getup.py`)** — the splits was a stable local optimum (upright trunk at decent height).
+  Countered with: `hip_pitch_symmetry` (cost on L−R hip-pitch difference — splits are antisymmetric,
+  a legitimate crouch is symmetric so it rides free), `hip_yaw_roll` (always-on deviation cost, kills
+  side splits/leg splay), `arm_pose` (arm deviation cost gated on upright — arms stay free to push off
+  the floor while prone, but no raised-arm salute once up), and the `posture` reward is now ungated
+  with a wider kernel (`exp(-0.25·cost)`) so a pull toward the stand pose exists even from deep inside
+  the splits/kneel optima.
 
 ## 8. GameController supervisor (`module::Supervisor`)
 

@@ -24,6 +24,7 @@ SimCore::Config build_sim_config() {
     // CliOptions.rtf < 0 means "use config"; the config's real_time_factor may itself be 0
     // (free-run) — SimCore treats rtf <= 0 as free-run.
     cfg.rtf                   = cli().rtf >= 0.0 ? cli().rtf : sim_cfg["real_time_factor"].as<double>(1.0);
+    cfg.robots                = cli().robots;
     cfg.state_publish_divisor = sim_cfg["state_publish_divisor"].as<int>(20);
     cfg.resync_threshold      = sim_cfg["resync_threshold"].as<double>(0.05);
 

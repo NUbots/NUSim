@@ -45,6 +45,82 @@ timespec add_seconds(timespec t, double seconds) {
     return t;
 }
 
+// Name prefix for the k-th extra robot's joints/actuators/bodies (k starts at 1).
+std::string extra_prefix(int k) {
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "sub%02d_", k);
+    return buf;
+}
+
+// Spawn slot for the k-th extra robot (k starts at 1): a 5x4 grid on the field,
+// rows at y = +-1.2 / +-2.4 so nothing lands on the y=0 line the main robot and
+// ball spawn on. z is the "ready" standing base height. The scene keyframes
+// zero-pad the extra free joints (global coords — zeros mean "at the origin,
+// inside the main robot"), so these slots are written into qpos explicitly
+// after every keyframe reset rather than relying on the padding.
+std::array<double, 3> extra_spawn(int k) {
+    const int col = (k - 1) % 5;
+    const int row = (k - 1) / 5;
+    const double x = -3.0 + 1.5 * col;
+    const double y = (row % 2 == 0 ? 1.0 : -1.0) * (1.2 + 1.2 * (row / 2));
+    return {x, y, 0.555};
+}
+
+// Build a scene with (robots - 1) extra K1 copies attached via mjSpec. Each copy's
+// element names get a "subNN_" prefix, so the main robot's unprefixed names (and
+// every existing name-based lookup) stay valid. Extra copies' keyframes are dropped;
+// the parent scene's keyframes zero-pad the new free joints, landing each copy at
+// its attachment frame.
+mjModel* load_multi_robot_model(const std::string& scene_path, int robots, char* error, int error_sz) {
+    mjSpec* scene = mj_parseXML(scene_path.c_str(), nullptr, error, error_sz);
+    if (scene == nullptr) {
+        throw std::runtime_error("mj_parseXML failed for '" + scene_path + "': " + error);
+    }
+
+    const std::string robot_xml =
+        scene_path.substr(0, scene_path.find_last_of('/') + 1) + "K1_22dof.xml";
+
+    mjsBody* world = mjs_findBody(scene, "world");
+    for (int k = 1; k < robots; ++k) {
+        mjSpec* robot = mj_parseXML(robot_xml.c_str(), nullptr, error, error_sz);
+        if (robot == nullptr) {
+            mj_deleteSpec(scene);
+            throw std::runtime_error("mj_parseXML failed for '" + robot_xml + "': " + error);
+        }
+        // The copy inherits the scene keyframes' zero-padding; its own (robot-sized)
+        // keyframes would collide with the scene's on attach, so drop them.
+        for (mjsElement* key = mjs_firstElement(robot, mjOBJ_KEY); key != nullptr;
+             key = mjs_firstElement(robot, mjOBJ_KEY)) {
+            mjs_delete(robot, key);
+        }
+
+        mjsFrame* frame        = mjs_addFrame(world, nullptr);
+        const auto pos         = extra_spawn(k);
+        frame->pos[0]          = pos[0];
+        frame->pos[1]          = pos[1];
+        frame->pos[2]          = pos[2];
+        mjsBody* trunk         = mjs_findBody(robot, "Trunk");
+        mjsElement* attached   = mjs_attach(frame->element, trunk->element, extra_prefix(k).c_str(), "");
+        if (attached == nullptr) {
+            const std::string what = std::string("mjs_attach failed for robot copy ") + std::to_string(k)
+                                     + ": " + mjs_getError(scene);
+            mj_deleteSpec(robot);
+            mj_deleteSpec(scene);
+            throw std::runtime_error(what);
+        }
+        mj_deleteSpec(robot);
+    }
+
+    mjModel* m = mj_compile(scene, nullptr);
+    if (m == nullptr) {
+        const std::string what = std::string("mj_compile failed for multi-robot scene: ") + mjs_getError(scene);
+        mj_deleteSpec(scene);
+        throw std::runtime_error(what);
+    }
+    mj_deleteSpec(scene);
+    return m;
+}
+
 }  // namespace
 
 SimCore::SimCore(Config config, StateCallback on_state) : config_(std::move(config)), on_state_(std::move(on_state)) {
@@ -61,13 +137,45 @@ void SimCore::load_model() {
     const std::string resolved = config::resolve_path(config_.model_path).string();
 
     char error[1024] = {0};
-    m_ = mj_loadXML(resolved.c_str(), nullptr, error, sizeof(error));
-    if (m_ == nullptr) {
-        throw std::runtime_error("mj_loadXML failed for '" + resolved + "': " + error);
+    if (config_.robots <= 1) {
+        m_ = mj_loadXML(resolved.c_str(), nullptr, error, sizeof(error));
+        if (m_ == nullptr) {
+            throw std::runtime_error("mj_loadXML failed for '" + resolved + "': " + error);
+        }
+    }
+    else {
+        m_ = load_multi_robot_model(resolved, config_.robots, error, sizeof(error));
     }
 
     // Throws if any joint/actuator is missing or there is no free root joint.
     map_ = ModelMap::build(m_);
+
+    // Index maps for the extra robot copies so the physics loop can PD-hold them
+    // upright. Only the three per-joint index arrays are needed.
+    extra_maps_.clear();
+    for (int k = 1; k < config_.robots; ++k) {
+        const std::string prefix = extra_prefix(k);
+        ModelMap em{};
+        for (std::size_t i = 0; i < JOINT_COUNT; ++i) {
+            const std::string name = prefix + JOINT_NAMES[i];
+            const int jnt          = mj_name2id(m_, mjOBJ_JOINT, name.c_str());
+            const int act          = mj_name2id(m_, mjOBJ_ACTUATOR, name.c_str());
+            if (jnt < 0 || act < 0) {
+                throw std::runtime_error("multi-robot scene is missing joint/actuator '" + name + "'");
+            }
+            em.qpos_adr[i] = m_->jnt_qposadr[jnt];
+            em.dof_adr[i]  = m_->jnt_dofadr[jnt];
+            em.act_id[i]   = act;
+        }
+        const std::string root = prefix + "root";
+        const int root_jnt     = mj_name2id(m_, mjOBJ_JOINT, root.c_str());
+        if (root_jnt < 0) {
+            throw std::runtime_error("multi-robot scene is missing free joint '" + root + "'");
+        }
+        em.root_qpos_adr = m_->jnt_qposadr[root_jnt];
+        em.root_dof_adr  = m_->jnt_dofadr[root_jnt];
+        extra_maps_.push_back(em);
+    }
 
     d_ = mj_makeData(m_);
     if (d_ == nullptr) {
@@ -100,9 +208,36 @@ void SimCore::load_model() {
         ready_target_ = config_.ready_pose_fallback;
     }
 
+    place_extras();
+
     // Populate derived quantities (xquat, sensordata, ...) for the reset pose before the
     // physics thread's first mj_step; harmless if nothing reads them this early.
     mj_forward(m_, d_);
+}
+
+// Put every extra robot copy at its spawn slot in the ready pose with zero velocity.
+// Keyframe resets zero-pad the extras' free joints (= world origin, inside the main
+// robot), so this must run after every keyframe reset. Caller holds mutex_ (or the
+// physics thread is not running yet).
+void SimCore::place_extras() {
+    for (std::size_t j = 0; j < extra_maps_.size(); ++j) {
+        const ModelMap& em = extra_maps_[j];
+        const auto pos     = extra_spawn(static_cast<int>(j) + 1);
+        d_->qpos[em.root_qpos_adr + 0] = pos[0];
+        d_->qpos[em.root_qpos_adr + 1] = pos[1];
+        d_->qpos[em.root_qpos_adr + 2] = pos[2];
+        d_->qpos[em.root_qpos_adr + 3] = 1.0;  // identity quat (w,x,y,z)
+        d_->qpos[em.root_qpos_adr + 4] = 0.0;
+        d_->qpos[em.root_qpos_adr + 5] = 0.0;
+        d_->qpos[em.root_qpos_adr + 6] = 0.0;
+        for (int v = 0; v < 6; ++v) {
+            d_->qvel[em.root_dof_adr + v] = 0.0;
+        }
+        for (std::size_t i = 0; i < JOINT_COUNT; ++i) {
+            d_->qpos[em.qpos_adr[i]] = ready_target_[i];
+            d_->qvel[em.dof_adr[i]]  = 0.0;
+        }
+    }
 }
 
 void SimCore::reset() {
@@ -113,6 +248,7 @@ void SimCore::reset() {
     else {
         mj_resetData(m_, d_);
     }
+    place_extras();
     // Repopulate derived quantities so snapshots/viewer frames between now and the next
     // mj_step see the reset pose, not stale kinematics.
     mj_forward(m_, d_);
@@ -264,6 +400,10 @@ void SimCore::physics_loop() {
             }
             else {
                 pd_.apply(m_, d_, map_, ready_target_);
+            }
+            // Extra --robots copies have no controller; hold them at the ready pose.
+            for (const auto& em : extra_maps_) {
+                pd_.apply(m_, d_, em, ready_target_);
             }
             mj_step(m_, d_);
             ++steps;

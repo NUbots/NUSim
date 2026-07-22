@@ -10,6 +10,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "shared/k1/JointIndex.hpp"
 #include "shared/message/SimMessages.hpp"
@@ -36,6 +37,7 @@ public:
         std::string model_path;  // resolved via k1sim::config::resolve_path by the caller
         std::string initial_keyframe = "ready";  // keyframe to spawn (and reset) into
         double rtf = 1.0;        // real-time factor; 0 = free-run (no pacing sleep)
+        int robots = 1;          // total K1s; extras are attached copies PD-held at "ready"
         int state_publish_divisor = 20;    // physics steps per SimStateUpdate
         double resync_threshold   = 0.05;  // seconds behind schedule before the deadline resyncs
 
@@ -93,6 +95,9 @@ public:
 
 private:
     void physics_loop();
+    // Puts the extra --robots copies at their spawn slots in the ready pose; must run
+    // after every keyframe reset (whose zero-padding would pile them at the origin).
+    void place_extras();
     // Requires the caller to hold mutex_. Reads d_/map_/controller state into a fresh message.
     std::unique_ptr<message::SimStateUpdate> make_snapshot(uint64_t steps) const;
 
@@ -105,6 +110,9 @@ private:
     ModelMap map_{};
     std::array<double, JOINT_COUNT> ready_target_{};
     PdController pd_{};
+    // Joint/actuator index maps for the extra --robots copies (root/sensor fields unused);
+    // the physics loop PD-holds each of them at ready_target_ every step.
+    std::vector<ModelMap> extra_maps_;
 
     std::mutex mutex_;
     std::atomic<double> measured_rtf_{0.0};
