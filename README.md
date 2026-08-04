@@ -35,29 +35,30 @@ troubleshooting are in **[docs/K1_MUJOCO_SETUP.md](docs/K1_MUJOCO_SETUP.md)**.
 ./b run sim/soccer              # launch the soccer sim (viewer + DDS + camera + supervisor)
 ```
 
-Then drive it from **[`NUbots_K1`](https://github.com/NUbots/NUbots_K1)** exactly as against the real robot.
-The Booster SDK **requires** a FastDDS profiles file (participant profile `booster_dds`) or it refuses to
-create its DDS participant (`Failed to create participant`):
+Then drive it from **[`NUbots_K1`](https://github.com/NUbots/NUbots_K1)** exactly as against the real robot:
 
 ```bash
 cd ~/NUbots_K1
-# The OpenVINO runtime baked into the NUbots_K1 image has no CPU device (built with
-# ENABLE_INTEL_CPU=OFF), and the policy skills (K1WalkPolicy/K1GetUpPolicy) need one.
-# Until the image is fixed, mount the official 2024.6.0 runtime over it:
-#   curl -L -o /tmp/openvino.tgz https://storage.openvinotoolkit.org/repositories/openvino/packages/2024.6/linux/l_openvino_toolkit_ubuntu22_2024.6.0.17404.4c0f47d2335_x86_64.tgz
-#   mkdir -p /tmp/ov_overlay && tar xzf /tmp/openvino.tgz -C /tmp/ov_overlay --strip-components=1
-# NOTE: --environment takes ONE comma-separated argument; a second --environment flag
-# silently replaces the first (and losing FASTRTPS_DEFAULT_PROFILES_FILE kills all DDS).
-./b run --volume /tmp/ov_overlay/runtime/lib/intel64:/usr/local/runtime/lib/intel64:ro \
-    keyboardwalk \
-    --environment "FASTRTPS_DEFAULT_PROFILES_FILE=/home/nubots/NUbots/tools/fastdds_default_profiles.xml,LD_LIBRARY_PATH=/usr/local/runtime/lib/intel64"
+./b run keyboardwalk
 # e = walk on/off, w/s/a/d = velocity (0.01 m/s per press — tap ~10x), z/x = turn, arrows = head
 ```
 
-The full autonomous stack works too — `./b run test/behaviour` (same `--environment=` flag) has the robot
-find the ball by vision and dribble it goalward. See
-[docs/K1_MUJOCO_SETUP.md](docs/K1_MUJOCO_SETUP.md) for the end-to-end walkthrough and the NUbots_K1-side
-requirements (`skill::K1WalkPolicy` + `skill::K1GetUpPolicy` in the role, `VisualMesh.yaml` camera entry).
+The Booster SDK **requires** a FastDDS profiles file (participant profile `booster_dds`) or it refuses to
+create its DDS participant (`Failed to create participant`). `./b run` now defaults
+`FASTRTPS_DEFAULT_PROFILES_FILE` to the repo's copy, so no flag is needed. If you pass `--environment`
+yourself, note it takes ONE comma-separated argument and **replaces** the default — include the FastDDS
+var yourself or all DDS dies.
+
+The full autonomous stack works too — `./b run nusim/behaviour` has the robot find the ball by vision and
+dribble it goalward. See [docs/K1_MUJOCO_SETUP.md](docs/K1_MUJOCO_SETUP.md) for the end-to-end walkthrough
+and the NUbots_K1-side requirements (`skill::K1WalkPolicy` + `skill::K1GetUpPolicy` in the role,
+`VisualMesh.yaml` camera entry).
+
+> Older revisions of this README told you to mount an OpenVINO overlay over the image, because the
+> NUbots_K1 image was built with `ENABLE_INTEL_CPU=OFF` and had no CPU inference device at all
+> (`Device with "CPU" name is not registered`). Fixed upstream — the image now ships
+> `libopenvino_intel_cpu_plugin.so`, and inference prefers TensorRT on the GPU anyway. No overlay,
+> no `--volume`, no `LD_LIBRARY_PATH`.
 
 ## Locomotion policy
 

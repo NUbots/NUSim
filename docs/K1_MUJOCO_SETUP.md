@@ -96,24 +96,26 @@ cd ~/NUbots_K1
 ./b configure
 ./b build -- bin/keyboardwalk   # the TOP-LEVEL keyboardwalk role (see note below)
 
-# One-time: the image's OpenVINO has no CPU device (built ENABLE_INTEL_CPU=OFF); the
-# policy skills need one. Extract the official 2024.6.0 runtime to ~/.cache/ov_overlay
-# (NOT /tmp — a reboot wipes it, and docker then recreates /tmp/ov_overlay as an empty
-# root-owned stub that used to fool the auto-mount into mounting nothing):
-#   curl -L -o /tmp/openvino.tgz https://storage.openvinotoolkit.org/repositories/openvino/packages/2024.6/linux/l_openvino_toolkit_ubuntu22_2024.6.0.17404.4c0f47d2335_x86_64.tgz
-#   mkdir -p ~/.cache/ov_overlay && tar xzf /tmp/openvino.tgz -C ~/.cache/ov_overlay --strip-components=1
-# `./b run` auto-mounts the overlay (tools/utility/dockerise/run.py checks
-# ~/.cache/ov_overlay then /tmp/ov_overlay for libopenvino_intel_cpu_plugin.so and sets
-# LD_LIBRARY_PATH) — no --volume flag needed. Symptom when the overlay is missing:
-# 'Device with "CPU" name is not registered in the OpenVINO Runtime' at policy load.
+# Inference needs no setup: the image ships an OpenVINO CPU plugin, and the vision/policy
+# modules prefer TensorRT on the GPU, which `./b run` passes through automatically when the
+# nvidia container runtime is installed. Both fall back to OpenVINO CPU on a machine
+# without a CUDA device.
+#
+# HISTORICAL: the image used to be built with ENABLE_INTEL_CPU=OFF and had no CPU device at
+# all, so this step told you to extract the official OpenVINO runtime to ~/.cache/ov_overlay
+# and `./b run` bind-mounted it over the baked one. Both the image and the auto-mount are
+# gone. If you still have ~/.cache/ov_overlay lying around it is now dead weight; the
+# symptom it cured was 'Device with "CPU" name is not registered in the OpenVINO Runtime'.
 
-./b run keyboardwalk \
-    --environment "FASTRTPS_DEFAULT_PROFILES_FILE=/home/nubots/NUbots/tools/fastdds_default_profiles.xml"
+./b run keyboardwalk
 # focus this terminal: e = walk on/off, w/s/a/d = velocity, z/x = turn, arrows = head
 ```
 
-> **`--environment` takes ONE comma-separated argument.** Passing a second
-> `--environment` flag silently replaces the first — and losing
+> **`--environment` takes ONE comma-separated argument, and it replaces the default.**
+> `./b run` now defaults `FASTRTPS_DEFAULT_PROFILES_FILE` to the repo's profiles file, so you
+> normally pass no flag at all. But passing `--environment` yourself overwrites that default
+> rather than merging with it — include the var yourself if you add your own. Likewise a second
+> `--environment` flag silently replaces the first. Losing
 > `FASTRTPS_DEFAULT_PROFILES_FILE` kills the whole Booster SDK participant (`Failed to
 > create participant`): vision keeps running off shared memory while LowState/RPCs
 > silently vanish, and the robot collapses when a policy skill switches to CUSTOM with
