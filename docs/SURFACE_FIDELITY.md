@@ -114,12 +114,25 @@ falls at any friction from 1.0 to 0.3. At 0.10 — genuinely soft ground — the
 **+5.8°**, the strongest tip-toe signature in any run. Compliance is a second, separate
 axis, and it had never been randomised in training or varied in the simulator.
 
-**The gait-clock hypothesis is not supported by this test.** Running the failing corners at
-`gait_frequency` 1.25 / 1.50 / 1.75 gave a non-monotonic result: at `mu = 0.30` both 1.25
-and 1.75 survived while 1.50 fell; at `mu = 0.25` all three fell. The prediction was
-two-sided (1.25 better and 1.75 worse would confirm a clock/contact decoupling) and the
-outcome does not match it. This is single-seed evidence near a boundary, so it argues
-against the mechanism rather than closing it.
+**The gait-clock hypothesis is not supported, and what signal there is points the other
+way.** The prediction was two-sided: if the free-running clock decouples from the feet on
+a slipping surface, a slower clock (1.25) should help and a faster one (1.75) should hurt.
+Training randomises `U(1.25, 1.75)`, so all three are in distribution and the test changes
+nothing about correctness. Four seeds each at `mu = 0.30`, `vx = 0.8 m/s`, with
+`--imu-noise 0.01` to separate the runs:
+
+| gait_frequency | falls |
+|---|---|
+| 1.25 | 2 / 4 |
+| 1.50 | 3 / 4 |
+| 1.75 | **1 / 4** |
+
+The predicted direction does not appear; if anything the faster clock is the more stable
+one. Four seeds and differences of one to two runs are not a statistically meaningful
+separation, so this does not close the question — but it removes the reason to spend
+training time on the mechanism, and nothing else here supports it either (the sole-pitch
+traces before each fall are flat, not drifting, which is what a per-step ratchet would
+look like).
 
 ## What NUSim reproduces, and what it still does not
 
