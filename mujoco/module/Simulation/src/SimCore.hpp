@@ -4,6 +4,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <functional>
 #include <memory>
 #include <mujoco/mujoco.h>
@@ -40,6 +41,31 @@ public:
         int robots = 1;          // total K1s; extras are attached copies PD-held at "ready"
         int state_publish_divisor = 20;    // physics steps per SimStateUpdate
         double resync_threshold   = 0.05;  // seconds behind schedule before the deadline resyncs
+
+        // Ground-contact override, applied to the geom named "floor" after the model loads.
+        //
+        // Without it the feet do NOT see the floor's declared friction: the foot box geom
+        // takes the MuJoCo default (1.0) while the robocup floor declares 0.8, and with equal
+        // geom priorities MuJoCo uses the element-wise MAX -- so every NUSim walk to date ran
+        // at mu = 1.0, grippier than the scene claims and grippier than anything the robot
+        // actually stands on. Enabling this sets the floor's priority to 1 so its numbers
+        // govern the contact, which is what the training scene does.
+        //
+        // This is the knob for the one confirmed hardware variable: the same policy and the
+        // same command hold up on carpet and progressively fall on synthetic grass.
+        struct Surface {
+            bool enabled            = false;
+            double friction         = 0.8;   // sliding; mu = tan(slip angle)
+            double solref_timeconst = 0.02;  // contact softness; keep >= 2 * model timestep
+            double solref_dampratio = 1.0;
+        } surface;
+
+        // When non-empty, append one CSV row per published state to this path: per foot the
+        // total normal force, the centre of pressure in the foot's own frame, and the sole's
+        // pitch/roll. Centre of pressure is the tiptoe measurement -- a sole rolled onto its
+        // toe puts every contact at the front edge of the support polygon, which is exactly
+        // where the friction budget runs out. Off by default.
+        std::string foot_log_path;
 
         std::array<double, JOINT_COUNT> kp{};                  // PD fallback gains (gains.yaml)
         std::array<double, JOINT_COUNT> kd{};                  // PD fallback gains (gains.yaml)
@@ -95,6 +121,12 @@ public:
 
 private:
     void physics_loop();
+    // Applies Config::surface to the "floor" geom. No-op when the override is disabled or
+    // the scene has no geom called "floor". Called by load_model() before mj_makeData.
+    void apply_surface_override();
+    // Appends one row to Config::foot_log_path. No-op when logging is off. Requires the
+    // caller to hold mutex_ (it reads d_->contact).
+    void log_foot_state();
     // Puts the extra --robots copies at their spawn slots in the ready pose; must run
     // after every keyframe reset (whose zero-padding would pile them at the origin).
     void place_extras();
@@ -122,6 +154,11 @@ private:
     std::thread thread_;
     std::atomic<uint64_t> step_count_{0};
     std::atomic<uint64_t> dropped_deadlines_{0};
+
+    // Foot-contact CSV (Config::foot_log_path); nullptr when logging is off.
+    std::FILE* foot_log_       = nullptr;
+    int left_foot_body_id_     = -1;
+    int right_foot_body_id_    = -1;
 };
 
 }  // namespace k1sim

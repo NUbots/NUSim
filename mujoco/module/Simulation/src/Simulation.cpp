@@ -28,6 +28,14 @@ SimCore::Config build_sim_config() {
     cfg.state_publish_divisor = sim_cfg["state_publish_divisor"].as<int>(20);
     cfg.resync_threshold      = sim_cfg["resync_threshold"].as<double>(0.05);
 
+    const auto surface           = sim_cfg["surface"];
+    cfg.surface.enabled          = surface["enabled"].as<bool>(false);
+    cfg.surface.friction         = surface["friction"].as<double>(0.8);
+    cfg.surface.solref_timeconst = surface["solref_timeconst"].as<double>(0.02);
+    cfg.surface.solref_dampratio = surface["solref_dampratio"].as<double>(1.0);
+
+    cfg.foot_log_path = sim_cfg["foot_log"].as<std::string>("");
+
     for (std::size_t i = 0; i < JOINT_COUNT; ++i) {
         cfg.kp[i]                  = gains_cfg["kp"][i].as<double>();
         cfg.kd[i]                  = gains_cfg["kd"][i].as<double>();

@@ -4,3 +4,35 @@ model: models/k1/k1_scene_robocup.xml # MJCF scene, relative to mujoco/
 real_time_factor: 1.0 # 0 = free-run (tests/training)
 state_publish_divisor: 20 # physics steps per SimStateUpdate (1 kHz / 20 = 50 Hz LowState)
 resync_threshold: 0.05 # seconds behind schedule before the pacing deadline resyncs
+
+# Ground-contact override for the "floor" geom.
+#
+# WITH enabled: false (the default) the feet do NOT see the floor's declared friction. The
+# K1 foot box geom declares none, so it takes MuJoCo's default of 1.0; the robocup floor
+# declares 0.8; equal geom priorities mean MuJoCo uses the element-wise MAX, so every NUSim
+# run to date has simulated mu = 1.0 -- grippier than the scene claims, and grippier than
+# any surface the robot actually stands on. Turning this on raises the floor's priority to
+# 1 so its numbers govern the contact, which is what the training scene does.
+#
+# This is the knob for the one confirmed hardware variable: the same policy at the same
+# commanded velocity is stable on carpet and progressively falls on the synthetic-grass
+# field. Measure mu on both with a tilt test (mu = tan(slip angle)) and record them in
+# benchmarks/surfaces.md; until then, run the corners the walk policy is trained over:
+#
+#   friction: 0.25   # slidey turf  (a loaded foot slips at 14.0 deg)
+#   friction: 1.2    # grippy felt  (slips at 50.2 deg)
+#
+# solref_timeconst is contact softness (rigid ground is small), clamped up to 2 * model
+# timestep for solver stability. Training randomises it over [0.006, 0.03].
+surface:
+  enabled: false
+  friction: 0.8
+  solref_timeconst: 0.02
+  solref_dampratio: 1.0
+
+# Per-foot contact CSV, written at the state publish rate (50 Hz). Empty = off.
+# Columns: t, per foot {normal force, centre of pressure x/y in the foot frame, sole
+# pitch/roll}, base pitch, base height. The sole box spans x in [-0.064, +0.116] of the
+# foot frame, so flat-footed stance sits near cop_x = 0.026 and a foot up on its toe
+# drives cop_x towards +0.116 -- that is the tiptoe measurement.
+foot_log: ""

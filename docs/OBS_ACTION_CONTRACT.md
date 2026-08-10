@@ -27,7 +27,7 @@ name) applies to it unchanged.
 
 | Tensor | Name | Shape | Type |
 |---|---|---|---|
-| Input | `obs` | `[1, 82]` | `float32` |
+| Input | `obs` | `[1, 79]` | `float32` |
 | Output | `continuous_actions` | `[1, 22]` | `float32` |
 
 `K1WalkPolicy` runs the graph with exactly these names/shapes (OpenVINO, CPU).
@@ -49,20 +49,24 @@ playground `k1_mjx_feetonly.xml` actuator order:
 16 RightHipPitch 17 RightHipRoll 18 RightHipYaw 19 RightKneePitch 20 RightAnklePitch 21 RightAnkleRoll
 ```
 
-## Observation layout (82 floats)
+## Observation layout (79 floats)
 
 | Offset | Count | Field | Notes |
 |---|---|---|---|
-| 0  | 3  | Base linear velocity, body frame | `linear-velocity` velocimeter at the `imu` site (training: `local_linvel` sensor). |
-| 3  | 3  | Angular velocity (gyro), body frame | `angular-velocity` sensor, rad/s. |
-| 6  | 3  | Projected gravity, body frame | world `(0,0,-1)` rotated by the inverse base quaternion; unit vector (upright ⇒ `(0,0,-1)`). |
-| 9  | 3  | Command `[vx, vy, vyaw]` | body-frame planar velocity (m/s, m/s, rad/s), passed through as-is (never zeroed). |
-| 12 | 22 | `q − default_pose` | all joints, rad, relative to the training keyframe (`policy.default_pose`). |
-| 34 | 22 | `dq` | all joints, rad/s, **unscaled**. |
-| 56 | 22 | `last_action` | previous raw network output (zero after `reset()`). |
-| 78 | 4  | Gait phase `[cos φ₀, cos φ₁, sin φ₀, sin φ₁]` | two per-foot phases; see below. |
+| 0  | 3  | Angular velocity (gyro), body frame | `angular-velocity` sensor, rad/s. |
+| 3  | 3  | Projected gravity, body frame | world `(0,0,-1)` rotated by the inverse base quaternion; unit vector (upright ⇒ `(0,0,-1)`). |
+| 6  | 3  | Command `[vx, vy, vyaw]` | body-frame planar velocity (m/s, m/s, rad/s), passed through as-is (never zeroed). |
+| 9  | 22 | `q − default_pose` | all joints, rad, relative to the training keyframe (`policy.default_pose`). |
+| 31 | 22 | `dq` | all joints, rad/s, **unscaled**. |
+| 53 | 22 | `last_action` | previous raw network output (zero after `reset()`). |
+| 75 | 4  | Gait phase `[cos φ₀, cos φ₁, sin φ₀, sin φ₁]` | two per-foot phases; see below. |
 
-Total `3+3+3+3+22+22+22+4 = 82`.
+Total `3+3+22+22+22+4 = 79`.
+
+**No base linear velocity.** The contract used to open with three linear-velocity floats
+(82 total). It does not any more — see [Linear velocity at deployment](#linear-velocity-at-deployment).
+The older 82-obs checkpoints (`k1_walk.onnx`, `k1_walk_v1_20260723_617M.onnx`) are **not**
+loadable against the current `K1WalkPolicy`.
 
 **Standing gate:** when the commanded speed `‖[vx,vy,vyaw]‖ < stand_threshold`
 (default `0.01`), the *observed* phase is pinned to `[π, π]` (cos = −1, sin = 0); the
@@ -73,8 +77,11 @@ command is near zero, which the policy sees identically.
 ## Gait phase
 
 Two phases initialized to `[0, π]` on `reset()` (feet in anti-phase). Advanced once
-per inference (50 Hz): `φᵢ ← wrap(φᵢ + 2π·dt·gait_frequency)` into `[−π, π)`, with
-`dt = 0.02 s` (the 50 Hz inference tick). `gait_frequency` defaults to 1.5 Hz
+per inference (50 Hz): `φᵢ ← wrap(φᵢ + 2π·dt·gait_frequency)` into `[−π, π)`, with `dt`
+the **measured** wall-clock period of the policy tick, clamped to `[0.005, 0.100] s`. It
+used to be a hardcoded `0.02`; `Every<50, Per<seconds>>` is best-effort on an Orin also
+running YOLO, and at a true 40 Hz a nominal 1.5 Hz gait actually advances at 1.20 Hz —
+outside the `U(1.25, 1.75)` training range. `gait_frequency` defaults to 1.5 Hz
 (`K1WalkPolicy.yaml: gait_frequency`); training randomizes it per episode over
 `U(1.25, 1.75)`, so deployment at 1.5 is in-distribution.
 
@@ -110,20 +117,88 @@ network output for all 22 entries, so the policy's action history is what it exp
 
 ### Linear velocity at deployment
 
-Training observes the privileged `local_linvel` sensor. The deployment side has no
-such sensor: `K1WalkPolicy` differentiates the Booster odometry (`rt/odometer_state`),
-rotates it into the body frame by the odometry yaw and low-passes it
-(`linvel_alpha`); the z component is unobservable and sent as 0. Verified stable
-walking in NUSim with this estimate.
+**Removed from the actor observation.** It is a privileged quantity: `local_linvel` is a
+MuJoCo sensor, and there is no measured base linear velocity on the real K1 in CUSTOM
+mode. The previous contract filled it by differentiating the Booster odometry
+(`rt/odometer_state`), rotating into the body frame by the odometry yaw and low-passing
+the result — an estimator that has never been shown to be live on hardware in CUSTOM, and
+whose "no new sample" case is indistinguishable from "zero velocity".
+
+The training env now keeps `linvel` in `privileged_state` only, so the critic still sees
+it and the actor never does. Nothing on the deployment side estimates it, which also
+removes `K1WalkPolicy`'s dependency on `BoosterOdometry` entirely.
+
+This is a removal on the grounds that the signal is unsupportable at deployment, **not** a
+claim that it caused the hardware failure: substituting the command for `obs[0:3]` on the
+robot did not remove the tip-toe.
+
+## Kick policy (`K1Kick`)
+
+Deployed by `module/skill/K1KickPolicy`. A **side-foot lateral sweep**: the robot
+sweeps the ball sideways with the inside foot while keeping the support foot under the
+CoM. Same 22 actions and same `default_pose` offset convention as the walk policy
+(`action_scale` 1.0), so only the observation differs.
+
+### Observation layout (80 floats)
+
+| Offset | Count | Field | Notes |
+|---|---|---|---|
+| 0  | 3  | Angular velocity (gyro), body frame | rad/s. **No base linear velocity** — unlike the walk contract, the kick obs starts at the gyro. |
+| 3  | 3  | Projected gravity, body frame | as walk. |
+| 6  | 2  | Commanded ball velocity `[vx, vy]`, torso frame | **divided by `kick_speed_cap` (3.0)**; direction of the vector is the sweep direction, magnitude is the requested ball speed. |
+| 8  | 2  | Ball position `[x, y]`, torso frame | m, from vision. |
+| 10 | 4  | Gait phase `[cos φ₀, cos φ₁, sin φ₀, sin φ₁]` | same clock as walk, `gait_freq` 1.5 Hz; the kick never pins it. |
+| 14 | 22 | `q − default_pose` | rad. |
+| 36 | 22 | `dq` | rad/s, unscaled. |
+| 58 | 22 | `last_action` | previous raw network output. |
+
+Total `3+3+2+2+4+22+22+22 = 80`.
+
+**Slots 6-7 changed meaning on 2026-08-08** (width unchanged, so nothing in
+`K1KickPolicy` needs re-ordering). They used to carry a **unit kick direction**; they
+now carry the **scaled commanded ball velocity**. A pre-2026-08-08 checkpoint loads
+and runs against the new code but is silently fed a unit vector where it expects a
+velocity — retrain rather than resume. The caller now owns converting "pass to a
+teammate 3 m away" into a speed, using its own friction estimate, instead of the
+policy inferring it.
+
+### What training models that deployment must live with
+
+- **Ball is the only exteroceptive input.** Everything else is IMU + encoders at the
+  50 Hz control rate. Training refreshes ball xy at ~16 Hz, drops 15% of frames, and
+  force-holds the last value when the kicking foot is within 16 cm of the ball
+  (occlusion at strike range). Deployment should hold last value on a dropped
+  detection rather than zeroing or extrapolating.
+- **Latency is deliberately not modelled.** This task keeps a planted base and a
+  stationary pre-contact ball, so lag barely moves the relative position; dropout is
+  the real gap. If the kick is ever extended to a moving ball or a run-up, latency
+  has to be added.
+- **Ball xy is in the torso frame,** so a stale estimate must be forward-propagated
+  through odometry into the *current* torso frame, and it depends on head pitch
+  (`head_pose` is the only tilt source) — a stale or wrong tilt corrupts ball xy
+  directly.
+- **Actuator lag is modelled:** a per-episode 0-2 control-step (0-40 ms) delay on the
+  motor targets plus a 30% per-step hold of the previous target. The walk and get-up
+  envs have **no** such model.
 
 ## Training / export
 
 Train in the mujoco_playground fork (`learning/train_jax_ppo.py
---env_name=K1JoystickFlatTerrain --domain_randomization`; `--env_name=K1Getup` for
-fall recovery), export the checkpoint with `learning/export_k1_onnx.py` (bakes obs
+--env_name=K1JoystickFlatTerrain`; `--env_name=K1Getup` for fall recovery,
+`--env_name=K1Kick` for the sweep kick), export the checkpoint with
+`learning/export_k1_onnx.py` (bakes obs
 normalization, takes the deterministic `tanh` action, names the output
 `continuous_actions`), then drop the `.onnx` into the NUbots_K1 module data dir
 (`module/skill/K1WalkPolicy/data/k1_walk.onnx` /
-`module/skill/K1GetUpPolicy/data/k1_getup.onnx`) and rebuild the role. Keep the
+`module/skill/K1GetUpPolicy/data/k1_getup.onnx` /
+`module/skill/K1KickPolicy/data/k1_kick.onnx`) and rebuild the role. Keep the
 playground MuJoCo version in lockstep with the sim's MuJoCo (3.10.0) to avoid a
 sim2sim gap.
+
+**Domain randomization now defaults ON** (`train_jax_ppo.py`, 2026-08-08) — it used
+to default off and `pod_train.sh` never passed the flag, so any walk/get-up policy
+trained from that script before this date had **none**. Pass
+`--nodomain_randomization` to reproduce the old behaviour. The `K1Kick` randomizer
+additionally varies ball mass (±15%), ball sliding and **rolling** friction (rolling
+resistance decides how far a struck ball travels, and is what differs between hard
+floor and turf), and per-foot sliding friction drawn independently left vs right.

@@ -150,6 +150,28 @@ void SimCore::load_model() {
     // Throws if any joint/actuator is missing or there is no free root joint.
     map_ = ModelMap::build(m_);
 
+    apply_surface_override();
+
+    left_foot_body_id_  = mj_name2id(m_, mjOBJ_BODY, "left_foot_link");
+    right_foot_body_id_ = mj_name2id(m_, mjOBJ_BODY, "right_foot_link");
+    if (!config_.foot_log_path.empty()) {
+        if (left_foot_body_id_ < 0 || right_foot_body_id_ < 0) {
+            std::fprintf(stderr, "SimCore: foot log requested but the model has no left/right_foot_link\n");
+        }
+        else {
+            foot_log_ = std::fopen(config_.foot_log_path.c_str(), "w");
+            if (foot_log_ == nullptr) {
+                std::fprintf(stderr, "SimCore: could not open foot log '%s'\n", config_.foot_log_path.c_str());
+            }
+            else {
+                std::fprintf(foot_log_,
+                             "t,l_fz,l_cop_x,l_cop_y,l_pitch,l_roll,"
+                             "r_fz,r_cop_x,r_cop_y,r_pitch,r_roll,base_pitch,base_z\n");
+                std::fprintf(stderr, "SimCore: foot contact log -> %s\n", config_.foot_log_path.c_str());
+            }
+        }
+    }
+
     // Index maps for the extra robot copies so the physics loop can PD-hold them
     // upright. Only the three per-joint index arrays are needed.
     extra_maps_.clear();
@@ -215,6 +237,150 @@ void SimCore::load_model() {
     mj_forward(m_, d_);
 }
 
+// Make the floor's declared contact parameters the ones the feet actually see.
+//
+// MuJoCo derives a contact's parameters from the two geoms: if their priorities are equal
+// it takes the element-wise MAX of the friction vectors. The K1 foot box carries no
+// explicit friction, so it gets the MuJoCo default of 1.0, and max(1.0, floor) means the
+// floor's number has never mattered -- a "0.8 grass" scene has been simulating mu = 1.0.
+// Raising the floor's priority makes it authoritative, which is what the mujoco_playground
+// training scene does (its floor geom is declared priority="1").
+//
+// Explicit <pair> elements (the scene defines one for ball-vs-floor) are unaffected by
+// priority, so tuned ball dynamics survive this.
+void SimCore::apply_surface_override() {
+    if (!config_.surface.enabled) {
+        return;
+    }
+    const int floor = mj_name2id(m_, mjOBJ_GEOM, "floor");
+    if (floor < 0) {
+        std::fprintf(stderr, "SimCore: surface override requested but the scene has no geom 'floor'\n");
+        return;
+    }
+
+    const double min_timeconst = 2.0 * m_->opt.timestep;
+    double timeconst           = config_.surface.solref_timeconst;
+    if (timeconst < min_timeconst) {
+        std::fprintf(stderr,
+                     "SimCore: surface.solref_timeconst %g is below 2*timestep (%g); clamping\n",
+                     timeconst,
+                     min_timeconst);
+        timeconst = min_timeconst;
+    }
+
+    m_->geom_priority[floor]        = 1;
+    m_->geom_friction[3 * floor]    = config_.surface.friction;
+    m_->geom_solref[2 * floor]      = timeconst;
+    m_->geom_solref[2 * floor + 1]  = config_.surface.solref_dampratio;
+
+    std::fprintf(stderr,
+                 "SimCore: floor contact overridden — mu = %g, solref = [%g, %g], priority = 1\n",
+                 config_.surface.friction,
+                 timeconst,
+                 config_.surface.solref_dampratio);
+}
+
+// One CSV row per published state: per foot the total contact normal force, the centre of
+// pressure expressed in that foot's own frame, and the sole's pitch/roll.
+//
+// The centre of pressure is what makes tiptoe measurable rather than a description of a
+// video. The sole box spans x in [-0.064, +0.116] of the foot frame, so a flat-footed
+// stance sits near cop_x = 0.026 (the box centre) and a foot rolled onto its toe pushes
+// cop_x towards +0.116 -- the front edge of the support polygon, where the available
+// friction is spent on a shrinking contact patch. Caller holds mutex_.
+void SimCore::log_foot_state() {
+    if (foot_log_ == nullptr) {
+        return;
+    }
+
+    struct FootAcc {
+        double fz     = 0.0;  // summed normal force
+        double cop_x  = 0.0;  // force-weighted, foot frame
+        double cop_y  = 0.0;
+        double pitch  = 0.0;  // sole tilt, world
+        double roll   = 0.0;
+    };
+    std::array<FootAcc, 2> feet{};
+    const std::array<int, 2> body_ids{left_foot_body_id_, right_foot_body_id_};
+
+    for (int f = 0; f < 2; ++f) {
+        if (body_ids[f] < 0) {
+            continue;
+        }
+        // The foot's own +z axis expressed in world; its x/y components are the sole tilt.
+        const mjtNum* R = d_->xmat + 9 * body_ids[f];
+        feet[f].pitch   = std::atan2(R[0 * 3 + 2], R[2 * 3 + 2]);
+        feet[f].roll    = std::atan2(R[1 * 3 + 2], R[2 * 3 + 2]);
+    }
+
+    for (int c = 0; c < d_->ncon; ++c) {
+        const mjContact& con = d_->contact[c];
+        const int body1      = m_->geom_bodyid[con.geom1];
+        const int body2      = m_->geom_bodyid[con.geom2];
+        int f                = -1;
+        if (body1 == left_foot_body_id_ || body2 == left_foot_body_id_) {
+            f = 0;
+        }
+        else if (body1 == right_foot_body_id_ || body2 == right_foot_body_id_) {
+            f = 1;
+        }
+        if (f < 0) {
+            continue;
+        }
+
+        // force[0] is the normal component in the contact frame.
+        mjtNum force[6] = {0};
+        mj_contactForce(m_, d_, c, force);
+        const double fn = force[0];
+        if (fn <= 0.0) {
+            continue;
+        }
+
+        // Contact point into the foot's frame: local = R^T * (pos - body_pos).
+        const mjtNum* R   = d_->xmat + 9 * body_ids[f];
+        const mjtNum* org = d_->xpos + 3 * body_ids[f];
+        const mjtNum rel[3] = {con.pos[0] - org[0], con.pos[1] - org[1], con.pos[2] - org[2]};
+        mjtNum local[3];
+        mju_mulMatTVec3(local, R, rel);
+
+        feet[f].fz += fn;
+        feet[f].cop_x += fn * local[0];
+        feet[f].cop_y += fn * local[1];
+    }
+
+    for (auto& foot : feet) {
+        if (foot.fz > 0.0) {
+            foot.cop_x /= foot.fz;
+            foot.cop_y /= foot.fz;
+        }
+    }
+
+    std::array<double, 4> quat{1, 0, 0, 0};
+    if (map_.root_body_id >= 0) {
+        for (int k = 0; k < 4; ++k) {
+            quat[k] = d_->xquat[4 * map_.root_body_id + k];
+        }
+    }
+    std::array<double, 3> rpy{};
+    quat_to_rpy(quat, rpy);
+
+    std::fprintf(foot_log_,
+                 "%.4f,%.3f,%.5f,%.5f,%.5f,%.5f,%.3f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f\n",
+                 d_->time,
+                 feet[0].fz,
+                 feet[0].cop_x,
+                 feet[0].cop_y,
+                 feet[0].pitch,
+                 feet[0].roll,
+                 feet[1].fz,
+                 feet[1].cop_x,
+                 feet[1].cop_y,
+                 feet[1].pitch,
+                 feet[1].roll,
+                 rpy[1],
+                 d_->qpos[map_.root_qpos_adr + 2]);
+}
+
 // Put every extra robot copy at its spawn slot in the ready pose with zero velocity.
 // Keyframe resets zero-pad the extras' free joints (= world origin, inside the main
 // robot), so this must run after every keyframe reset. Caller holds mutex_ (or the
@@ -270,6 +436,10 @@ void SimCore::stop() {
 }
 
 void SimCore::unload() {
+    if (foot_log_ != nullptr) {
+        std::fclose(foot_log_);
+        foot_log_ = nullptr;
+    }
     if (d_ != nullptr) {
         mj_deleteData(d_);
         d_ = nullptr;
@@ -411,6 +581,7 @@ void SimCore::physics_loop() {
 
             if (publish_every > 0 && steps % publish_every == 0) {
                 snapshot = make_snapshot(steps);
+                log_foot_state();
             }
         }  // release the mutex before emitting/pacing
 
