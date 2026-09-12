@@ -6,6 +6,7 @@
 #include "module/SdkBridge/src/SdkBridge.hpp"
 #include "module/Simulation/src/Simulation.hpp"
 #include "module/Viewer/src/Viewer.hpp"
+#include "module/ViserViewer/src/ViserViewer.hpp"
 #include "shared/CliOptions.hpp"
 #include "shared/gl/XThreads.hpp"
 
@@ -33,6 +34,7 @@ int main(int argc, char** argv) {
     plant.install<k1sim::module::Locomotion>();
     plant.install<k1sim::module::SdkBridge>();
     plant.install<k1sim::module::Viewer>();
+    plant.install<k1sim::module::ViserViewer>();
 
     std::signal(SIGINT, handle_signal);
     std::signal(SIGTERM, handle_signal);

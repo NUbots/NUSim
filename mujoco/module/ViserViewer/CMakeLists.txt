@@ -1,0 +1,2 @@
+add_library(k1sim_module_viserviewer STATIC src/ViserViewer.cpp)
+target_link_libraries(k1sim_module_viserviewer PUBLIC k1sim_shared)

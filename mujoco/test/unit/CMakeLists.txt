@@ -17,3 +17,12 @@ foreach(test_src ${test_sources})
     add_test(NAME ${test_name} COMMAND ${test_name})
     set_tests_properties(${test_name} PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 endforeach()
+
+# ...and so does every test_*.py, run with the image's python3
+file(GLOB test_scripts CONFIGURE_DEPENDS "test_*.py")
+
+foreach(test_script ${test_scripts})
+    get_filename_component(test_name ${test_script} NAME_WE)
+    add_test(NAME ${test_name} COMMAND ${Python3_EXECUTABLE} ${test_script})
+    set_tests_properties(${test_name} PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+endforeach()

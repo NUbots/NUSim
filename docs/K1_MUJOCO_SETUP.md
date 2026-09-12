@@ -43,7 +43,7 @@ sim/soccer  (docker container, NUClear)
 | --- | --- |
 | OS | Linux with **Docker** (the toolchain and all dependencies are baked into a docker image — nothing to install natively) |
 | GPU | Optional. `nvidia-container-toolkit` gives GPU-accelerated rendering (`--gpus all`); otherwise the container falls back to `/dev/dri` (Mesa). The sim also runs fully **headless** on a machine with no GPU/display at all. |
-| Display | Optional. Only needed for the GLFW viewer window; `--headless` (or `K1_HEADLESS=1`, see below) skips it entirely — useful for CI or a bare server. |
+| Display | Optional. Only needed for the GLFW viewer window; `--headless` (or `K1_HEADLESS=1`, see below) skips it entirely — useful for CI or a bare server — and `--viser` serves the viewer to a browser instead (§5). |
 
 Nothing else to install for the **sim** itself: `mujoco/docker/k1sim.sh` builds the image (Ubuntu 22.04 +
 pinned MuJoCo/Fast-DDS/NUClear/GLFW versions — see `mujoco/tools/install_deps.sh`) the first time it's
@@ -66,6 +66,7 @@ passthrough. Roles: `sim/soccer` (full sim). Args after the role pass through to
 ./b run sim/soccer --model models/k1/k1_scene_flat.xml   # bare robot on a flat floor, no field/ball
 ./b run sim/soccer --rtf 0                                # free-run (uncapped real-time factor)
 ./b run sim/soccer --robots 5                             # 4 extra K1s on the field (max 20 total)
+./b run sim/soccer --viser                               # the viewer in a browser: open http://<host>:8080
 ```
 
 `--robots <n>` (1–20, default 1) attaches `n−1` extra K1 copies to the scene via MuJoCo's
@@ -249,6 +250,31 @@ A GLFW + MuJoCo GPU-rendered window, skipped entirely under `--headless`. Standa
 - Pausing physics from the viewer is **not** wired up (that's `module::Simulation`'s pacing thread, not the
   viewer's, and there's currently no pause switch to hook into) — noted here as future work, not a bug.
 
+### In a browser (`module::ViserViewer`, `--viser`)
+
+`--viser` replaces the window with a web page served by [viser](https://viser.studio) on port 8080
+(`--viser-port <port>` to change it), so a sim on a machine with no display can be watched from any
+browser: the sim logs `open http://<host>:8080` as it starts. `./b run` uses the host network, so that's
+the host's port; if it's taken, viser moves to the next free one and prints it.
+
+The page shows the sim time, measured real-time factor and mode, with **Reset** (Backspace), **Shove robot**
+(F) and **Follow robot**, which carries every viewer's camera along with the robot. Drag to orbit,
+right-drag to pan, scroll to zoom; there are no perturbation drags.
+
+How it works: once the model loads, `module::ViserViewer` saves it (`mj_saveModel`, so it's exactly this
+run's model, `--robots` copies included) and launches
+[`viser_server.py`](../mujoco/module/ViserViewer/python/viser_server.py) in the same container. The server
+rebuilds the scene from it and says hello over loopback UDP; the sim then streams it `qpos` and the mocap
+poses at 30 Hz, and it runs `mj_kinematics` to move the meshes. Every mesh (by content, since each
+`--robots` copy has its own copy of the meshes) and primitive is one instanced viser mesh, so the browser
+receives each robot part once, however many robots there are. Commands come back over the same socket.
+It draws what the window does: geom groups 0–2, less fully transparent geoms; the ball keeps its texture,
+and the grass (a texture on a plane, with nothing to map it by) takes its average colour. The server exits
+with the sim, and if it fails (e.g. an image without `viser`) the sim logs why and keeps running.
+
+`viser` and `networkx` (which trimesh needs to keep mesh edges sharp) are in the image from this change:
+rebuild it with `./b image` if `--viser` reports `No module named ...`.
+
 ## 6. Camera → NUsight (`module::Camera`)
 
 `sim/soccer` renders the K1's head camera (a `<camera name="head">` in the model) offscreen and writes rgb8
@@ -323,8 +349,8 @@ on the network ⇒ idle no-op. Config: `mujoco/config/supervisor.yaml`.
   versa) — asymmetric transports let discovery succeed but silently blackhole the RPCs. Use the same
   transport on both sides: both SHM (default + `--ipc host`) or both UDP-only.
 - **No window / `xhost`/X11 authorization errors.** `./b run` runs `xhost +local:` for you when `$DISPLAY`
-  is set; on a remote/SSH session without X forwarding, run headless (`./b run sim/soccer --headless`) or
-  forward X11 (`ssh -X`).
+  is set; on a remote/SSH session without X forwarding, view it in a browser (`./b run sim/soccer --viser`,
+  §5), run headless (`--headless`) or forward X11 (`ssh -X`).
 - **No GPU / rendering looks software-y.** The container falls back to Mesa software or integrated-GPU
   rendering via `/dev/dri` when `nvidia-container-toolkit` isn't installed — slower, but functional; the
   physics and DDS surface are unaffected either way. Headless mode sidesteps rendering entirely.

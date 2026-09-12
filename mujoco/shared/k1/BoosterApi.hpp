@@ -47,6 +47,18 @@ enum RobotMode : int {
     SOCCER  = 4,  // soccer locomotion — NUbots enters this immediately at startup
 };
 
+// RobotMode name for the viewers' status text
+inline const char* mode_name(int mode) {
+    switch (mode) {
+        case DAMPING: return "DAMPING";
+        case PREPARE: return "PREPARE";
+        case WALKING: return "WALKING";
+        case CUSTOM: return "CUSTOM";
+        case SOCCER: return "SOCCER";
+        default: return "?";
+    }
+}
+
 // FallDownState.fall_down_state (matches NUbots' BoosterFallDownState enum)
 enum FallState : int {
     IS_READY      = 0,

@@ -8,7 +8,7 @@ it **unchanged**.
 
 ```
 sim/soccer  (docker container, NUClear)
-   MuJoCo physics + servo/mode machine + head camera + GLFW viewer + GameController supervisor
+   MuJoCo physics + servo/mode machine + head camera + viewer + GameController supervisor
         │  Booster SDK over FastDDS (domain 0)            │  camera frames → shared memory
         ▼                                                 ▼
  NUbots_K1  (K1WalkPolicy / K1GetUpPolicy, behaviour)   input::K1Camera → ImageCompressor → NUsight
@@ -33,6 +33,7 @@ troubleshooting are in **[docs/K1_MUJOCO_SETUP.md](docs/K1_MUJOCO_SETUP.md)**.
 ./b configure                   # configure the sim build
 ./b build                       # build the sim in docker (first run builds the image)
 ./b run sim/soccer              # launch the soccer sim (viewer + DDS + camera + supervisor)
+./b run sim/soccer --viser      # ...viewed in a browser instead: open http://<host>:8080
 ```
 
 Then drive it from **[`NUbots_K1`](https://github.com/NUbots/NUbots_K1)** exactly as against the real robot:
@@ -84,6 +85,8 @@ Parsed in [`mujoco/shared/CliOptions.hpp`](mujoco/shared/CliOptions.hpp); `--hel
 | `--keyframe <name>` | `ready` | Startup keyframe for the **main** robot (e.g. `lying_front` to start fallen and exercise the get-up chain). |
 | `--rtf <factor>` | `simulation.yaml`'s `real_time_factor` | Real-time factor; `0` = free-run (uncapped, for tests/sweeps). |
 | `--robots <n>` | `1` | **Total** K1s on the field, 1–20. `n−1` extra copies are attached via MuJoCo's `mjSpec` attach API with `subNN_` name prefixes, so the main robot's unprefixed joint/sensor names — and every DDS and shared-memory contract — are untouched. Extras spawn standing on a 5×4 grid clear of the `y = 0` main-robot/ball lane and are PD-held at the `ready` pose: uncontrolled obstacles for dribbling and navigation practice, not extra DDS endpoints. Sim resets re-place them; `--keyframe` does not apply to them. |
+| `--viser` | off | Serve the viewer as a web page instead of opening the window: open `http://<host>:8080` in any browser, on this machine or across the network. See [Browser viewer](#browser-viewer). |
+| `--viser-port <port>` | `8080` | The browser viewer's port. Implies `--viser`. |
 | `--help`, `-h` | — | Print the flag list and exit. |
 
 ```bash
@@ -92,6 +95,7 @@ Parsed in [`mujoco/shared/CliOptions.hpp`](mujoco/shared/CliOptions.hpp); `--hel
 ./b run sim/soccer --rtf 0                               # free-run (uncapped real-time factor)
 ./b run sim/soccer --keyframe lying_front                # start fallen, to exercise GetUp
 ./b run sim/soccer --robots 5                            # 4 extra K1s on the field (max 20 total)
+./b run sim/soccer --viser                              # the viewer in a browser, on port 8080
 ```
 
 ### Environment variables
@@ -115,6 +119,22 @@ perturbation drags), plus:
 
 `Space` is **not** a pause: physics stepping belongs to `module::Simulation`'s 1 kHz thread and no pause
 switch is exposed yet.
+
+### Browser viewer
+
+`--viser` serves the viewer with [viser](https://viser.studio) instead of opening the window, so the sim
+can run on a machine with no display (a lab server, over SSH) and be watched from any browser. The sim
+logs the address as it starts, e.g. `open http://<host>:8080`; `./b run` uses the host network, so the
+port is the host's. If 8080 is taken, viser moves to the next free port and prints the one it used.
+
+The page shows the sim time, real-time factor and robot mode, with **Reset** (`Backspace` in the window),
+**Shove robot** (`F`) and a **Follow robot** toggle that carries the camera along with the robot. Drag
+to orbit, right-drag to pan, scroll to zoom. There are no mouse perturbation drags.
+
+It's `module::ViserViewer`: the sim saves its compiled model for
+[`viser_server.py`](mujoco/module/ViserViewer/python/viser_server.py), which rebuilds the scene and moves
+it with the joint state the sim streams it at 30 Hz. Each mesh goes to the browser once however many
+`--robots` there are. It needs `viser` in the image: after pulling this, rebuild it with `./b image`.
 
 ## Networking
 
@@ -184,7 +204,7 @@ the K1 must match it.
 | --- | --- |
 | `b`, `mujoco/b.py`, `mujoco/tools/` | NUbots-style `./b` command dispatcher (`run`, `build`, `configure`, `roles`, `image`). |
 | `mujoco/roles/` | Role files (`sim/soccer.role`) → `bin/<role>` binaries. |
-| `mujoco/module/` | NUClear modules: `Simulation`, `SdkBridge` (DDS), `Locomotion`, `Camera`, `Supervisor`, `Viewer`. |
+| `mujoco/module/` | NUClear modules: `Simulation`, `SdkBridge` (DDS), `Locomotion`, `Camera`, `Supervisor`, `Viewer`, `ViserViewer` (browser viewer). |
 | `mujoco/models/k1/` | Vendored MuJoCo K1 model (BSD-3, `booster_assets`) + RoboCup/flat scenes. |
 | `mujoco/docker/` | Toolchain image + `k1sim.sh` (the container workflow `./b` wraps). |
 | `docs/K1_MUJOCO_SETUP.md` | Setup, config reference, end-to-end with `NUbots_K1`, and troubleshooting. |

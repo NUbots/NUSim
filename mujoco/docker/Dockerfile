@@ -54,5 +54,9 @@ RUN chmod -R a+rX /opt/k1sim-deps
 RUN apt-get update && apt-get install -y --no-install-recommends pkg-config cmake-curses-gui \
     && rm -rf /var/lib/apt/lists/*
 
+# The browser viewer (--viser, module/ViserViewer/python/viser_server.py). networkx is the graph
+# engine trimesh needs to keep sharp mesh edges sharp.
+RUN pip3 install --no-cache-dir viser==1.1.0 networkx==3.4.2
+
 ENV K1SIM_DEPS_PREFIX=/opt/k1sim-deps
 WORKDIR /workspace/NUSim/mujoco

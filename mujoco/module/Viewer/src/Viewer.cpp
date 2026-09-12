@@ -12,6 +12,7 @@
 #include "shared/k1/BoosterApi.hpp"
 #include "shared/message/Commands.hpp"
 #include "shared/message/SimMessages.hpp"
+#include "shared/sim/Shove.hpp"
 
 namespace k1sim::module {
 
@@ -56,15 +57,9 @@ bool button_right  = false;
 double last_x      = 0.0;
 double last_y      = 0.0;
 
-const char* mode_name(int mode) {
-    switch (mode) {
-        case booster::DAMPING: return "DAMPING";
-        case booster::PREPARE: return "PREPARE";
-        case booster::WALKING: return "WALKING";
-        case booster::CUSTOM: return "CUSTOM";
-        case booster::SOCCER: return "SOCCER";
-        default: return "?";
-    }
+// No window under --headless, or --viser (the browser viewer instead)
+bool window_disabled() {
+    return cli().headless || cli().viser;
 }
 
 // Release any perturbation force/selection so a stray drag never leaves the
@@ -85,15 +80,10 @@ void keyboard_cb(GLFWwindow* w, int key, int /*scancode*/, int act, int /*mods*/
         end_perturb();  // a reset mid-drag must not leave a perturb force pinned
         g_request_reset();
     }
-    // F: shove the robot over (deterministic fall for testing FallRecovery/GetUp —
-    // mouse-drag perturbs are usually within what the push-randomised policy rides out).
+    // F: shove the robot over (deterministic fall for testing FallRecovery/GetUp).
     if (key == GLFW_KEY_F && g_model != nullptr && g_data != nullptr && g_mutex != nullptr) {
         std::lock_guard<std::mutex> lock(*g_mutex);
-        if (g_model->njnt > 0 && g_model->jnt_type[0] == mjJNT_FREE) {
-            const int dof = g_model->jnt_dofadr[0];
-            g_data->qvel[dof + 0] += 1.5;  // linear kick, world x
-            g_data->qvel[dof + 4] += 6.0;  // pitch rate — guarantees a topple
-        }
+        sim::shove_robot(g_model, g_data);
     }
     // SPACE (pause) is intentionally NOT wired here: pausing physics is
     // module::Simulation's domain (it owns the 1 kHz stepping thread), and
@@ -234,6 +224,10 @@ Viewer::Viewer(std::unique_ptr<NUClear::Environment> environment) : Reactor(std:
             log<NUClear::LogLevel::INFO>("Viewer disabled (--headless)");
             return;
         }
+        if (cli().viser) {
+            log<NUClear::LogLevel::INFO>("Viewer window disabled (--viser: view the sim in a browser instead)");
+            return;
+        }
 
         if (glfwInit() == GLFW_FALSE) {
             log<NUClear::LogLevel::ERROR>("glfwInit() failed — continuing without a viewer window");
@@ -273,7 +267,7 @@ Viewer::Viewer(std::unique_ptr<NUClear::Environment> environment) : Reactor(std:
     });
 
     on<Trigger<message::SimHandles>, MainThread>().then([this](const message::SimHandles& handles) {
-        if (cli().headless) {
+        if (window_disabled()) {
             return;
         }
 
@@ -302,7 +296,7 @@ Viewer::Viewer(std::unique_ptr<NUClear::Environment> environment) : Reactor(std:
     });
 
     on<Every<16, std::chrono::milliseconds>, MainThread>().then([this] {
-        if (cli().headless || window == nullptr) {
+        if (window_disabled() || window == nullptr) {
             return;
         }
 
@@ -345,7 +339,7 @@ Viewer::Viewer(std::unique_ptr<NUClear::Environment> environment) : Reactor(std:
                           "sim time: %.1f s\nRTF: %.2f\nmode: %s",
                           g_sim_time.load(std::memory_order_relaxed),
                           rtf,
-                          mode_name(g_mode.load(std::memory_order_relaxed)));
+                          booster::mode_name(g_mode.load(std::memory_order_relaxed)));
             mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, viewport, overlay, nullptr, &con);
         }
 
@@ -353,7 +347,7 @@ Viewer::Viewer(std::unique_ptr<NUClear::Environment> environment) : Reactor(std:
     });
 
     on<Shutdown, MainThread>().then([this] {
-        if (!cli().headless) {
+        if (!window_disabled()) {
             if (scene_ready) {
                 mjv_freeScene(&scn);
                 mjr_freeContext(&con);

@@ -15,6 +15,8 @@ struct CliOptions {
     std::string keyframe;    // override for the startup keyframe (default "ready")
     double rtf = -1.0;       // override real-time factor; <0 = use config (0 = free-run)
     int robots = 1;          // total K1s on the field; extras are PD-held at "ready"
+    bool viser     = false;  // serve the browser viewer (module::ViserViewer) instead of the window
+    int viser_port = 8080;   // the browser viewer's HTTP port
 };
 
 inline constexpr int MAX_ROBOTS = 20;
@@ -58,6 +60,17 @@ inline CliOptions parse_cli(int argc, char** argv) {
                 std::exit(1);
             }
         }
+        else if (arg == "--viser") {
+            opts.viser = true;
+        }
+        else if (arg == "--viser-port") {
+            opts.viser      = true;
+            opts.viser_port = std::stoi(value("--viser-port"));
+            if (opts.viser_port < 1 || opts.viser_port > 65535) {
+                std::fprintf(stderr, "--viser-port must be between 1 and 65535\n");
+                std::exit(1);
+            }
+        }
         else if (arg == "--help" || arg == "-h") {
             std::printf("k1_mujoco_sim — MuJoCo simulator for the Booster K1 (Booster SDK DDS surface)\n"
                         "  --headless          run without the viewer window\n"
@@ -66,7 +79,9 @@ inline CliOptions parse_cli(int argc, char** argv) {
                         "  --keyframe <name>   startup keyframe (default: ready; e.g. lying_front)\n"
                         "  --rtf <factor>      real-time factor; 0 = free-run\n"
                         "  --robots <n>        total K1s on the field, 1-20 (default 1); extra robots\n"
-                        "                      are uncontrolled and PD-held at the ready pose\n");
+                        "                      are uncontrolled and PD-held at the ready pose\n"
+                        "  --viser             view the sim in a browser (viser) instead of the window\n"
+                        "  --viser-port <port> the browser viewer's port (default 8080; implies --viser)\n");
             std::exit(0);
         }
         else {

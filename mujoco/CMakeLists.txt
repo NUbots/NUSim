@@ -51,6 +51,7 @@ add_subdirectory(module/Locomotion)
 add_subdirectory(module/Camera)
 add_subdirectory(module/Supervisor)
 add_subdirectory(module/Viewer)
+add_subdirectory(module/ViserViewer)
 
 # --- Roles → bin/<role_path>/<role_name> (see cmake/K1SimRole.cmake) ---
 set(K1SIM_ROLE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
@@ -82,6 +83,7 @@ target_link_libraries(
             k1sim_module_sdkbridge
             k1sim_module_locomotion
             k1sim_module_viewer
+            k1sim_module_viserviewer
             k1sim_shared
 )
 
