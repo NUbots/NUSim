@@ -1,6 +1,7 @@
 #ifndef K1SIM_SHARED_UTIL_CONFIG_HPP
 #define K1SIM_SHARED_UTIL_CONFIG_HPP
 
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <string>
@@ -29,6 +30,24 @@ inline YAML::Node load(const std::string& filename) {
 inline std::filesystem::path resolve_path(const std::string& path) {
     std::filesystem::path p(path);
     return p.is_absolute() ? p : std::filesystem::path(K1SIM_SOURCE_DIR) / p;
+}
+
+// The scene simulation.yaml lists under `fields` for the named field, or for its default `field`
+// when none is named. Exits listing the known fields if there is no such field.
+inline std::string field_scene(const YAML::Node& sim_cfg, std::string field = "") {
+    if (field.empty()) {
+        field = sim_cfg["field"].as<std::string>();
+    }
+    const YAML::Node fields = sim_cfg["fields"];
+    if (!fields[field]) {
+        std::string known;
+        for (const auto& entry : fields) {
+            known += " " + entry.first.as<std::string>();
+        }
+        std::fprintf(stderr, "unknown field '%s' (known:%s)\n", field.c_str(), known.c_str());
+        std::exit(1);
+    }
+    return fields[field].as<std::string>();
 }
 
 }  // namespace k1sim::config

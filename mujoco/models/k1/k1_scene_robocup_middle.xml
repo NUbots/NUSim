@@ -11,7 +11,7 @@
     between the inner post edges (2.6 m post-center to post-center) with the
     crossbar at 1.8 m. The Middle Division plays with a FIFA size 3 or 4 ball;
     the ball below is still the KidSize one the Yolo model was trained on.
-    Launch with `./b run sim/soccer --model models/k1/k1_scene_robocup_middle.xml`.
+    This is NUSim's default field (`./b run sim/soccer`, or `--field middle`).
 
     Solver settings (timestep 0.001, Newton, impratio 10) come from the
     included K1_22dof.xml and are intentionally not overridden here.
@@ -227,9 +227,8 @@
       Own half, bottom-left corner: base at (-6.0, -4.0) on our side (own goal is
       the -x goal, per "kickoff" above), 1 m in from the goal line and 0.5 m in
       from the touchline, facing +x toward the opponent goal. Same base height +
-      joint angles as "ready"/"kickoff". Launch with `./b run sim/soccer --model
-      models/k1/k1_scene_robocup_middle.xml --keyframe own_bottom_left`. Flip y
-      to +4.0 for top-left.
+      joint angles as "ready"/"kickoff". Launch with `./b run sim/soccer
+      --keyframe own_bottom_left`. Flip y to +4.0 for top-left.
     -->
     <key name="own_bottom_left"
          qpos="-6.0 -4.0 0.555 1 0 0 0

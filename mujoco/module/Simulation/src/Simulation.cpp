@@ -2,6 +2,8 @@
 
 #include <cstddef>
 #include <mujoco/mujoco.h>
+#include <string>
+#include <utility>
 
 #include "shared/CliOptions.hpp"
 #include "shared/k1/JointIndex.hpp"
@@ -18,7 +20,7 @@ SimCore::Config build_sim_config() {
     auto gains_cfg = config::load("gains.yaml");
 
     SimCore::Config cfg;
-    cfg.model_path = !cli().model.empty() ? cli().model : sim_cfg["model"].as<std::string>();
+    cfg.model_path = !cli().model.empty() ? cli().model : config::field_scene(sim_cfg, cli().field);
     cfg.initial_keyframe =
         !cli().keyframe.empty() ? cli().keyframe : sim_cfg["initial_keyframe"].as<std::string>("ready");
     // CliOptions.rtf < 0 means "use config"; the config's real_time_factor may itself be 0
@@ -49,10 +51,12 @@ SimCore::Config build_sim_config() {
 Simulation::Simulation(std::unique_ptr<NUClear::Environment> environment) : Reactor(std::move(environment)) {
 
     // Constructed here (not inside on<Startup>) — see the header comment on sim_.
-    sim_ = std::make_unique<SimCore>(build_sim_config(),
+    SimCore::Config sim_config = build_sim_config();
+    const std::string scene    = sim_config.model_path;
+    sim_ = std::make_unique<SimCore>(std::move(sim_config),
                                      [this](std::unique_ptr<message::SimStateUpdate> state) { emit(state); });
 
-    on<Startup>().then([this] {
+    on<Startup>().then([this, scene] {
         sim_->load_model();
 
         auto handles          = std::make_unique<message::SimHandles>();
@@ -62,7 +66,9 @@ Simulation::Simulation(std::unique_ptr<NUClear::Environment> environment) : Reac
         handles->measured_rtf = &sim_->measured_rtf();
         emit(handles);
 
-        log<NUClear::LogLevel::INFO>("Simulation ready (MuJoCo",
+        log<NUClear::LogLevel::INFO>("Simulation ready (scene",
+                                      scene,
+                                      "— MuJoCo",
                                       mj_versionString(),
                                       "— nq:",
                                       sim_->model()->nq,

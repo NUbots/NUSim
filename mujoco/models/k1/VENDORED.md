@@ -211,8 +211,9 @@ overridden at the scene level, per the task brief.
 The RoboCup 2026 Humanoid Soccer League **M-Field** (former AdultSize), the
 field of the Middle Division the K1 plays in. Identical to
 `k1_scene_robocup.xml` apart from the pitch (floor, line markings, goals) and
-the spawn keyframes, which are moved out for the bigger field. Launch with
-`./b run sim/soccer --model models/k1/k1_scene_robocup_middle.xml`.
+the spawn keyframes, which are moved out for the bigger field. It is NUSim's
+default field (`config/simulation.yaml`'s `field: middle`); `./b run sim/soccer
+--field kidsize` switches to the KidSize scene.
 
 Dimensions are from the HSL 2026 rules
 (<https://github.com/RoboCup-HumanoidSoccerLeague/HSL-Rules>, Law 1
