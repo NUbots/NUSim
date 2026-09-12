@@ -86,6 +86,15 @@ SyntheticState::SyntheticState(std::unique_ptr<NUClear::Environment> environment
         const double half = yaw_ * 0.5;
         update->base.quat = {std::cos(half), 0.0, 0.0, std::sin(half)};
 
+        // Standing head frame in the footprint frame: 0.33 m above the base (the Head_pitch
+        // joint 0.248 m above the Trunk plus the 0.08 m head frame offset, see
+        // shared/sim/HeadPose.hpp), turned by the commanded head yaw then pitch.
+        const double cy    = std::cos(head_yaw_ * 0.5), sy = std::sin(head_yaw_ * 0.5);
+        const double cp    = std::cos(head_pitch_ * 0.5), sp = std::sin(head_pitch_ * 0.5);
+        update->head.valid    = true;
+        update->head.position = {0.0, 0.0, update->base.z + 0.33};
+        update->head.quat     = {cy * cp, -sy * sp, cy * sp, sy * cp};
+
         update->mode         = mode_;
         update->fall_state   = fall_state_;
         update->getting_up   = false;

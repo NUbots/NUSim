@@ -13,6 +13,8 @@
 #include "LowStatePubSubTypes.h"
 #include "Odometer.h"
 #include "OdometerPubSubTypes.h"
+#include "Pose.h"
+#include "PosePubSubTypes.h"
 
 #include "shared/k1/BoosterApi.hpp"
 #include "shared/k1/JointIndex.hpp"
@@ -49,11 +51,14 @@ StatePublisher::StatePublisher(DdsParticipant& dds, double battery_soc) : batter
     using booster_interface::msg::dds_::FallDownState_PubSubType;
     using booster_interface::msg::dds_::LowState_PubSubType;
     using booster_interface::msg::dds_::Odometer_PubSubType;
+    using geometry_msgs::msg::dds_::Pose_PubSubType;
 
     low_state_writer_ =
         dds.create_writer<LowState_PubSubType>(k1sim::booster::TOPIC_LOW_STATE, DdsParticipant::state_writer_qos());
     odometer_writer_ = dds.create_writer<Odometer_PubSubType>(k1sim::booster::TOPIC_ODOMETER_STATE,
                                                                DdsParticipant::state_writer_qos());
+    head_pose_writer_ =
+        dds.create_writer<Pose_PubSubType>(k1sim::booster::TOPIC_HEAD_POSE, DdsParticipant::state_writer_qos());
     fall_down_writer_ =
         dds.create_writer<FallDownState_PubSubType>(k1sim::booster::TOPIC_FALL_DOWN, DdsParticipant::state_writer_qos());
     battery_writer_ = dds.create_writer<BatteryState_PubSubType>(k1sim::booster::TOPIC_BATTERY_STATE,
@@ -96,6 +101,20 @@ void StatePublisher::publish(const k1sim::message::SimStateUpdate& update) {
     odom.y(static_cast<float>(update.base.y));
     odom.theta(static_cast<float>(yaw_from_quat(update.base.quat)));
     odometer_writer_->write(&odom);
+
+    // --- rt/head_pose --- The head frame in the yaw-only base footprint frame, which
+    // K1Sensors composes with the odometry above to place the camera and torso in the world.
+    if (update.head.valid) {
+        geometry_msgs::msg::dds_::Pose_ pose;
+        pose.position().x(update.head.position[0]);
+        pose.position().y(update.head.position[1]);
+        pose.position().z(update.head.position[2]);
+        pose.orientation().w(update.head.quat[0]);
+        pose.orientation().x(update.head.quat[1]);
+        pose.orientation().y(update.head.quat[2]);
+        pose.orientation().z(update.head.quat[3]);
+        head_pose_writer_->write(&pose);
+    }
 
     // --- rt/fall_down --- publish on change, or every >=1s as a keepalive.
     const bool changed = !have_last_fall_state_ || last_fall_state_ != update.fall_state;

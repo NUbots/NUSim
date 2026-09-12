@@ -1,0 +1,14 @@
+// geometry_msgs::msg::dds_::Point_ — see PROTOCOL.md.
+// Field layout verified against include/booster/idl/geometry_msgs/Point.h.
+
+module geometry_msgs {
+    module msg {
+        module dds_ {
+            struct Point_ {
+                double x;
+                double y;
+                double z;
+            };
+        };
+    };
+};

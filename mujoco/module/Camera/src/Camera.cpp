@@ -15,6 +15,7 @@
 #include "module/Camera/src/EglContext.hpp"
 #include "module/Camera/src/SharedImageWriter.hpp"
 #include "module/Camera/src/SharedPoseWriter.hpp"
+#include "shared/sim/HeadPose.hpp"
 #include "shared/util/Config.hpp"
 
 namespace k1sim::module {
@@ -236,21 +237,9 @@ void Camera::render_loop(camera::CameraConfig cfg) {
             }
         }
         if (pose_writer != nullptr) {
-            // Hrh = (translate(base_x, base_y, 0) * rotz(base_yaw))^-1 * Hwh: head pose in
-            // the yaw-only base footprint frame, so K1Sensors' yaw-only odometry (Hwr) can
-            // recompose the true world pose — including torso tilt when fallen.
-            const mjtNum yaw = std::atan2(2.0 * (base_q[0] * base_q[3] + base_q[1] * base_q[2]),
-                                          1.0 - 2.0 * (base_q[2] * base_q[2] + base_q[3] * base_q[3]));
-            const mjtNum axis[3]{0, 0, 1};
-            mjtNum neg_yaw_q[4];
-            mju_axisAngle2Quat(neg_yaw_q, axis, -yaw);
-            const mjtNum rel_w[3]{head_p[0] - base_xy[0], head_p[1] - base_xy[1], head_p[2]};
-            mjtNum rel_p[3];
-            mju_rotVecQuat(rel_p, rel_w, neg_yaw_q);
-            mjtNum rel_q[4];
-            mju_mulQuat(rel_q, neg_yaw_q, head_q);
-            const double pos[3]{rel_p[0], rel_p[1], rel_p[2]};
-            const double quat_xyzw[4]{rel_q[1], rel_q[2], rel_q[3], rel_q[0]};
+            const FootprintPose Hrh = head_in_footprint(head_p, head_q, base_xy, base_q);
+            const double pos[3]{Hrh.position[0], Hrh.position[1], Hrh.position[2]};
+            const double quat_xyzw[4]{Hrh.quat[1], Hrh.quat[2], Hrh.quat[3], Hrh.quat[0]};
             pose_writer->publish(pos, quat_xyzw);
         }
         mjr_render(viewport, &scn, &con);

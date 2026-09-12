@@ -35,6 +35,14 @@ struct BaseState {
     std::array<double, 3> ang_vel{};         // world frame
 };
 
+// The real robot's head frame (0.08 m above Head_pitch) in the yaw-only base footprint
+// frame (see shared/sim/HeadPose.hpp).
+struct HeadPose {
+    bool valid = false;                      // false if the model has no Head_2 body
+    std::array<double, 3> position{};        // m
+    std::array<double, 4> quat{1, 0, 0, 0};  // w,x,y,z
+};
+
 // Emitted by the physics thread at the LowState cadence (every N steps, 50 Hz).
 struct SimStateUpdate {
     double sim_time     = 0.0;
@@ -42,6 +50,7 @@ struct SimStateUpdate {
     std::array<JointState, JOINT_COUNT> joints{};  // JointIndexK1 order
     ImuData imu{};
     BaseState base{};
+    HeadPose head{};
     int mode         = 0;  // booster::RobotMode value
     int fall_state   = 0;  // booster::FallState value
     bool getting_up  = false;
