@@ -26,6 +26,14 @@
 #                       2-level module input, `dds_::dds_::Name__` for 3-level module
 #                       input — see PROTOCOL.md §2 "Empirical finding on -typeros2").
 #                       Do not add this flag back without re-reading that note.
+#
+# Each idl/<package>/msg/*.idl generates into idl_gen/<package>/.
+#
+# fastddsgen also generates every file an .idl #includes, placed by that file's path
+# relative to the directory fastddsgen runs in; a file outside that directory goes flat into
+# the output directory. So it runs once, from a directory linking each <package>/ to
+# idl/<package>/msg: an included type then generates into its own package's directory, not
+# as a copy in the including package's.
 set -euo pipefail
 
 FASTDDSGEN=${FASTDDSGEN:-/opt/k1sim-deps/bin/fastddsgen}
@@ -36,29 +44,41 @@ OUT_DIR="$ROOT/idl_gen"
 echo "== fastddsgen version =="
 "$FASTDDSGEN" -version
 
-rm -rf "$OUT_DIR/booster_interface" "$OUT_DIR/booster_msgs" "$OUT_DIR/geometry_msgs"
-mkdir -p "$OUT_DIR/booster_interface" "$OUT_DIR/booster_msgs" "$OUT_DIR/geometry_msgs"
+# Where fastddsgen runs: <package>/ -> idl/<package>/msg
+VIEW="$(mktemp -d)"
+trap 'rm -rf "$VIEW"' EXIT
 
-gen() {
-    local src_dir="$1"
-    local out_dir="$2"
-    shift 2
-    (cd "$src_dir" && "$FASTDDSGEN" -cdr v1 -de final -replace -d "$out_dir" "$@")
-}
+INCLUDES=()
+FILES=()
+for dir in "$IDL_DIR"/*/msg; do
+    pkg="$(basename "$(dirname "$dir")")"
+    ln -s "$dir" "$VIEW/$pkg"
+    # So an .idl can #include another package's type by file name
+    INCLUDES+=(-I "$pkg")
+    for idl in "$dir"/*.idl; do
+        FILES+=("$pkg/$(basename "$idl")")
+    done
+done
 
-# booster_interface::msg — #include paths inside these .idl files are resolved
-# relative to each file's own directory, so order in the arg list doesn't matter.
-gen "$IDL_DIR/booster_interface/msg" "$OUT_DIR/booster_interface" \
-    ImuState.idl MotorState.idl LowState.idl Odometer.idl FallDownState.idl \
-    BatteryState.idl ButtonEvent.idl MotorCmd.idl LowCmd.idl
+rm -rf "$OUT_DIR"
+mkdir -p "$OUT_DIR"
+(cd "$VIEW" && "$FASTDDSGEN" -cdr v1 -de final -replace "${INCLUDES[@]}" -d "$OUT_DIR" "${FILES[@]}")
 
-# booster_msgs::msg
-gen "$IDL_DIR/booster_msgs/msg" "$OUT_DIR/booster_msgs" \
-    RpcReqMsg.idl RpcRespMsg.idl
-
-# geometry_msgs::msg (rt/head_pose)
-gen "$IDL_DIR/geometry_msgs/msg" "$OUT_DIR/geometry_msgs" \
-    Point.idl Quaternion.idl Pose.idl
+# Each idl_gen/<package>/ holds only its own package's types; any other is a duplicate
+for dir in "$OUT_DIR"/*/; do
+    pkg="$(basename "$dir")"
+    for header in "$dir"*PubSubTypes.h; do
+        type="$(basename "$header" PubSubTypes.h)"
+        if [ ! -f "$IDL_DIR/$pkg/msg/$type.idl" ]; then
+            echo "error: idl_gen/$pkg/ has $type, which is not in idl/$pkg/msg/" >&2
+            exit 1
+        fi
+    done
+done
+if [ -n "$(find "$OUT_DIR" -maxdepth 1 -type f)" ]; then
+    echo "error: files generated outside a package directory in $OUT_DIR" >&2
+    exit 1
+fi
 
 echo "== Generated into $OUT_DIR. Registered type names: =="
 grep -rho 'setName("[^"]*")' "$OUT_DIR" | sort -u
