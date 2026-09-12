@@ -14,6 +14,10 @@
 //   - base height stays within [0.45, 0.62] for the whole run once t > 1s.
 //   - tilt (angle between the base's local z-axis and world z) is < 10 deg at the end.
 //   - the free-run stepping rate is sane (> 1000 steps/s).
+//   - the head pose (published as rt/head_pose) is present on every update and, once t > 1s,
+//     reconstructing the trunk from it the way NUbots' K1Sensors does lands within 5 mm of the
+//     true trunk height. NUbots places the camera and torso from it, so any frame mismatch
+//     shows up as the robot sunk into (or floating above) the field.
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -45,6 +49,27 @@ double clamp(double v, double lo, double hi) {
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
+// The trunk height NUbots' K1Sensors recovers from rt/head_pose: Hwt = Hrh * Hhp * Htp^-1 with
+// Hhp = translate(0, 0, -0.08) and Htp = [Rz(yaw) * Ry(pitch), (0.0056, 0, 0.2149 + 0.033)]
+// (NUbots_K1 module/input/K1Sensors: K1Sensors.yaml Hhp, k1_model.hpp compute_Htp).
+double k1sensors_trunk_z(const k1sim::message::SimStateUpdate& s) {
+    mjtNum R_h[9];  // row-major
+    mju_quat2Mat(R_h, s.head.quat.data());
+
+    const double yaw = s.joints[k1sim::HeadYaw].q, pitch = s.joints[k1sim::HeadPitch].q;
+    const double cy = std::cos(yaw), sy = std::sin(yaw), cp = std::cos(pitch), sp = std::sin(pitch);
+    const double R_tp[3][3] = {{cy * cp, -sy, cy * sp}, {sy * cp, cy, sy * sp}, {-sp, 0.0, cp}};
+    const double t_tp[3]    = {0.0056, 0.0, 0.2149 + 0.033};
+
+    // Trunk position in the head frame: Hhp's translation plus Htp^-1's (-R_tp^T t_tp).
+    double v[3];
+    for (int c = 0; c < 3; ++c) {
+        v[c] = -(R_tp[0][c] * t_tp[0] + R_tp[1][c] * t_tp[1] + R_tp[2][c] * t_tp[2]);
+    }
+    v[2] -= 0.08;
+    return s.head.position[2] + R_h[6] * v[0] + R_h[7] * v[1] + R_h[8] * v[2];
+}
+
 }  // namespace
 
 int main() {
@@ -72,6 +97,8 @@ int main() {
     std::atomic<double> last_sim_time{0.0};
     std::atomic<double> min_height_after_1s{1e9};
     std::atomic<double> max_height_after_1s{-1e9};
+    std::atomic<bool> head_missing{false};
+    std::atomic<double> max_trunk_z_error{0.0};
     std::atomic<bool> done{false};
 
     auto on_state = [&](std::unique_ptr<SimStateUpdate> s) {
@@ -100,6 +127,14 @@ int main() {
             if (s->base.z > cur_max) {
                 max_height_after_1s.store(s->base.z, std::memory_order_relaxed);
             }
+
+            const double trunk_z_error = std::abs(k1sensors_trunk_z(*s) - s->base.z);
+            if (trunk_z_error > max_trunk_z_error.load(std::memory_order_relaxed)) {
+                max_trunk_z_error.store(trunk_z_error, std::memory_order_relaxed);
+            }
+        }
+        if (!s->head.valid) {
+            head_missing.store(true, std::memory_order_relaxed);
         }
 
         // tilt = angle between the base's local z-axis and world z, from the wxyz quat.
@@ -162,6 +197,17 @@ int main() {
         std::fprintf(stderr, "FAIL: final tilt %.2f deg >= 10 deg\n", last_tilt_deg.load());
         ok = false;
     }
+    if (head_missing.load()) {
+        std::fprintf(stderr, "FAIL: SimStateUpdate carried no head pose (model has no Head_2?)\n");
+        ok = false;
+    }
+    if (max_trunk_z_error.load() > 0.005) {
+        std::fprintf(stderr,
+                     "FAIL: trunk height reconstructed from the head pose as K1Sensors does is off by "
+                     "up to %.4f m after t=1s (> 0.005)\n",
+                     max_trunk_z_error.load());
+        ok = false;
+    }
     if (steps_per_sec <= 1000.0) {
         std::fprintf(stderr, "FAIL: free-run stepping rate %.1f steps/s <= 1000\n", steps_per_sec);
         ok = false;
@@ -169,14 +215,15 @@ int main() {
 
     std::printf(
         "test_pd_stand: sim_time=%.3fs steps=%llu wall=%.3fs (%.0f steps/s) "
-        "height[1s..end]=[%.4f, %.4f] final_tilt=%.2fdeg\n",
+        "height[1s..end]=[%.4f, %.4f] final_tilt=%.2fdeg max_k1sensors_trunk_z_error=%.4f\n",
         last_sim_time.load(),
         static_cast<unsigned long long>(steps),
         wall_elapsed,
         steps_per_sec,
         min_height_after_1s.load(),
         max_height_after_1s.load(),
-        last_tilt_deg.load());
+        last_tilt_deg.load(),
+        max_trunk_z_error.load());
 
     return ok ? 0 : 1;
 }

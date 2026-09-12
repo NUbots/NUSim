@@ -6,6 +6,7 @@
 #include <stdexcept>
 
 #include "shared/k1/BoosterApi.hpp"
+#include "shared/sim/HeadPose.hpp"
 #include "shared/util/Config.hpp"
 
 namespace k1sim {
@@ -154,6 +155,11 @@ void SimCore::load_model() {
 
     left_foot_body_id_  = mj_name2id(m_, mjOBJ_BODY, "left_foot_link");
     right_foot_body_id_ = mj_name2id(m_, mjOBJ_BODY, "right_foot_link");
+
+    head_body_id_ = mj_name2id(m_, mjOBJ_BODY, "Head_2");
+    if (head_body_id_ < 0) {
+        std::fprintf(stderr, "SimCore: model has no Head_2 body; rt/head_pose will not be published\n");
+    }
     if (!config_.foot_log_path.empty()) {
         if (left_foot_body_id_ < 0 || right_foot_body_id_ < 0) {
             std::fprintf(stderr, "SimCore: foot log requested but the model has no left/right_foot_link\n");
@@ -528,6 +534,16 @@ std::unique_ptr<message::SimStateUpdate> SimCore::make_snapshot(uint64_t steps) 
         mjtNum world[3];
         mju_mulMatVec3(world, rmat, local);
         s->base.ang_vel = {world[0], world[1], world[2]};
+    }
+
+    if (head_body_id_ >= 0) {
+        const FootprintPose Hrh = head_in_footprint(d_->xpos + 3 * head_body_id_,
+                                                    d_->xquat + 4 * head_body_id_,
+                                                    d_->qpos + qadr,
+                                                    d_->qpos + qadr + 3);
+        s->head.valid    = true;
+        s->head.position = Hrh.position;
+        s->head.quat     = Hrh.quat;
     }
 
     StepController* ctrl = controller_.load(std::memory_order_acquire);

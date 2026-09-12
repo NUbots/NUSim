@@ -16,6 +16,9 @@ inline constexpr const char* TOPIC_BATTERY_STATE  = "rt/battery_state";
 inline constexpr const char* TOPIC_BUTTON_EVENT   = "rt/button_event";
 inline constexpr const char* TOPIC_RPC_REQUEST    = "rt/LocoApiTopicReq";
 inline constexpr const char* TOPIC_RPC_RESPONSE   = "rt/LocoApiTopicResp";
+// Not an SDK constant: the robot's head pose (geometry_msgs Pose), the topic NUbots'
+// K1Sensors subscribes to (K1Sensors.yaml head_pose.topic).
+inline constexpr const char* TOPIC_HEAD_POSE      = "rt/head_pose";
 
 // LocoApiId values carried in RpcReqMsg.header JSON {"api_id": <int>}
 enum ApiId : int {

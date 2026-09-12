@@ -1,0 +1,15 @@
+// geometry_msgs::msg::dds_::Quaternion_ — see PROTOCOL.md.
+// Field layout verified against include/booster/idl/geometry_msgs/Quaternion.h.
+
+module geometry_msgs {
+    module msg {
+        module dds_ {
+            struct Quaternion_ {
+                double x;
+                double y;
+                double z;
+                double w;
+            };
+        };
+    };
+};

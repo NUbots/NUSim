@@ -159,6 +159,9 @@ private:
     std::FILE* foot_log_       = nullptr;
     int left_foot_body_id_     = -1;
     int right_foot_body_id_    = -1;
+
+    // Head_2, for SimStateUpdate::head (published as rt/head_pose); -1 if absent.
+    int head_body_id_          = -1;
 };
 
 }  // namespace k1sim

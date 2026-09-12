@@ -88,6 +88,20 @@ fastddsgen maps to unsigned `octet`/`uint8_t` in the generated C++ — this is t
 
 Topic `rt/odometer_state`. Planar ground-truth pose (m, m, rad).
 
+### `geometry_msgs::msg::dds_::Pose_` (geometry_msgs/Pose.h)
+| # | field | type |
+|---|---|---|
+| 1 | `position` | `geometry_msgs::msg::dds_::Point_` (`x`, `y`, `z` : `double`) |
+| 2 | `orientation` | `geometry_msgs::msg::dds_::Quaternion_` (`x`, `y`, `z`, `w` : `double`) |
+
+Topic `rt/head_pose`. Not an SDK API topic: it is what NUbots_K1's `input::K1Sensors`
+subscribes to (reliable) for the head pose in the yaw-only base footprint frame, which it
+composes with `rt/odometer_state` to place the camera and torso in the world. The head
+frame is the robot's, 0.08 m above the `Head_pitch` joint along the head z-axis, not the
+`Head_2` body origin: K1Sensors' `Hhp` removes that offset (see `shared/sim/HeadPose.hpp`). Layout and registered name verified against the SDK NUbots_K1 builds against
+(`d5d8f7ae`): `geometry_msgs::msg::Pose().getName()` returns
+`geometry_msgs::msg::dds_::Pose_`.
+
 ### `booster_interface::msg::dds_::FallDownState_` (FallDownState.h)
 Enum `FallDownStateType : unsigned long` (C++ `uint32_t`) = `{IS_READY=0, IS_FALLING=1,
 HAS_FALLEN=2, IS_GETTING_UP=3}`.
@@ -184,6 +198,7 @@ booster_interface::msg::dds_::LowCmd_
 booster_interface::msg::dds_::MotorCmd_
 booster_msgs::msg::dds_::RpcReqMsg_
 booster_msgs::msg::dds_::RpcRespMsg_
+geometry_msgs::msg::dds_::Pose_        (+ nested Point_, Quaternion_; rt/head_pose)
 ```
 
 Also present (not used by us): `booster_interface::msg::dds_::RemoteControllerState_`,
@@ -294,8 +309,10 @@ Per the lead's explicit spec (de-risks RPC correctness over squeezing out best-e
 UDP savings — reliability never hurts a loopback/`--network host` transport, and the
 SDK's own defaults would silently degrade to best-effort which is a *safe* superset
 to widen, not narrow), `module::SdkBridge` uses:
-- **State writers** (`low_state`, `odometer_state`, `fall_down`, `battery_state`,
-  `button_event`): `RELIABLE` + `VOLATILE` durability + `KEEP_LAST(5)` history.
+- **State writers** (`low_state`, `odometer_state`, `head_pose`, `fall_down`,
+  `battery_state`, `button_event`): `RELIABLE` + `VOLATILE` durability + `KEEP_LAST(5)`
+  history. `head_pose` must be `RELIABLE`: K1Sensors creates its reader with
+  `reliable = true`, which a best-effort writer would not match.
 - **RPC request reader** (`rt/LocoApiTopicReq`): `RELIABLE` + `KEEP_LAST(10)` history
   (bursts of calls at startup — e.g. NUbots issuing `ChangeMode` immediately — must not
   drop).

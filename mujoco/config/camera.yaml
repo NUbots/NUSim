@@ -18,11 +18,12 @@
 
 segment: _boostercamera_head_rgb
 
-# Head-pose shared-memory segment (K1Sensors "NBPO" layout; must match
-# NUbots_K1's K1Sensors.yaml `segment:`). Head (Head_2) pose in the yaw-only
-# base footprint frame, like NUbridge on the real robot. This is the only
-# path torso tilt takes into NUbots, i.e. what makes fall detection and the
-# GetUp chain work. Empty string disables.
+# Head-pose shared-memory segment (the NUbridge-era K1Sensors "NBPO" layout).
+# Head frame (0.08 m above Head_pitch, as the robot reports it; see
+# shared/sim/HeadPose.hpp) in the yaw-only base footprint frame. Current NUbots_K1
+# reads this pose over DDS instead (rt/head_pose, published by module::SdkBridge
+# from the same computation); this segment only serves older K1Sensors builds
+# that still read `head_pose: - segment:`. Empty string disables.
 pose_segment: _head_pose
 
 # rgb8, so the segment carries width*height*3 pixel bytes after the header --

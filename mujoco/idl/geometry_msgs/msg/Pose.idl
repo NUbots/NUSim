@@ -1,0 +1,16 @@
+// geometry_msgs::msg::dds_::Pose_ — see PROTOCOL.md.
+// Field layout verified against include/booster/idl/geometry_msgs/Pose.h.
+
+#include "Point.idl"
+#include "Quaternion.idl"
+
+module geometry_msgs {
+    module msg {
+        module dds_ {
+            struct Pose_ {
+                geometry_msgs::msg::dds_::Point_ position;
+                geometry_msgs::msg::dds_::Quaternion_ orientation;
+            };
+        };
+    };
+};

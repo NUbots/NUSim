@@ -36,8 +36,8 @@ OUT_DIR="$ROOT/idl_gen"
 echo "== fastddsgen version =="
 "$FASTDDSGEN" -version
 
-rm -rf "$OUT_DIR/booster_interface" "$OUT_DIR/booster_msgs"
-mkdir -p "$OUT_DIR/booster_interface" "$OUT_DIR/booster_msgs"
+rm -rf "$OUT_DIR/booster_interface" "$OUT_DIR/booster_msgs" "$OUT_DIR/geometry_msgs"
+mkdir -p "$OUT_DIR/booster_interface" "$OUT_DIR/booster_msgs" "$OUT_DIR/geometry_msgs"
 
 gen() {
     local src_dir="$1"
@@ -55,6 +55,10 @@ gen "$IDL_DIR/booster_interface/msg" "$OUT_DIR/booster_interface" \
 # booster_msgs::msg
 gen "$IDL_DIR/booster_msgs/msg" "$OUT_DIR/booster_msgs" \
     RpcReqMsg.idl RpcRespMsg.idl
+
+# geometry_msgs::msg (rt/head_pose)
+gen "$IDL_DIR/geometry_msgs/msg" "$OUT_DIR/geometry_msgs" \
+    Point.idl Quaternion.idl Pose.idl
 
 echo "== Generated into $OUT_DIR. Registered type names: =="
 grep -rho 'setName("[^"]*")' "$OUT_DIR" | sort -u

@@ -10,6 +10,9 @@
 //   - each sample's motor_state_serial has exactly 22 entries with finite,
 //     plausible-magnitude values
 //   - rt/odometer_state received at least once
+//   - rt/head_pose received at least once with a finite, standing-height pose (the
+//     topic NUbots' K1Sensors places the camera and torso from). Only when the SDK
+//     ships booster/idl/geometry_msgs/Pose.h; SKIP printed otherwise.
 //   - rt/battery_state received at least once during the 5s window (published at
 //     1 Hz via NUClear on<Every<1, std::chrono::seconds>>) with soc in (0, 100].
 //     Only when the SDK being built against ships booster/idl/b1/BatteryState.h —
@@ -41,6 +44,10 @@
     #include <booster/idl/b1/BatteryState.h>
     #define K1SIM_CHECK_BATTERY 1
     #define K1SIM_SDK_PINNED 1
+#endif
+#if __has_include(<booster/idl/geometry_msgs/Pose.h>)
+    #include <booster/idl/geometry_msgs/Pose.h>
+    #define K1SIM_CHECK_HEAD_POSE 1
 #endif
 #include <booster/idl/b1/LowState.h>
 #include <booster/idl/b1/Odometer.h>
@@ -79,6 +86,24 @@ std::atomic<uint64_t> g_odom_count{0};
 void OdometerHandler(const void* /*msg*/) {
     g_odom_count.fetch_add(1, std::memory_order_relaxed);
 }
+
+#ifdef K1SIM_CHECK_HEAD_POSE
+std::atomic<uint64_t> g_head_pose_count{0};
+std::atomic<double> g_head_pose_z{-1.0};
+std::atomic<bool> g_head_pose_finite{true};
+void HeadPoseHandler(const void* msg) {
+    const auto* pose = static_cast<const geometry_msgs::msg::Pose*>(msg);
+    const auto& p    = pose->position();
+    const auto& q    = pose->orientation();
+    g_head_pose_count.fetch_add(1, std::memory_order_relaxed);
+    g_head_pose_z.store(p.z(), std::memory_order_relaxed);
+    for (double v : {p.x(), p.y(), p.z(), q.x(), q.y(), q.z(), q.w()}) {
+        if (!std::isfinite(v)) {
+            g_head_pose_finite.store(false, std::memory_order_relaxed);
+        }
+    }
+}
+#endif
 
 #ifdef K1SIM_CHECK_BATTERY
 std::atomic<uint64_t> g_battery_count{0};
@@ -124,6 +149,10 @@ int main() {
     low_state_sub.InitChannel();
     ChannelSubscriber<Odometer> odom_sub(booster::robot::b1::kTopicOdometerState, OdometerHandler);
     odom_sub.InitChannel();
+#ifdef K1SIM_CHECK_HEAD_POSE
+    ChannelSubscriber<geometry_msgs::msg::Pose> head_pose_sub("rt/head_pose", HeadPoseHandler);
+    head_pose_sub.InitChannel();
+#endif
 #ifdef K1SIM_CHECK_BATTERY
     ChannelSubscriber<BatteryState> battery_sub("rt/battery_state", BatteryHandler);
     battery_sub.InitChannel();
@@ -151,6 +180,17 @@ int main() {
     check(g_last_motor_count.load() == 22, "rt/low_state motor_state_serial has exactly 22 entries");
     check(g_low_state_plausible.load(), "rt/low_state motor/imu values are finite and plausible magnitude");
     check(g_odom_count.load() > 0, "rt/odometer_state received at least once");
+#ifdef K1SIM_CHECK_HEAD_POSE
+    std::printf("head_pose: %llu samples in window, last z=%.3f\n",
+                static_cast<unsigned long long>(g_head_pose_count.load()),
+                g_head_pose_z.load());
+    check(g_head_pose_count.load() > 0, "rt/head_pose received at least once");
+    check(g_head_pose_finite.load(), "rt/head_pose values are finite");
+    check(g_head_pose_z.load() > 0.5 && g_head_pose_z.load() < 1.2,
+          "rt/head_pose z is a standing head height above the footprint (0.5, 1.2) m");
+#else
+    std::printf("[SKIP] rt/head_pose checks (SDK build lacks booster/idl/geometry_msgs/Pose.h)\n");
+#endif
 #ifdef K1SIM_CHECK_BATTERY
     std::printf("battery_state: %llu samples in window, last soc=%.1f\n",
                 static_cast<unsigned long long>(g_battery_count.load()),
