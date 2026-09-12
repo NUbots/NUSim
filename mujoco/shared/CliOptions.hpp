@@ -10,7 +10,8 @@ namespace k1sim {
 
 struct CliOptions {
     bool headless = false;
-    std::string model;       // override for simulation.yaml model path
+    std::string field;       // override for simulation.yaml field (a name under its `fields`)
+    std::string model;       // MJCF scene path, overriding the field's scene
     std::string config_dir;  // override for the config directory
     std::string keyframe;    // override for the startup keyframe (default "ready")
     double rtf = -1.0;       // override real-time factor; <0 = use config (0 = free-run)
@@ -39,6 +40,9 @@ inline CliOptions parse_cli(int argc, char** argv) {
         if (arg == "--headless") {
             opts.headless = true;
         }
+        else if (arg == "--field") {
+            opts.field = value("--field");
+        }
         else if (arg == "--model") {
             opts.model = value("--model");
         }
@@ -61,7 +65,9 @@ inline CliOptions parse_cli(int argc, char** argv) {
         else if (arg == "--help" || arg == "-h") {
             std::printf("k1_mujoco_sim — MuJoCo simulator for the Booster K1 (Booster SDK DDS surface)\n"
                         "  --headless          run without the viewer window\n"
-                        "  --model <path>      MJCF scene to load (default: config simulation.yaml)\n"
+                        "  --field <name>      field to play on, from simulation.yaml's fields:\n"
+                        "                      middle (RoboCup 2026 M-Field, default) or kidsize\n"
+                        "  --model <path>      MJCF scene to load, overriding --field\n"
                         "  --config-dir <dir>  config directory (default: mujoco/config)\n"
                         "  --keyframe <name>   startup keyframe (default: ready; e.g. lying_front)\n"
                         "  --rtf <factor>      real-time factor; 0 = free-run\n"

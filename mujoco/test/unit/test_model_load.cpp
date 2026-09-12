@@ -4,7 +4,7 @@
 //   1. $K1SIM_TEST_MODEL   — interim override while models/k1/k1_scene_robocup.xml
 //                            (workstream A, M1) is still landing; points at a scratch scene
 //                            during development.
-//   2. config/simulation.yaml's `model` key — the real acceptance path once A lands.
+//   2. the scene of config/simulation.yaml's default `field` — the real acceptance path once A lands.
 //
 // Asserts: ModelMap::build succeeds (all 22 joints/actuators found), a free root joint is
 // present, and the physics timestep is 0.001s.
@@ -25,7 +25,7 @@ std::string resolve_test_model_path() {
         return override_path;
     }
     auto cfg = k1sim::config::load("simulation.yaml");
-    return k1sim::config::resolve_path(cfg["model"].as<std::string>()).string();
+    return k1sim::config::resolve_path(k1sim::config::field_scene(cfg)).string();
 }
 
 }  // namespace
