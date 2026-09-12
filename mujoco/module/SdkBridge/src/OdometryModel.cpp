@@ -23,7 +23,8 @@ OdometryModel::Config OdometryModel::load_config(const YAML::Node& node) {
     cfg.enabled                = node["enabled"].as<bool>(cfg.enabled);
     cfg.scale                  = triple(node["scale"], cfg.scale);
     cfg.velocity_noise_density = triple(node["velocity_noise_density"], cfg.velocity_noise_density);
-    cfg.bias_random_walk       = triple(node["bias_random_walk"], cfg.bias_random_walk);
+    cfg.bias_sigma             = triple(node["bias_sigma"], cfg.bias_sigma);
+    cfg.bias_time_constant     = triple(node["bias_time_constant"], cfg.bias_time_constant);
     cfg.seed                   = node["seed"].as<uint64_t>(cfg.seed);
     return cfg;
 }
@@ -44,8 +45,10 @@ const OdometryModel::Estimate& OdometryModel::update(double t,
 
     const double dt = t - t_;
     if (!config_.enabled || !initialised_ || dt <= 0.0) {
-        estimate_    = Estimate{x, y, yaw, v_true, {}};
-        bias_        = {};
+        estimate_ = Estimate{x, y, yaw, v_true, {}};
+        for (std::size_t i = 0; i < 3; ++i) {
+            bias_[i] = config_.bias_sigma[i] * normal_(rng_);
+        }
         initialised_ = true;
         t_           = t;
         return estimate_;
@@ -53,7 +56,9 @@ const OdometryModel::Estimate& OdometryModel::update(double t,
     t_ = t;
 
     for (std::size_t i = 0; i < 3; ++i) {
-        bias_[i] += config_.bias_random_walk[i] * std::sqrt(dt) * normal_(rng_);
+        // Exact discretisation of the Gauss-Markov bias, stationary at bias_sigma
+        const double a = std::exp(-dt / config_.bias_time_constant[i]);
+        bias_[i]       = a * bias_[i] + config_.bias_sigma[i] * std::sqrt(1.0 - a * a) * normal_(rng_);
         // A white noise density sigma is a per-sample standard deviation of sigma / sqrt(dt)
         const double sample_sigma      = config_.velocity_noise_density[i] / std::sqrt(dt);
         estimate_.velocity[i]          = config_.scale[i] * v_true[i] + bias_[i] + sample_sigma * normal_(rng_);

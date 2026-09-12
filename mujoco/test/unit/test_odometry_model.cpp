@@ -3,9 +3,9 @@
 // Asserts:
 //   - disabled, it passes the ground truth through unchanged.
 //   - a scale error scales the distance walked and the angle turned.
-//   - white noise density s spreads the position after t seconds standing still with standard
-//     deviation s * sqrt(t), and a bias random walk b with b * t^1.5 / sqrt(3) (the integral of
-//     a random walk), each within 15% over 400 seeded runs.
+//   - white noise density s spreads the position after T seconds standing still with standard
+//     deviation s * sqrt(T), and a Gauss-Markov bias (sigma b, time constant tau) with
+//     sqrt(2 b^2 tau^2 (T / tau - 1 + exp(-T / tau))), each within 15% over 400 seeded runs.
 //   - the same seed gives the same odometry, and going back in time (a sim reset) restarts from
 //     the ground truth.
 #include <cmath>
@@ -93,11 +93,13 @@ int main() {
     }
     {
         OdometryModel::Config cfg;
-        cfg.enabled          = true;
-        cfg.bias_random_walk = {0.002, 0.0, 0.0};
-        const double got     = spread(cfg, 10.0, 400);
-        const double want    = 0.002 * std::pow(10.0, 1.5) / std::sqrt(3.0);
-        check(std::abs(got / want - 1.0) < 0.15, "bias random walk position drift after 10 s", got, want);
+        cfg.enabled            = true;
+        cfg.bias_sigma         = {0.01, 0.0, 0.0};
+        cfg.bias_time_constant = {5.0, 5.0, 5.0};
+        const double T = 10.0, tau = 5.0, b = 0.01;
+        const double got  = spread(cfg, T, 400);
+        const double want = std::sqrt(2.0 * b * b * tau * tau * (T / tau - 1.0 + std::exp(-T / tau)));
+        check(std::abs(got / want - 1.0) < 0.15, "Gauss-Markov bias position drift after 10 s", got, want);
     }
     {
         OdometryModel::Config cfg;
