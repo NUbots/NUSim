@@ -7,7 +7,7 @@
 // deterministic per-step coverage instead of sampling from a second thread.
 //
 // Model path resolution mirrors test_model_load.cpp: $K1SIM_TEST_MODEL overrides
-// config/simulation.yaml's `model` key.
+// the scene of config/simulation.yaml's default `field`.
 //
 // Asserts:
 //   - no NaN appears in qpos (base pose/orientation + all 22 joint angles) at any point.
@@ -42,7 +42,7 @@ std::string resolve_test_model_path() {
         return override_path;
     }
     auto cfg = k1sim::config::load("simulation.yaml");
-    return k1sim::config::resolve_path(cfg["model"].as<std::string>()).string();
+    return k1sim::config::resolve_path(k1sim::config::field_scene(cfg)).string();
 }
 
 double clamp(double v, double lo, double hi) {
