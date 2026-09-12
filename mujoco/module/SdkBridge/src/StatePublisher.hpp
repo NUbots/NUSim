@@ -17,7 +17,7 @@ public:
     StatePublisher(DdsParticipant& dds, double battery_soc);
 
     // Called at the LowState cadence (50 Hz, on<Trigger<SimStateUpdate>>): writes
-    // rt/low_state, rt/odometer_state and rt/head_pose every call, and rt/fall_down
+    // rt/low_state, rt/odometer_state, rt/odom and rt/head_pose every call, and rt/fall_down
     // whenever fall_state changes or >=1s has elapsed since the last publish (keepalive).
     void publish(const k1sim::message::SimStateUpdate& update);
 
@@ -27,6 +27,7 @@ public:
 private:
     eprosima::fastdds::dds::DataWriter* low_state_writer_   = nullptr;
     eprosima::fastdds::dds::DataWriter* odometer_writer_    = nullptr;
+    eprosima::fastdds::dds::DataWriter* ros_odometry_writer_ = nullptr;
     eprosima::fastdds::dds::DataWriter* head_pose_writer_   = nullptr;
     eprosima::fastdds::dds::DataWriter* fall_down_writer_   = nullptr;
     eprosima::fastdds::dds::DataWriter* battery_writer_     = nullptr;

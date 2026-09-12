@@ -36,14 +36,24 @@ OUT_DIR="$ROOT/idl_gen"
 echo "== fastddsgen version =="
 "$FASTDDSGEN" -version
 
-rm -rf "$OUT_DIR/booster_interface" "$OUT_DIR/booster_msgs" "$OUT_DIR/geometry_msgs"
-mkdir -p "$OUT_DIR/booster_interface" "$OUT_DIR/booster_msgs" "$OUT_DIR/geometry_msgs"
+PACKAGES="booster_interface booster_msgs builtin_interfaces std_msgs geometry_msgs nav_msgs"
+for pkg in $PACKAGES; do
+    rm -rf "$OUT_DIR/$pkg"
+    mkdir -p "$OUT_DIR/$pkg"
+done
+
+# Every package's msg/ directory is on the include path, so an .idl can #include a type from
+# another package by file name (nav_msgs/Odometry.idl includes std_msgs' Header.idl).
+INCLUDES=()
+for pkg in $PACKAGES; do
+    INCLUDES+=(-I "$IDL_DIR/$pkg/msg")
+done
 
 gen() {
     local src_dir="$1"
     local out_dir="$2"
     shift 2
-    (cd "$src_dir" && "$FASTDDSGEN" -cdr v1 -de final -replace -d "$out_dir" "$@")
+    (cd "$src_dir" && "$FASTDDSGEN" -cdr v1 -de final -replace "${INCLUDES[@]}" -d "$out_dir" "$@")
 }
 
 # booster_interface::msg — #include paths inside these .idl files are resolved
@@ -56,9 +66,15 @@ gen "$IDL_DIR/booster_interface/msg" "$OUT_DIR/booster_interface" \
 gen "$IDL_DIR/booster_msgs/msg" "$OUT_DIR/booster_msgs" \
     RpcReqMsg.idl RpcRespMsg.idl
 
-# geometry_msgs::msg (rt/head_pose)
+# geometry_msgs::msg (rt/head_pose, and the pose/twist halves of rt/odom)
 gen "$IDL_DIR/geometry_msgs/msg" "$OUT_DIR/geometry_msgs" \
-    Point.idl Quaternion.idl Pose.idl
+    Point.idl Quaternion.idl Pose.idl PoseWithCovariance.idl Vector3.idl Twist.idl \
+    TwistWithCovariance.idl
+
+# builtin_interfaces::msg, std_msgs::msg, nav_msgs::msg (rt/odom)
+gen "$IDL_DIR/builtin_interfaces/msg" "$OUT_DIR/builtin_interfaces" Time.idl
+gen "$IDL_DIR/std_msgs/msg" "$OUT_DIR/std_msgs" Header.idl
+gen "$IDL_DIR/nav_msgs/msg" "$OUT_DIR/nav_msgs" Odometry.idl
 
 echo "== Generated into $OUT_DIR. Registered type names: =="
 grep -rho 'setName("[^"]*")' "$OUT_DIR" | sort -u

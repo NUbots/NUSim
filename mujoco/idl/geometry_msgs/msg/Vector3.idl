@@ -1,0 +1,14 @@
+// geometry_msgs::msg::dds_::Vector3_ — see PROTOCOL.md.
+// Field layout verified against include/booster/idl/geometry_msgs/Vector3.h.
+
+module geometry_msgs {
+    module msg {
+        module dds_ {
+            struct Vector3_ {
+                double x;
+                double y;
+                double z;
+            };
+        };
+    };
+};
