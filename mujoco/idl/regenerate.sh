@@ -80,15 +80,5 @@ if [ -n "$(find "$OUT_DIR" -maxdepth 1 -type f)" ]; then
     exit 1
 fi
 
-# geometry_msgs::msg (rt/head_pose, and the pose/twist halves of rt/odom)
-gen "$IDL_DIR/geometry_msgs/msg" "$OUT_DIR/geometry_msgs" \
-    Point.idl Quaternion.idl Pose.idl PoseWithCovariance.idl Vector3.idl Twist.idl \
-    TwistWithCovariance.idl
-
-# builtin_interfaces::msg, std_msgs::msg, nav_msgs::msg (rt/odom)
-gen "$IDL_DIR/builtin_interfaces/msg" "$OUT_DIR/builtin_interfaces" Time.idl
-gen "$IDL_DIR/std_msgs/msg" "$OUT_DIR/std_msgs" Header.idl
-gen "$IDL_DIR/nav_msgs/msg" "$OUT_DIR/nav_msgs" Odometry.idl
-
 echo "== Generated into $OUT_DIR. Registered type names: =="
 grep -rho 'setName("[^"]*")' "$OUT_DIR" | sort -u
