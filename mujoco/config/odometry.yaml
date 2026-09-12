@@ -1,0 +1,26 @@
+# Error model of the controller's odometry (module::SdkBridge OdometryModel), as published on
+# rt/odometer_state and rt/odom. The sim's base state is ground truth; the real K1's odometry is
+# the controller's estimate, which drifts. Per planar body axis (forward x, sideways y, yaw z):
+#
+#   v_est = scale * v_true + bias + white noise,   bias a random walk,
+#
+# and the odometry pose is integrated from v_est. The noise terms are densities, so the pose error
+# grows the same whatever the publish rate: a white noise density s gives a position (heading)
+# random walk of s * sqrt(t), a bias random walk b a velocity error of b * sqrt(t) and so a drift
+# that grows like t^1.5.
+#
+# The values below are untuned placeholders. Fit them from a real recording with motion capture
+# (NUbots_K1 branch tumminello/k1_odom_record, tools/odometry_fit.py), then enable.
+
+enabled: false # false: publish the ground truth
+
+# Multiplicative error on the true body velocity [vx, vy, wz]; 1 is exact
+scale: [1.0, 1.0, 1.0]
+
+# White noise density on the body velocity [m/sqrt(s), m/sqrt(s), rad/sqrt(s)]
+velocity_noise_density: [0.02, 0.02, 0.02]
+
+# Bias random walk on the body velocity [m/s/sqrt(s), m/s/sqrt(s), rad/s/sqrt(s)]
+bias_random_walk: [0.002, 0.002, 0.002]
+
+seed: 0 # random seed; 0 seeds randomly each run

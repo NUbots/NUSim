@@ -126,8 +126,10 @@ no build flag, no shim and no code change — the same code path they use agains
 - **Transport** is UDPv4 + shared memory by default. `./b run` gives the container `--network host --ipc host`
   precisely so both survive the docker boundary; set `K1_DDS_UDP_ONLY=1` (or `udp_only: true`) if only UDP works
   in your setup.
-- **Topics** — sim publishes `rt/low_state` (IMU + serial/parallel motor state, 50 Hz), `rt/odometer_state`,
-  `rt/fall_down` (on change, ≥1 Hz keepalive) and `rt/battery_state` (constant SOC); sim subscribes to
+- **Topics** — sim publishes `rt/low_state` (IMU + serial/parallel motor state, 50 Hz), `rt/odometer_state`
+  and `rt/odom` (the controller's odometry: ground truth, or drifting with the error model in
+  [`mujoco/config/odometry.yaml`](mujoco/config/odometry.yaml) enabled), `rt/head_pose`, `rt/fall_down` (on change,
+  ≥1 Hz keepalive) and `rt/battery_state` (constant SOC); sim subscribes to
   `rt/joint_ctrl` (`LowCmd`, PD-tracked at 1 kHz in CUSTOM mode). The RPC pair `rt/LocoApiTopicReq` /
   `rt/LocoApiTopicResp` serves `CHANGE_MODE`, `MOVE`, `ROTATE_HEAD`, `LIE_DOWN`, `GET_UP`,
   `GET_UP_WITH_MODE`, `VISUAL_KICK` and `GET_MODE`; unimplemented `api_id`s are accepted with a warning

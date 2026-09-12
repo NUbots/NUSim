@@ -41,6 +41,7 @@ add_library(
     k1sim_module_sdkbridge STATIC
     src/SdkBridge.cpp
     src/DdsParticipant.cpp
+    src/OdometryModel.cpp
     src/StatePublisher.cpp
     src/RpcServer.cpp
     src/RpcDispatch.cpp
