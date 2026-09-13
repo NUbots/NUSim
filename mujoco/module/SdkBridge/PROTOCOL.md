@@ -98,9 +98,27 @@ Topic `rt/head_pose`. Not an SDK API topic: it is what NUbots_K1's `input::K1Sen
 subscribes to (reliable) for the head pose in the yaw-only base footprint frame, which it
 composes with `rt/odometer_state` to place the camera and torso in the world. The head
 frame is the robot's, 0.08 m above the `Head_pitch` joint along the head z-axis, not the
-`Head_2` body origin: K1Sensors' `Hhp` removes that offset (see `shared/sim/HeadPose.hpp`). Layout and registered name verified against the SDK NUbots_K1 builds against
-(`d5d8f7ae`): `geometry_msgs::msg::Pose().getName()` returns
-`geometry_msgs::msg::dds_::Pose_`.
+`Head_2` body origin: K1Sensors' `Hhp` removes that offset (see `shared/sim/HeadPose.hpp`).
+Layout and registered name verified against the SDK NUbots_K1 builds against (`d5d8f7ae`):
+`geometry_msgs::msg::Pose().getName()` returns `geometry_msgs::msg::dds_::Pose_`.
+
+### `nav_msgs::msg::dds_::Odometry_` (nav_msgs/Odometry.h)
+| # | field | type |
+|---|---|---|
+| 1 | `header` | `std_msgs::msg::dds_::Header_` (`stamp` : `builtin_interfaces::msg::dds_::Time_` {`sec` : `int32`, `nanosec` : `uint32`}, `frame_id` : `string`) |
+| 2 | `child_frame_id` | `string` |
+| 3 | `pose` | `geometry_msgs::msg::dds_::PoseWithCovariance_` (`pose` : `Pose_`, `covariance` : `double[36]`) |
+| 4 | `twist` | `geometry_msgs::msg::dds_::TwistWithCovariance_` (`twist` : `Twist_` {`linear`, `angular` : `Vector3_` {`x`, `y`, `z` : `double`}}, `covariance` : `double[36]`) |
+
+Topic `rt/odom` (`kTopicRosOdometer`, in the SDK from the 1.7.0 firmware). The controller's
+full ROS odometry: `rt/odometer_state` carries only its planar pose, this adds the velocity,
+which NUbots_K1's `platform::Booster::HardwareIO` subscribes to for `Sensors.vTw`. Booster
+does not document the frames; the sim follows the ROS nav_msgs convention: pose in
+`frame_id` "odom" (the world), twist in `child_frame_id` "base_link" (the root body's frame,
+rotated from MuJoCo's world-frame velocities), header stamped with wall-clock time,
+covariances zero (the sim's base state is ground truth). HardwareIO logs the frames of the
+first message it receives, which shows which convention the real robot uses. Layouts and
+registered names verified against the SDK (`d5d8f7ae`) with `getName()`, as for `Pose_`.
 
 ### `booster_interface::msg::dds_::FallDownState_` (FallDownState.h)
 Enum `FallDownStateType : unsigned long` (C++ `uint32_t`) = `{IS_READY=0, IS_FALLING=1,
@@ -199,6 +217,9 @@ booster_interface::msg::dds_::MotorCmd_
 booster_msgs::msg::dds_::RpcReqMsg_
 booster_msgs::msg::dds_::RpcRespMsg_
 geometry_msgs::msg::dds_::Pose_        (+ nested Point_, Quaternion_; rt/head_pose)
+nav_msgs::msg::dds_::Odometry_         (+ nested std_msgs Header_, builtin_interfaces Time_,
+                                        geometry_msgs PoseWithCovariance_, TwistWithCovariance_,
+                                        Twist_, Vector3_; rt/odom)
 ```
 
 Also present (not used by us): `booster_interface::msg::dds_::RemoteControllerState_`,
@@ -213,7 +234,8 @@ module dds_ { struct Type_ { ... }; }; }; };`), not an SDK-specific invention.
 Our `mujoco/idl/**/*.idl` files reproduce this exact 3-level module nesting, and plain
 fastddsgen (see §5 for why **not** `-typeros2`) then registers each type under the
 identical fully-qualified scoped name — verified directly against the generated
-`*PubSubTypes.cxx` (`setName(...)` string literal) after each generation, see
+`*PubSubTypes.cxx` (`setName(...)` string literal), which the build writes into
+`build-docker/idl_gen/<package>/` rather than the source tree (§5) — see
 `mujoco/idl/regenerate.sh` output and the M4 acceptance test.
 
 **Empirical finding on `-typeros2`** (the task's suggested starting point was
@@ -236,7 +258,8 @@ nesting); since we author the nesting ourselves (to match the SDK's exact struct
 including cases like `FallDownStateType_` where the SDK uses a genuine IDL `enum`
 rather than ROS2 `.msg`-style integer constants — not something `-typeros2` would
 produce from a `.msg` mirror), passing `-typeros2` on top double-applies the transform.
-`mujoco/idl/regenerate.sh` therefore does **not** pass `-typeros2`.
+`mujoco/idl/regenerate.sh` — the script CMake runs at build time, see §5 — therefore
+does **not** pass `-typeros2`.
 
 ## 3. RPC JSON schemas
 
@@ -309,7 +332,7 @@ Per the lead's explicit spec (de-risks RPC correctness over squeezing out best-e
 UDP savings — reliability never hurts a loopback/`--network host` transport, and the
 SDK's own defaults would silently degrade to best-effort which is a *safe* superset
 to widen, not narrow), `module::SdkBridge` uses:
-- **State writers** (`low_state`, `odometer_state`, `head_pose`, `fall_down`,
+- **State writers** (`low_state`, `odometer_state`, `odom`, `head_pose`, `fall_down`,
   `battery_state`, `button_event`): `RELIABLE` + `VOLATILE` durability + `KEEP_LAST(5)`
   history. `head_pose` must be `RELIABLE`: K1Sensors creates its reader with
   `reliable = true`, which a best-effort writer would not match.
@@ -346,6 +369,13 @@ mixed-uid segments ever accumulate, remove the stale `fastrtps_*` /
 
 ## 5. CDR / fastddsgen generation notes
 
+The type support is **generated during the build**, never committed: CMake runs
+`mujoco/idl/regenerate.sh` over `mujoco/idl/**/*.idl` into `${CMAKE_BINARY_DIR}/idl_gen`
+(`build-docker/idl_gen` for the docker workflow), which git does not track — the same
+arrangement NUbots uses to generate its protobuf code from `shared/message/**.proto`
+and commit none of it. The `.idl` files are the committed source of truth; there is no
+regeneration step to run by hand and nothing generated is ever added to git.
+
 The SDK's headers assert `GEN_API_VER == 2` (i.e. were generated by a Fast-DDS
 2.x-era fastddsgen against classic CDR). The toolchain available to us
 (`/opt/k1sim-deps/bin/fastddsgen`, baked into `k1sim:latest`) is **3.2.1**, whose
@@ -358,3 +388,12 @@ profile, which these `dds_::Type_` names impersonate) would have produced. This 
 was validated empirically by the contract test actually deserializing our published
 `LowState_`/`Odometer_`/etc. samples with the real SDK's compiled (2.x-generated)
 reader code — see `test/contract/README.md`.
+
+Those flags (and the deliberate absence of `-typeros2`, §2) live in
+`mujoco/idl/regenerate.sh`, which is the single source of truth for the invocation and
+is what CMake runs; the script also hard-asserts the generator is 3.2.1 before it
+generates anything, since 3.x releases move their own defaults. Both rationales matter
+*more* now that generation is automatic than they did when the output was committed: a
+changed flag or a swapped generator no longer shows up as a reviewable diff of
+`*PubSubTypes.cxx`, it shows up as a robot that silently stops decoding our samples.
+Re-read this section and §2 before touching the invocation.
