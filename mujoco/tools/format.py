@@ -84,6 +84,7 @@ def _tool(name):
         sys.exit(f"error: {name} not found. Run `uv sync` in {b.repo_dir}.")
     return found
 
+
 # The extensions that are handled by the various formatters
 formatters = OrderedDict()
 formatters["clang-format"] = {
