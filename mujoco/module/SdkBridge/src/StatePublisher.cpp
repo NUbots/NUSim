@@ -1,5 +1,6 @@
 #include "module/SdkBridge/src/StatePublisher.hpp"
 
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 
@@ -13,6 +14,8 @@
 #include "LowStatePubSubTypes.h"
 #include "Odometer.h"
 #include "OdometerPubSubTypes.h"
+#include "Odometry.h"
+#include "OdometryPubSubTypes.h"
 #include "Pose.h"
 #include "PosePubSubTypes.h"
 
@@ -28,6 +31,18 @@ namespace {
 double yaw_from_quat(const std::array<double, 4>& q) {
     const double w = q[0], x = q[1], y = q[2], z = q[3];
     return std::atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z));
+}
+
+// A world-frame vector expressed in the body frame of the {w, x, y, z} orientation q: R(q)^T v.
+std::array<double, 3> world_to_body(const std::array<double, 4>& q, const std::array<double, 3>& v) {
+    const double w = q[0], x = q[1], y = q[2], z = q[3];
+    // Rows of R^T are the columns of R
+    const double r[3][3] = {{1 - 2 * (y * y + z * z), 2 * (x * y + w * z), 2 * (x * z - w * y)},
+                            {2 * (x * y - w * z), 1 - 2 * (x * x + z * z), 2 * (y * z + w * x)},
+                            {2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y)}};
+    return {r[0][0] * v[0] + r[0][1] * v[1] + r[0][2] * v[2],
+            r[1][0] * v[0] + r[1][1] * v[1] + r[1][2] * v[2],
+            r[2][0] * v[0] + r[2][1] * v[1] + r[2][2] * v[2]};
 }
 
 booster_interface::msg::dds_::MotorState_ to_motor_state(const k1sim::message::JointState& joint) {
@@ -52,11 +67,14 @@ StatePublisher::StatePublisher(DdsParticipant& dds, double battery_soc) : batter
     using booster_interface::msg::dds_::LowState_PubSubType;
     using booster_interface::msg::dds_::Odometer_PubSubType;
     using geometry_msgs::msg::dds_::Pose_PubSubType;
+    using nav_msgs::msg::dds_::Odometry_PubSubType;
 
     low_state_writer_ =
         dds.create_writer<LowState_PubSubType>(k1sim::booster::TOPIC_LOW_STATE, DdsParticipant::state_writer_qos());
     odometer_writer_ = dds.create_writer<Odometer_PubSubType>(k1sim::booster::TOPIC_ODOMETER_STATE,
                                                                DdsParticipant::state_writer_qos());
+    ros_odometry_writer_ = dds.create_writer<Odometry_PubSubType>(k1sim::booster::TOPIC_ROS_ODOMETER,
+                                                                   DdsParticipant::state_writer_qos());
     head_pose_writer_ =
         dds.create_writer<Pose_PubSubType>(k1sim::booster::TOPIC_HEAD_POSE, DdsParticipant::state_writer_qos());
     fall_down_writer_ =
@@ -101,6 +119,34 @@ void StatePublisher::publish(const k1sim::message::SimStateUpdate& update) {
     odom.y(static_cast<float>(update.base.y));
     odom.theta(static_cast<float>(yaw_from_quat(update.base.quat)));
     odometer_writer_->write(&odom);
+
+    // --- rt/odom --- The same base odometry with its velocity: pose in "odom" (the world), twist
+    // in the body frame "base_link", per the ROS nav_msgs convention (twist in child_frame_id).
+    // The sim's base state is ground truth, so the covariances are left zero.
+    nav_msgs::msg::dds_::Odometry_ ros_odom;
+    const auto stamp = std::chrono::system_clock::now().time_since_epoch();
+    const auto sec   = std::chrono::duration_cast<std::chrono::seconds>(stamp);
+    ros_odom.header().stamp().sec(static_cast<int32_t>(sec.count()));
+    ros_odom.header().stamp().nanosec(
+        static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(stamp - sec).count()));
+    ros_odom.header().frame_id("odom");
+    ros_odom.child_frame_id("base_link");
+    ros_odom.pose().pose().position().x(update.base.x);
+    ros_odom.pose().pose().position().y(update.base.y);
+    ros_odom.pose().pose().position().z(update.base.z);
+    ros_odom.pose().pose().orientation().w(update.base.quat[0]);
+    ros_odom.pose().pose().orientation().x(update.base.quat[1]);
+    ros_odom.pose().pose().orientation().y(update.base.quat[2]);
+    ros_odom.pose().pose().orientation().z(update.base.quat[3]);
+    const auto linear  = world_to_body(update.base.quat, update.base.lin_vel);
+    const auto angular = world_to_body(update.base.quat, update.base.ang_vel);
+    ros_odom.twist().twist().linear().x(linear[0]);
+    ros_odom.twist().twist().linear().y(linear[1]);
+    ros_odom.twist().twist().linear().z(linear[2]);
+    ros_odom.twist().twist().angular().x(angular[0]);
+    ros_odom.twist().twist().angular().y(angular[1]);
+    ros_odom.twist().twist().angular().z(angular[2]);
+    ros_odometry_writer_->write(&ros_odom);
 
     // --- rt/head_pose --- The head frame in the yaw-only base footprint frame, which
     // K1Sensors composes with the odometry above to place the camera and torso in the world.

@@ -1,0 +1,15 @@
+// geometry_msgs::msg::dds_::TwistWithCovariance_ — see PROTOCOL.md.
+// Field layout verified against include/booster/idl/geometry_msgs/TwistWithCovariance.h.
+
+#include "Twist.idl"
+
+module geometry_msgs {
+    module msg {
+        module dds_ {
+            struct TwistWithCovariance_ {
+                geometry_msgs::msg::dds_::Twist_ twist;
+                double covariance[36];
+            };
+        };
+    };
+};

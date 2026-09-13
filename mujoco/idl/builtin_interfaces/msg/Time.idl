@@ -1,0 +1,13 @@
+// builtin_interfaces::msg::dds_::Time_ — see PROTOCOL.md.
+// Field layout verified against include/booster/idl/builtin_interfaces/Time.h.
+
+module builtin_interfaces {
+    module msg {
+        module dds_ {
+            struct Time_ {
+                long sec;
+                unsigned long nanosec;
+            };
+        };
+    };
+};

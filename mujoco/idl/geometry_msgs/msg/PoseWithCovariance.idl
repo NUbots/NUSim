@@ -1,0 +1,15 @@
+// geometry_msgs::msg::dds_::PoseWithCovariance_ — see PROTOCOL.md.
+// Field layout verified against include/booster/idl/geometry_msgs/PoseWithCovariance.h.
+
+#include "Pose.idl"
+
+module geometry_msgs {
+    module msg {
+        module dds_ {
+            struct PoseWithCovariance_ {
+                geometry_msgs::msg::dds_::Pose_ pose;
+                double covariance[36];
+            };
+        };
+    };
+};
