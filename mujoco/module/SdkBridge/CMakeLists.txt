@@ -6,11 +6,17 @@ file(GLOB k1sim_idl_srcs CONFIGURE_DEPENDS
      ${K1SIM_IDL_GEN_DIR}/booster_interface/*.cxx
      ${K1SIM_IDL_GEN_DIR}/booster_msgs/*.cxx
      ${K1SIM_IDL_GEN_DIR}/geometry_msgs/*.cxx
+     ${K1SIM_IDL_GEN_DIR}/builtin_interfaces/*.cxx
+     ${K1SIM_IDL_GEN_DIR}/std_msgs/*.cxx
+     ${K1SIM_IDL_GEN_DIR}/nav_msgs/*.cxx
 )
 file(GLOB k1sim_idl_ipp CONFIGURE_DEPENDS
      ${K1SIM_IDL_GEN_DIR}/booster_interface/*.ipp
      ${K1SIM_IDL_GEN_DIR}/booster_msgs/*.ipp
      ${K1SIM_IDL_GEN_DIR}/geometry_msgs/*.ipp
+     ${K1SIM_IDL_GEN_DIR}/builtin_interfaces/*.ipp
+     ${K1SIM_IDL_GEN_DIR}/std_msgs/*.ipp
+     ${K1SIM_IDL_GEN_DIR}/nav_msgs/*.ipp
 )
 # Each <Type>CdrAux.ipp holds explicit fastcdr template specializations
 # (calculate_serialized_size/serialize/deserialize/serialize_key for that exact
@@ -25,7 +31,8 @@ add_library(k1sim_idl STATIC ${k1sim_idl_srcs} ${k1sim_idl_ipp})
 target_include_directories(
     k1sim_idl
     PUBLIC ${K1SIM_IDL_GEN_DIR}/booster_interface ${K1SIM_IDL_GEN_DIR}/booster_msgs
-           ${K1SIM_IDL_GEN_DIR}/geometry_msgs
+           ${K1SIM_IDL_GEN_DIR}/geometry_msgs ${K1SIM_IDL_GEN_DIR}/builtin_interfaces
+           ${K1SIM_IDL_GEN_DIR}/std_msgs ${K1SIM_IDL_GEN_DIR}/nav_msgs
 )
 target_link_libraries(k1sim_idl PUBLIC fastrtps fastcdr)
 
@@ -34,6 +41,7 @@ add_library(
     k1sim_module_sdkbridge STATIC
     src/SdkBridge.cpp
     src/DdsParticipant.cpp
+    src/OdometryModel.cpp
     src/StatePublisher.cpp
     src/RpcServer.cpp
     src/RpcDispatch.cpp

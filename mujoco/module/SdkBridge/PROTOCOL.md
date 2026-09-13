@@ -86,7 +86,8 @@ fastddsgen maps to unsigned `octet`/`uint8_t` in the generated C++ — this is t
 | 2 | `y` | `float` |
 | 3 | `theta` | `float` |
 
-Topic `rt/odometer_state`. Planar ground-truth pose (m, m, rad).
+Topic `rt/odometer_state`. Planar pose (m, m, rad): the base's ground truth, or with
+`config/odometry.yaml` enabled, the odometry error model's drifting estimate of it.
 
 ### `geometry_msgs::msg::dds_::Pose_` (geometry_msgs/Pose.h)
 | # | field | type |
@@ -98,9 +99,30 @@ Topic `rt/head_pose`. Not an SDK API topic: it is what NUbots_K1's `input::K1Sen
 subscribes to (reliable) for the head pose in the yaw-only base footprint frame, which it
 composes with `rt/odometer_state` to place the camera and torso in the world. The head
 frame is the robot's, 0.08 m above the `Head_pitch` joint along the head z-axis, not the
-`Head_2` body origin: K1Sensors' `Hhp` removes that offset (see `shared/sim/HeadPose.hpp`). Layout and registered name verified against the SDK NUbots_K1 builds against
-(`d5d8f7ae`): `geometry_msgs::msg::Pose().getName()` returns
-`geometry_msgs::msg::dds_::Pose_`.
+`Head_2` body origin: K1Sensors' `Hhp` removes that offset (see `shared/sim/HeadPose.hpp`).
+Layout and registered name verified against the SDK NUbots_K1 builds against (`d5d8f7ae`):
+`geometry_msgs::msg::Pose().getName()` returns `geometry_msgs::msg::dds_::Pose_`.
+
+### `nav_msgs::msg::dds_::Odometry_` (nav_msgs/Odometry.h)
+| # | field | type |
+|---|---|---|
+| 1 | `header` | `std_msgs::msg::dds_::Header_` (`stamp` : `builtin_interfaces::msg::dds_::Time_` {`sec` : `int32`, `nanosec` : `uint32`}, `frame_id` : `string`) |
+| 2 | `child_frame_id` | `string` |
+| 3 | `pose` | `geometry_msgs::msg::dds_::PoseWithCovariance_` (`pose` : `Pose_`, `covariance` : `double[36]`) |
+| 4 | `twist` | `geometry_msgs::msg::dds_::TwistWithCovariance_` (`twist` : `Twist_` {`linear`, `angular` : `Vector3_` {`x`, `y`, `z` : `double`}}, `covariance` : `double[36]`) |
+
+Topic `rt/odom` (`kTopicRosOdometer`, in the SDK from the 1.7.0 firmware). The controller's
+full ROS odometry: `rt/odometer_state` carries only its planar pose, this adds the velocity,
+which NUbots_K1's `platform::Booster::HardwareIO` subscribes to for `Sensors.vTw`. Booster
+does not document the frames; the sim follows the ROS nav_msgs convention: pose in
+`frame_id` "odom" (the world), twist in `child_frame_id` "base_link" (the root body's frame,
+rotated from MuJoCo's world-frame velocities), header stamped with wall-clock time. The
+planar parts (x, y, yaw and vx, vy, wz) carry `config/odometry.yaml`'s error model when it is
+enabled, the same estimate as `rt/odometer_state`, with the twist covariance's vx, vy and wz
+diagonal its per-sample white noise variance; otherwise everything is ground truth and the
+covariances are zero. HardwareIO logs the frames of the
+first message it receives, which shows which convention the real robot uses. Layouts and
+registered names verified against the SDK (`d5d8f7ae`) with `getName()`, as for `Pose_`.
 
 ### `booster_interface::msg::dds_::FallDownState_` (FallDownState.h)
 Enum `FallDownStateType : unsigned long` (C++ `uint32_t`) = `{IS_READY=0, IS_FALLING=1,
@@ -199,6 +221,9 @@ booster_interface::msg::dds_::MotorCmd_
 booster_msgs::msg::dds_::RpcReqMsg_
 booster_msgs::msg::dds_::RpcRespMsg_
 geometry_msgs::msg::dds_::Pose_        (+ nested Point_, Quaternion_; rt/head_pose)
+nav_msgs::msg::dds_::Odometry_         (+ nested std_msgs Header_, builtin_interfaces Time_,
+                                        geometry_msgs PoseWithCovariance_, TwistWithCovariance_,
+                                        Twist_, Vector3_; rt/odom)
 ```
 
 Also present (not used by us): `booster_interface::msg::dds_::RemoteControllerState_`,
@@ -309,7 +334,7 @@ Per the lead's explicit spec (de-risks RPC correctness over squeezing out best-e
 UDP savings — reliability never hurts a loopback/`--network host` transport, and the
 SDK's own defaults would silently degrade to best-effort which is a *safe* superset
 to widen, not narrow), `module::SdkBridge` uses:
-- **State writers** (`low_state`, `odometer_state`, `head_pose`, `fall_down`,
+- **State writers** (`low_state`, `odometer_state`, `odom`, `head_pose`, `fall_down`,
   `battery_state`, `button_event`): `RELIABLE` + `VOLATILE` durability + `KEEP_LAST(5)`
   history. `head_pose` must be `RELIABLE`: K1Sensors creates its reader with
   `reliable = true`, which a best-effort writer would not match.

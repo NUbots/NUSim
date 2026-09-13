@@ -26,13 +26,17 @@ SdkBridge::SdkBridge(std::unique_ptr<NUClear::Environment> environment) : Reacto
         const double battery_soc          = cfg["battery_soc"].as<double>(100.0);
         const int64_t unknown_api_status = cfg["unknown_api_status"].as<int64_t>(0);
 
+        const auto odometry = sdkbridge::OdometryModel::load_config(config::load("odometry.yaml"));
+
         dds_             = std::make_unique<sdkbridge::DdsParticipant>(domain, udp_only);
-        state_publisher_ = std::make_unique<sdkbridge::StatePublisher>(*dds_, battery_soc);
+        state_publisher_ = std::make_unique<sdkbridge::StatePublisher>(*dds_, battery_soc, odometry);
         rpc_server_      = std::make_unique<sdkbridge::RpcServer>(*dds_, *this, unknown_api_status);
 
         log<NUClear::LogLevel::INFO>("SdkBridge ready (DDS domain",
                                       domain,
                                       udp_only ? "UDP-only" : "UDP+SHM",
+                                      ", odometry",
+                                      odometry.enabled ? "with the config/odometry.yaml error model" : "ground truth",
                                       ")");
     });
 

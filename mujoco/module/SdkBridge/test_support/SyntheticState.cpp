@@ -85,6 +85,9 @@ SyntheticState::SyntheticState(std::unique_ptr<NUClear::Environment> environment
         update->base.z    = 0.53;
         const double half = yaw_ * 0.5;
         update->base.quat = {std::cos(half), 0.0, 0.0, std::sin(half)};
+        // World-frame velocity of the commanded body-frame walk
+        update->base.lin_vel = {vx_ * cos_yaw - vy_ * sin_yaw, vx_ * sin_yaw + vy_ * cos_yaw, 0.0};
+        update->base.ang_vel = {0.0, 0.0, vyaw_};
 
         // Standing head frame in the footprint frame: 0.33 m above the base (the Head_pitch
         // joint 0.248 m above the Trunk plus the 0.08 m head frame offset, see
