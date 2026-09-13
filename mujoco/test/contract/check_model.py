@@ -43,7 +43,7 @@ GAINS_YAML = os.path.join(MUJOCO_DIR, "config", "gains.yaml")
 BALL_RADIUS = 0.0785
 DROP_BASE_Z = 1.0785  # ball center height for the 1 m drop test (1.0 m above floor)
 BOUNCE_COEFF = 0.76
-TARGET_RATIO = BOUNCE_COEFF ** 2  # ~0.5776
+TARGET_RATIO = BOUNCE_COEFF**2  # ~0.5776
 RATIO_TOLERANCE = 0.15
 
 results = []  # list of (status, message) where status in {"PASS", "FAIL", "WARN"}
@@ -97,9 +97,7 @@ def main():
         expected_names = []
         overall_ok = False
 
-    actual_names = [
-        mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_ACTUATOR, i) for i in range(model.nu)
-    ]
+    actual_names = [mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_ACTUATOR, i) for i in range(model.nu)]
     if model.nu != 22:
         record("FAIL", f"expected 22 actuators, got {model.nu}")
         overall_ok = False
@@ -208,9 +206,7 @@ def run_ball_drop_test(model, data):
     bounce_idx = next((i for i in range(1, len(vz)) if vz[i - 1] < 0 <= vz[i]), None)
     if bounce_idx is None:
         raise RuntimeError("ball never bounced off the floor within the simulated window")
-    apex_idx = next(
-        (i for i in range(bounce_idx + 1, len(vz)) if vz[i - 1] > 0 >= vz[i]), None
-    )
+    apex_idx = next((i for i in range(bounce_idx + 1, len(vz)) if vz[i - 1] > 0 >= vz[i]), None)
     if apex_idx is None:
         raise RuntimeError("ball bounced but no subsequent apex was found")
 
@@ -266,8 +262,12 @@ def run_pd_stability_check(model, data):
         f"PD stability ({sim_time:.0f}s, official gains.yaml kp/kd/ready_pose): "
         f"height range [{min_z:.3f}, {max_z:.3f}] m (want [0.45, 0.60]), "
         f"max tilt {max_tilt:.1f} deg (want < 15) -> "
-        + ("held" if ok else "did NOT hold (expected: joint-space PD has no balance "
-           "strategy; full stabilization is workstream B's PD/controller milestone)")
+        + (
+            "held"
+            if ok
+            else "did NOT hold (expected: joint-space PD has no balance "
+            "strategy; full stabilization is workstream B's PD/controller milestone)"
+        )
     )
     return ok, msg
 
