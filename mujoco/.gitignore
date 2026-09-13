@@ -2,7 +2,3 @@ build*/
 .deps/
 .cache/
 compile_commands.json
-
-# Generated at build time by cmake/IdlGen.cmake into the build dir; never committed.
-# This entry only catches a stray manual run of idl/regenerate.sh in the source tree.
-idl_gen/
