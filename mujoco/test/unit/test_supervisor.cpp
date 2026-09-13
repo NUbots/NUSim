@@ -2,7 +2,7 @@
 // body-placement logic it drives.
 //
 // Model path resolution mirrors test_model_load.cpp / test_pd_stand.cpp:
-// $K1SIM_TEST_MODEL overrides config/simulation.yaml's `model` key.
+// $K1SIM_TEST_MODEL overrides the scene of config/simulation.yaml's default `field`.
 //
 // Four independent checks:
 //   A. Wire-format parsing: a hand-built raw byte buffer (offsets computed
@@ -60,7 +60,7 @@ std::string resolve_test_model_path() {
         return override_path;
     }
     auto cfg = k1sim::config::load("simulation.yaml");
-    return k1sim::config::resolve_path(cfg["model"].as<std::string>()).string();
+    return k1sim::config::resolve_path(k1sim::config::field_scene(cfg)).string();
 }
 
 bool actions_mention(const std::vector<sup::SupervisorLogic::Action>& actions, const std::string& needle) {

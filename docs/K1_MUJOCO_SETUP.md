@@ -63,6 +63,7 @@ passthrough. Roles: `sim/soccer` (full sim). Args after the role pass through to
 
 ```bash
 ./b run sim/soccer --headless                            # no viewer window (CI / server)
+./b run sim/soccer --field kidsize                       # the KidSize field instead of the M-Field
 ./b run sim/soccer --model models/k1/k1_scene_flat.xml   # bare robot on a flat floor, no field/ball
 ./b run sim/soccer --rtf 0                                # free-run (uncapped real-time factor)
 ./b run sim/soccer --robots 5                             # 4 extra K1s on the field (max 20 total)
