@@ -1,12 +1,24 @@
 #!/usr/bin/env bash
-# Regenerates mujoco/idl_gen/ from mujoco/idl/**/*.idl using the fastddsgen baked
-# into the k1sim docker image (/opt/k1sim-deps/bin/fastddsgen). Run via e.g.:
+# Generates the Fast-DDS type support from mujoco/idl/**/*.idl using the fastddsgen
+# baked into the k1sim docker image (/opt/k1sim-deps/bin/fastddsgen).
+#
+# CMake is the normal caller: cmake/IdlGen.cmake wires this up as a build step and
+# passes OUT_DIR=${CMAKE_BINARY_DIR}/idl_gen, so the generated code is a build
+# artifact and is never committed (same arrangement as NUbots generating protobuf
+# from shared/message/**.proto). Nothing downstream should ever read a generated
+# file from the source tree.
+#
+# Run it by hand only to inspect the output, and point OUT_DIR somewhere scratch:
 #
 #   docker run --rm -v $(pwd)/..:/workspace/NUSim \
 #     -w /workspace/NUSim/mujoco --user $(id -u):$(id -g) \
-#     k1sim:latest ./idl/regenerate.sh
+#     -e OUT_DIR=/tmp/idl_gen k1sim:latest ./idl/regenerate.sh
 #
-# fastddsgen version recorded at last run: "fastddsgen version 3.2.1" (OpenJDK 11.0.31)
+# NOTE: OUT_DIR is wiped (rm -rf) before generating. Never aim it at a source dir.
+#
+# The generator version is asserted below, not just reported: the wire format is
+# version- and flag-sensitive, and with the output no longer visible in a diff,
+# this assertion is what catches a generator swap. See module/SdkBridge/PROTOCOL.md.
 #
 # Flags:
 #   -cdr v1 -de final   Force classic CDR (no XCDR2 DELIMIT_CDR2/DHEADER framing),
@@ -37,12 +49,24 @@
 set -euo pipefail
 
 FASTDDSGEN=${FASTDDSGEN:-/opt/k1sim-deps/bin/fastddsgen}
+FASTDDSGEN_VERSION=3.2.1 # must match FASTDDSGEN_TAG in tools/install_deps.sh
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" # mujoco/
 IDL_DIR="$ROOT/idl"
-OUT_DIR="$ROOT/idl_gen"
+# Default lands under build/ (gitignored), never in the source tree: a hand run must not
+# be able to recreate a committed-looking idl_gen/. CMake always passes OUT_DIR explicitly.
+OUT_DIR="${OUT_DIR:-$ROOT/build/idl_gen}"
 
-echo "== fastddsgen version =="
-"$FASTDDSGEN" -version
+# Hard-fail on a generator other than the pinned one. fastddsgen 3.2.1 with the flags
+# below emits classic CDR; other versions change their defaults (see the -cdr/-de note
+# above), which would silently alter the wire format the robot decodes.
+version_output="$("$FASTDDSGEN" -version 2>&1 | tr -d '\r')"
+echo "== $(echo "$version_output" | grep -i '^fastddsgen' || echo "$version_output")"
+if ! grep -qiE "^fastddsgen version $FASTDDSGEN_VERSION\$" <<< "$version_output"; then
+    echo "error: expected fastddsgen $FASTDDSGEN_VERSION, got:" >&2
+    echo "$version_output" >&2
+    echo "       reinstall with tools/install_deps.sh (FASTDDSGEN_TAG pins v$FASTDDSGEN_VERSION)." >&2
+    exit 1
+fi
 
 # Where fastddsgen runs: <package>/ -> idl/<package>/msg
 VIEW="$(mktemp -d)"
