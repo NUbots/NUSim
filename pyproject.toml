@@ -3,17 +3,17 @@ name = "nusim"
 version = "0.1.0"
 description = "Host-side tooling (the ./b dispatcher + formatters) for the NUSim K1 MuJoCo simulator."
 readme = "README.md"
-# Cap <3.13: pinned black 20.8b1 pulls typed-ast, no 3.13 wheel (lift once black is
-# bumped). uv fetches a matching interpreter.
-requires-python = ">=3.11,<3.13"
+requires-python = ">=3.11"
+# Formatter versions are pinned to the ones NUbots uses, so the same file formats
+# identically in both repos. clang-format is the PyPI wheel of the same LLVM release
+# NUbots builds into its docker image (llvmorg-14.0.6) — clang-format output changes
+# between major versions, so this pin is what keeps ./b format reproducible.
 dependencies = [
-    "cmake-format==0.6.13",
-    "isort==5.7.0",
-    "black==20.8b1",
-    # black 20.8b1 imports click._unicodefun, removed in click 8.1. Drop this pin
-    # when black is bumped.
-    "click<8.1",
-    "termcolor",
+    "clang-format==14.0.6",
+    "cmakelang==0.6.13",
+    "isort==5.13.2",
+    "black==24.10.0",
+    "termcolor==2.5.0",
 ]
 
 [tool.uv]
@@ -24,5 +24,6 @@ package = false
 line-length = 120
 
 [tool.isort]
-line_length=120
-known_first_party=['b', 'utility']
+profile = "black"
+line_length = 120
+known_first_party = ['b']
