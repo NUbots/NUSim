@@ -58,7 +58,7 @@ def main():
         sys.exit(0 if not argv else 1)
 
     module = _load(candidates[match])
-    rest = argv[len(match):]
+    rest = argv[len(match) :]
     parser = argparse.ArgumentParser(prog="./b " + " ".join(match))
     if hasattr(module, "register"):
         module.register(parser)

@@ -18,23 +18,23 @@
 
 namespace k1sim::module::sdkbridge::test_support {
 
-class SyntheticState : public NUClear::Reactor {
-public:
-    explicit SyntheticState(std::unique_ptr<NUClear::Environment> environment);
+    class SyntheticState : public NUClear::Reactor {
+    public:
+        explicit SyntheticState(std::unique_ptr<NUClear::Environment> environment);
 
-private:
-    std::mutex mutex_;
-    double sim_time_    = 0.0;
-    uint64_t step_count_ = 0;
+    private:
+        std::mutex mutex_;
+        double sim_time_     = 0.0;
+        uint64_t step_count_ = 0;
 
-    int mode_       = 0;  // booster::RobotMode::DAMPING
-    int fall_state_ = 0;  // booster::FallState::IS_READY
+        int mode_       = 0;  // booster::RobotMode::DAMPING
+        int fall_state_ = 0;  // booster::FallState::IS_READY
 
-    double x_ = 0.0, y_ = 0.0, yaw_ = 0.0;  // planar odometry, integrated from WalkCommand
-    double vx_ = 0.0, vy_ = 0.0, vyaw_ = 0.0;
+        double x_ = 0.0, y_ = 0.0, yaw_ = 0.0;  // planar odometry, integrated from WalkCommand
+        double vx_ = 0.0, vy_ = 0.0, vyaw_ = 0.0;
 
-    double head_pitch_ = 0.0, head_yaw_ = 0.0;
-};
+        double head_pitch_ = 0.0, head_yaw_ = 0.0;
+    };
 
 }  // namespace k1sim::module::sdkbridge::test_support
 
