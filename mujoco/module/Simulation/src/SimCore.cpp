@@ -53,6 +53,9 @@ std::string extra_prefix(int k) {
     return buf;
 }
 
+// Standing base height of the "ready" pose; game spawns and the extra_spawn grid use it.
+constexpr double STAND_Z = 0.555;
+
 // Spawn slot for the k-th extra robot (k starts at 1): a 5x4 grid on the field,
 // rows at y = +-1.2 / +-2.4 so nothing lands on the y=0 line the main robot and
 // ball spawn on. z is the "ready" standing base height. The scene keyframes
@@ -64,7 +67,7 @@ std::array<double, 3> extra_spawn(int k) {
     const int row = (k - 1) / 5;
     const double x = -3.0 + 1.5 * col;
     const double y = (row % 2 == 0 ? 1.0 : -1.0) * (1.2 + 1.2 * (row / 2));
-    return {x, y, 0.555};
+    return {x, y, STAND_Z};
 }
 
 // Build a scene with (robots - 1) extra K1 copies attached via mjSpec. Each copy's
@@ -72,7 +75,11 @@ std::array<double, 3> extra_spawn(int k) {
 // every existing name-based lookup) stay valid. Extra copies' keyframes are dropped;
 // the parent scene's keyframes zero-pad the new free joints, landing each copy at
 // its attachment frame.
-mjModel* load_multi_robot_model(const std::string& scene_path, int robots, char* error, int error_sz) {
+// extras[k - 1] is the attachment position of copy k.
+mjModel* load_multi_robot_model(const std::string& scene_path,
+                                const std::vector<std::array<double, 3>>& extras,
+                                char* error,
+                                int error_sz) {
     mjSpec* scene = mj_parseXML(scene_path.c_str(), nullptr, error, error_sz);
     if (scene == nullptr) {
         throw std::runtime_error("mj_parseXML failed for '" + scene_path + "': " + error);
@@ -82,7 +89,7 @@ mjModel* load_multi_robot_model(const std::string& scene_path, int robots, char*
         scene_path.substr(0, scene_path.find_last_of('/') + 1) + "K1_22dof.xml";
 
     mjsBody* world = mjs_findBody(scene, "world");
-    for (int k = 1; k < robots; ++k) {
+    for (int k = 1; k <= static_cast<int>(extras.size()); ++k) {
         mjSpec* robot = mj_parseXML(robot_xml.c_str(), nullptr, error, error_sz);
         if (robot == nullptr) {
             mj_deleteSpec(scene);
@@ -96,7 +103,7 @@ mjModel* load_multi_robot_model(const std::string& scene_path, int robots, char*
         }
 
         mjsFrame* frame        = mjs_addFrame(world, nullptr);
-        const auto pos         = extra_spawn(k);
+        const auto& pos        = extras[k - 1];
         frame->pos[0]          = pos[0];
         frame->pos[1]          = pos[1];
         frame->pos[2]          = pos[2];
@@ -145,7 +152,12 @@ void SimCore::load_model() {
         }
     }
     else {
-        m_ = load_multi_robot_model(resolved, config_.robots, error, sizeof(error));
+        std::vector<std::array<double, 3>> extras;
+        for (int k = 1; k < config_.robots; ++k) {
+            const auto pose = spawn_pose(k);
+            extras.push_back({pose[0], pose[1], pose[2]});
+        }
+        m_ = load_multi_robot_model(resolved, extras, error, sizeof(error));
     }
 
     // Throws if any joint/actuator is missing or there is no free root joint.
@@ -236,7 +248,7 @@ void SimCore::load_model() {
         ready_target_ = config_.ready_pose_fallback;
     }
 
-    place_extras();
+    place_robots();
 
     // Populate derived quantities (xquat, sensordata, ...) for the reset pose before the
     // physics thread's first mj_step; harmless if nothing reads them this early.
@@ -391,17 +403,43 @@ void SimCore::log_foot_state() {
 // Keyframe resets zero-pad the extras' free joints (= world origin, inside the main
 // robot), so this must run after every keyframe reset. Caller holds mutex_ (or the
 // physics thread is not running yet).
-void SimCore::place_extras() {
+std::array<double, 4> SimCore::spawn_pose(int k) const {
+    if (!config_.spawns.empty()) {
+        const auto& s = config_.spawns[k];
+        return {s[0], s[1], STAND_Z, s[2]};
+    }
+    const auto pos = extra_spawn(k);
+    return {pos[0], pos[1], pos[2], 0.0};
+}
+
+void SimCore::place_robots() {
+    // A game places the main robot too: its keyframe keeps the joint pose, base height and
+    // tilt (so e.g. lying_front still spawns lying down), with the base moved to the game's
+    // x/y and turned by its yaw.
+    if (!config_.spawns.empty()) {
+        const auto pose = spawn_pose(0);
+        double* root    = d_->qpos + map_.root_qpos_adr;
+        const double cw = std::cos(pose[3] / 2.0);
+        const double sw = std::sin(pose[3] / 2.0);
+        const std::array<double, 4> q{root[3], root[4], root[5], root[6]};
+        root[0] = pose[0];
+        root[1] = pose[1];
+        root[3] = cw * q[0] - sw * q[3];  // (cw, 0, 0, sw) * q, wxyz
+        root[4] = cw * q[1] - sw * q[2];
+        root[5] = cw * q[2] + sw * q[1];
+        root[6] = cw * q[3] + sw * q[0];
+    }
+
     for (std::size_t j = 0; j < extra_maps_.size(); ++j) {
         const ModelMap& em = extra_maps_[j];
-        const auto pos     = extra_spawn(static_cast<int>(j) + 1);
-        d_->qpos[em.root_qpos_adr + 0] = pos[0];
-        d_->qpos[em.root_qpos_adr + 1] = pos[1];
-        d_->qpos[em.root_qpos_adr + 2] = pos[2];
-        d_->qpos[em.root_qpos_adr + 3] = 1.0;  // identity quat (w,x,y,z)
+        const auto pose    = spawn_pose(static_cast<int>(j) + 1);
+        d_->qpos[em.root_qpos_adr + 0] = pose[0];
+        d_->qpos[em.root_qpos_adr + 1] = pose[1];
+        d_->qpos[em.root_qpos_adr + 2] = pose[2];
+        d_->qpos[em.root_qpos_adr + 3] = std::cos(pose[3] / 2.0);  // yaw-only quat (w,x,y,z)
         d_->qpos[em.root_qpos_adr + 4] = 0.0;
         d_->qpos[em.root_qpos_adr + 5] = 0.0;
-        d_->qpos[em.root_qpos_adr + 6] = 0.0;
+        d_->qpos[em.root_qpos_adr + 6] = std::sin(pose[3] / 2.0);
         for (int v = 0; v < 6; ++v) {
             d_->qvel[em.root_dof_adr + v] = 0.0;
         }
@@ -420,7 +458,7 @@ void SimCore::reset() {
     else {
         mj_resetData(m_, d_);
     }
-    place_extras();
+    place_robots();
     // Repopulate derived quantities so snapshots/viewer frames between now and the next
     // mj_step see the reset pose, not stale kinematics.
     mj_forward(m_, d_);

@@ -65,6 +65,7 @@ passthrough. Roles: `sim/soccer` (full sim). Args after the role pass through to
 ./b run sim/soccer --headless                            # no viewer window (CI / server)
 ./b run sim/soccer --field kidsize                       # the KidSize field instead of the M-Field
 ./b run sim/soccer --field no-field                      # bare robot on a flat floor, no field/ball
+./b run sim/soccer --game 5v5                            # 5 a side in kickoff positions on the M-Field
 ./b run sim/soccer --rtf 0                                # free-run (uncapped real-time factor)
 ./b run sim/soccer --robots 5                             # 4 extra K1s on the field (max 20 total)
 ```
@@ -75,6 +76,11 @@ joints/sensors (and every DDS/shm contract) are untouched. Extras spawn standing
 5×4 grid off the `y = 0` line (main-robot and ball spawn lane) and are PD-held at the
 `ready` pose — uncontrolled standing obstacles for dribbling/navigation practice. Sim
 resets (Backspace) re-place them. The `--keyframe` flag only affects the main robot.
+
+`--game 3v3` / `--game 5v5` (from `simulation.yaml`'s `games`) load the M-Field with 6 or 10 K1s
+in kickoff positions, in place of `--field`/`--robots`: team 1 in the -x half facing +x, team 2
+mirrored. The main robot is team 1's striker, and the others are held at the ready pose like
+`--robots` extras.
 
 > A new field goes in `simulation.yaml`'s `fields` and must point at a **scene** (`k1_scene_robocup.xml`,
 > `k1_scene_flat.xml`, or your own).

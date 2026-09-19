@@ -80,6 +80,7 @@ Parsed in [`mujoco/shared/CliOptions.hpp`](mujoco/shared/CliOptions.hpp); `--hel
 | --- | --- | --- |
 | `--headless` | off | Run without the GLFW viewer window (CI / headless servers). Physics, DDS and the camera bridge all still run. |
 | `--field <name>` | `simulation.yaml`'s `field` (`middle`) | Field to play on, one of `simulation.yaml`'s `fields`: `middle` — the RoboCup 2026 Humanoid Soccer League M-Field (14 × 9 m), the field of the Middle Division the K1 plays in; `kidsize` — RoboCup KidSize under the pre-2026 rules (9 × 6 m); `no-field` — a bare flat floor with no field or ball. NUbots' `FieldDescription.yaml` `field_type` must match for localisation. |
+| `--game <name>` | none | Robots in kickoff positions for a match, one of `simulation.yaml`'s `games`: `3v3` (6 robots) or `5v5` (10 robots), both on the `middle` field. Sets the field and robot count itself, so it can't be combined with `--field` or `--robots`. Team 1 is in the -x half facing +x, team 2 is its mirror image; the main robot is team 1's first entry (the striker). Only the main robot is controlled, the rest are PD-held at the `ready` pose like `--robots` extras. `--keyframe` still sets the main robot's pose, moved to its game spot. |
 | `--config-dir <dir>` | `mujoco/config` | Config directory to read the YAML from. |
 | `--keyframe <name>` | `ready` | Startup keyframe for the **main** robot (e.g. `lying_front` to start fallen and exercise the get-up chain). |
 | `--rtf <factor>` | `simulation.yaml`'s `real_time_factor` | Real-time factor; `0` = free-run (uncapped, for tests/sweeps). |
@@ -90,6 +91,7 @@ Parsed in [`mujoco/shared/CliOptions.hpp`](mujoco/shared/CliOptions.hpp); `--hel
 ./b run sim/soccer --headless                            # no viewer window (CI / server)
 ./b run sim/soccer --field kidsize                       # the KidSize field instead of the M-Field
 ./b run sim/soccer --field no-field                      # bare robot on a flat floor, no field/ball
+./b run sim/soccer --game 3v3                            # 3 a side in kickoff positions on the M-Field
 ./b run sim/soccer --rtf 0                               # free-run (uncapped real-time factor)
 ./b run sim/soccer --keyframe lying_front                # start fallen, to exercise GetUp
 ./b run sim/soccer --robots 5                            # 4 extra K1s on the field (max 20 total)
