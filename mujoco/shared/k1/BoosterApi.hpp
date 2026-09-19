@@ -7,21 +7,21 @@
 
 namespace k1sim::booster {
 
-// DDS topics ("rt/" prefix = ROS2 rmw naming, so ROS2 clients interop directly)
-inline constexpr const char* TOPIC_LOW_STATE      = "rt/low_state";
-inline constexpr const char* TOPIC_JOINT_CTRL     = "rt/joint_ctrl";
-inline constexpr const char* TOPIC_ODOMETER_STATE = "rt/odometer_state";
-inline constexpr const char* TOPIC_FALL_DOWN      = "rt/fall_down";
-inline constexpr const char* TOPIC_BATTERY_STATE  = "rt/battery_state";
-inline constexpr const char* TOPIC_BUTTON_EVENT   = "rt/button_event";
-inline constexpr const char* TOPIC_RPC_REQUEST    = "rt/LocoApiTopicReq";
-inline constexpr const char* TOPIC_RPC_RESPONSE   = "rt/LocoApiTopicResp";
-// The controller's full ROS odometry (nav_msgs Odometry: pose and twist), kTopicRosOdometer. Only
-// in the SDK from the 1.7.0 firmware (booster_robotics_sdk @ d5d8f7ae).
-inline constexpr const char* TOPIC_ROS_ODOMETER   = "rt/odom";
-// Not an SDK constant: the robot's head pose (geometry_msgs Pose), the topic NUbots'
-// K1Sensors subscribes to (K1Sensors.yaml head_pose.topic).
-inline constexpr const char* TOPIC_HEAD_POSE      = "rt/head_pose";
+    // DDS topics ("rt/" prefix = ROS2 rmw naming, so ROS2 clients interop directly)
+    inline constexpr const char* TOPIC_LOW_STATE      = "rt/low_state";
+    inline constexpr const char* TOPIC_JOINT_CTRL     = "rt/joint_ctrl";
+    inline constexpr const char* TOPIC_ODOMETER_STATE = "rt/odometer_state";
+    inline constexpr const char* TOPIC_FALL_DOWN      = "rt/fall_down";
+    inline constexpr const char* TOPIC_BATTERY_STATE  = "rt/battery_state";
+    inline constexpr const char* TOPIC_BUTTON_EVENT   = "rt/button_event";
+    inline constexpr const char* TOPIC_RPC_REQUEST    = "rt/LocoApiTopicReq";
+    inline constexpr const char* TOPIC_RPC_RESPONSE   = "rt/LocoApiTopicResp";
+    // The controller's full ROS odometry (nav_msgs Odometry: pose and twist), kTopicRosOdometer. Only
+    // in the SDK from the 1.7.0 firmware (booster_robotics_sdk @ d5d8f7ae).
+    inline constexpr const char* TOPIC_ROS_ODOMETER = "rt/odom";
+    // Not an SDK constant: the robot's head pose (geometry_msgs Pose), the topic NUbots'
+    // K1Sensors subscribes to (K1Sensors.yaml head_pose.topic).
+    inline constexpr const char* TOPIC_HEAD_POSE = "rt/head_pose";
 
     // LocoApiId values carried in RpcReqMsg.header JSON {"api_id": <int>}
     enum ApiId : int {

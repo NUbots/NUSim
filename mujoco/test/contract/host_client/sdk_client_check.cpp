@@ -113,24 +113,31 @@ namespace {
 #endif
 
 #ifdef K1SIM_CHECK_ROS_ODOMETRY
-std::atomic<uint64_t> g_ros_odom_count{0};
-std::atomic<bool> g_ros_odom_finite{true};
-std::string g_ros_odom_frames;  // written once, before the count is first incremented
-void RosOdometryHandler(const void* msg) {
-    const auto* odom  = static_cast<const nav_msgs::msg::Odometry*>(msg);
-    const auto& p     = odom->pose().pose().position();
-    const auto& twist = odom->twist().twist();
-    if (g_ros_odom_count.load() == 0) {
-        g_ros_odom_frames = "'" + odom->header().frame_id() + "' -> '" + odom->child_frame_id() + "'";
-    }
-    for (double v : {p.x(), p.y(), p.z(), twist.linear().x(), twist.linear().y(), twist.linear().z(),
-                     twist.angular().x(), twist.angular().y(), twist.angular().z()}) {
-        if (!std::isfinite(v)) {
-            g_ros_odom_finite.store(false, std::memory_order_relaxed);
+    std::atomic<uint64_t> g_ros_odom_count{0};
+    std::atomic<bool> g_ros_odom_finite{true};
+    std::string g_ros_odom_frames;  // written once, before the count is first incremented
+    void RosOdometryHandler(const void* msg) {
+        const auto* odom  = static_cast<const nav_msgs::msg::Odometry*>(msg);
+        const auto& p     = odom->pose().pose().position();
+        const auto& twist = odom->twist().twist();
+        if (g_ros_odom_count.load() == 0) {
+            g_ros_odom_frames = "'" + odom->header().frame_id() + "' -> '" + odom->child_frame_id() + "'";
         }
+        for (double v : {p.x(),
+                         p.y(),
+                         p.z(),
+                         twist.linear().x(),
+                         twist.linear().y(),
+                         twist.linear().z(),
+                         twist.angular().x(),
+                         twist.angular().y(),
+                         twist.angular().z()}) {
+            if (!std::isfinite(v)) {
+                g_ros_odom_finite.store(false, std::memory_order_relaxed);
+            }
+        }
+        g_ros_odom_count.fetch_add(1, std::memory_order_relaxed);
     }
-    g_ros_odom_count.fetch_add(1, std::memory_order_relaxed);
-}
 #endif
 
 #ifdef K1SIM_CHECK_BATTERY
