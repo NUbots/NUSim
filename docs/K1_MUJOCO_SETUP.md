@@ -242,6 +242,7 @@ runs show whether the robot is actually moving.
 | `gains.yaml` | Per-joint PD stiffness/damping + ready pose (seeded from Booster's official K1 deploy config) |
 | `locomotion.yaml` | `module::Locomotion` — initial mode, prepare blend time, fall thresholds |
 | `dds.yaml` | `module::SdkBridge` — DDS domain, UDP-only fallback, battery SOC, unknown-RPC status |
+| `odometry.yaml` | `module::SdkBridge` — odometry error model (scale, white noise, bias drift) on `rt/odometer_state` / `rt/odom`; off = ground truth |
 
 All are read at startup (`--config-dir` or `$K1SIM_CONFIG_DIR` to point elsewhere); `--model`/`--rtf` on the
 command line override the corresponding YAML value for one-off runs (this is what `K1_MODEL`/`K1_RTF` above

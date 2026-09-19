@@ -32,6 +32,17 @@ namespace k1sim::module::sdkbridge {
             return std::atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z));
         }
 
+        // Avoid M_PI: not reliably available under this project's -std=c++17 build
+        constexpr double kPi = 3.14159265358979323846;
+
+        // Hamilton product a * b of {w, x, y, z} quaternions
+        std::array<double, 4> quat_mul(const std::array<double, 4>& a, const std::array<double, 4>& b) {
+            return {a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3],
+                    a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2],
+                    a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1],
+                    a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0]};
+        }
+
         // A world-frame vector expressed in the body frame of the {w, x, y, z} orientation q: R(q)^T v.
         std::array<double, 3> world_to_body(const std::array<double, 4>& q, const std::array<double, 3>& v) {
             const double w = q[0], x = q[1], y = q[2], z = q[3];
@@ -59,7 +70,8 @@ namespace k1sim::module::sdkbridge {
 
     }  // namespace
 
-    StatePublisher::StatePublisher(DdsParticipant& dds, double battery_soc) : battery_soc_(battery_soc) {
+    StatePublisher::StatePublisher(DdsParticipant& dds, double battery_soc, const OdometryModel::Config& odometry)
+        : battery_soc_(battery_soc), odometry_(odometry) {
         using booster_interface::msg::dds_::BatteryState_PubSubType;
         using booster_interface::msg::dds_::ButtonEventMsg_PubSubType;
         using booster_interface::msg::dds_::FallDownState_PubSubType;
@@ -115,16 +127,37 @@ namespace k1sim::module::sdkbridge {
         low_state.motor_state_parallel(legs);
         low_state_writer_->write(&low_state);
 
+        // The controller's odometry: the base's planar pose and velocity as OdometryModel corrupts
+        // them (the ground truth when it is disabled), published on both odometry topics below.
+        const double yaw_true              = yaw_from_quat(update.base.quat);
+        const OdometryModel::Estimate& est = odometry_.update(update.sim_time,
+                                                              update.base.x,
+                                                              update.base.y,
+                                                              yaw_true,
+                                                              update.base.lin_vel[0],
+                                                              update.base.lin_vel[1],
+                                                              update.base.ang_vel[2]);
+
         // --- rt/odometer_state ---
         booster_interface::msg::dds_::Odometer_ odom;
-        odom.x(static_cast<float>(update.base.x));
-        odom.y(static_cast<float>(update.base.y));
-        odom.theta(static_cast<float>(yaw_from_quat(update.base.quat)));
+        odom.x(static_cast<float>(est.x));
+        odom.y(static_cast<float>(est.y));
+        odom.theta(static_cast<float>(est.yaw));
         odometer_writer_->write(&odom);
 
         // --- rt/odom --- The same base odometry with its velocity: pose in "odom" (the world), twist
         // in the body frame "base_link", per the ROS nav_msgs convention (twist in child_frame_id).
-        // The sim's base state is ground truth, so the covariances are left zero.
+        // The odometry model's planar errors are applied on top of the base's true 3D pose and twist:
+        // its position and heading error to the pose, its velocity error to the twist, with the twist
+        // covariance its white noise (zero, like the pose covariance, when the model is disabled).
+        const double cy = std::cos(yaw_true), sy = std::sin(yaw_true);
+        const std::array<double, 3> v_true_planar{cy * update.base.lin_vel[0] + sy * update.base.lin_vel[1],
+                                                  -sy * update.base.lin_vel[0] + cy * update.base.lin_vel[1],
+                                                  update.base.ang_vel[2]};
+        const double half_dyaw = 0.5 * std::remainder(est.yaw - yaw_true, 2.0 * kPi);
+        const std::array<double, 4> q =
+            quat_mul({std::cos(half_dyaw), 0.0, 0.0, std::sin(half_dyaw)}, update.base.quat);
+
         nav_msgs::msg::dds_::Odometry_ ros_odom;
         const auto stamp = std::chrono::system_clock::now().time_since_epoch();
         const auto sec   = std::chrono::duration_cast<std::chrono::seconds>(stamp);
@@ -133,21 +166,25 @@ namespace k1sim::module::sdkbridge {
             static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(stamp - sec).count()));
         ros_odom.header().frame_id("odom");
         ros_odom.child_frame_id("base_link");
-        ros_odom.pose().pose().position().x(update.base.x);
-        ros_odom.pose().pose().position().y(update.base.y);
+        ros_odom.pose().pose().position().x(est.x);
+        ros_odom.pose().pose().position().y(est.y);
         ros_odom.pose().pose().position().z(update.base.z);
-        ros_odom.pose().pose().orientation().w(update.base.quat[0]);
-        ros_odom.pose().pose().orientation().x(update.base.quat[1]);
-        ros_odom.pose().pose().orientation().y(update.base.quat[2]);
-        ros_odom.pose().pose().orientation().z(update.base.quat[3]);
+        ros_odom.pose().pose().orientation().w(q[0]);
+        ros_odom.pose().pose().orientation().x(q[1]);
+        ros_odom.pose().pose().orientation().y(q[2]);
+        ros_odom.pose().pose().orientation().z(q[3]);
         const auto linear  = world_to_body(update.base.quat, update.base.lin_vel);
         const auto angular = world_to_body(update.base.quat, update.base.ang_vel);
-        ros_odom.twist().twist().linear().x(linear[0]);
-        ros_odom.twist().twist().linear().y(linear[1]);
+        ros_odom.twist().twist().linear().x(linear[0] + est.velocity[0] - v_true_planar[0]);
+        ros_odom.twist().twist().linear().y(linear[1] + est.velocity[1] - v_true_planar[1]);
         ros_odom.twist().twist().linear().z(linear[2]);
         ros_odom.twist().twist().angular().x(angular[0]);
         ros_odom.twist().twist().angular().y(angular[1]);
-        ros_odom.twist().twist().angular().z(angular[2]);
+        ros_odom.twist().twist().angular().z(angular[2] + est.velocity[2] - v_true_planar[2]);
+        // Row-major 6x6 over (vx, vy, vz, wx, wy, wz)
+        ros_odom.twist().covariance()[0]  = est.velocity_variance[0];
+        ros_odom.twist().covariance()[7]  = est.velocity_variance[1];
+        ros_odom.twist().covariance()[35] = est.velocity_variance[2];
         ros_odometry_writer_->write(&ros_odom);
 
         // --- rt/head_pose --- The head frame in the yaw-only base footprint frame, which
@@ -171,6 +208,7 @@ namespace k1sim::module::sdkbridge {
             if (changed) {
                 std::fprintf(stderr, "StatePublisher: fall_state -> %d (t=%.2f)\n", update.fall_state, update.sim_time);
             }
+
             booster_interface::msg::dds_::FallDownState_ fall;
             fall.fall_down_state(static_cast<booster_interface::msg::dds_::FallDownStateType_>(update.fall_state));
             fall.is_recovery_available(true);
