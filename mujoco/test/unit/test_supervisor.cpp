@@ -37,6 +37,7 @@
 #include "module/Supervisor/src/SupervisorConfig.hpp"
 #include "module/Supervisor/src/SupervisorLogic.hpp"
 #include "module/Supervisor/src/SupervisorPlacement.hpp"
+#include "shared/sim/FreeBody.hpp"
 #include "shared/util/Config.hpp"
 
 namespace sup = k1sim::module::supervisor;
@@ -392,6 +393,32 @@ namespace {
         }
     }
 
+
+    // Re-originating the ball must not move it in any keyframe: every inherited keyframe zero-pads
+    // the ball, which used to mean "body at the origin, sphere at its offset spot".
+    void test_ball_keyframes(const mjModel* m, mjData* d) {
+        const int ball_geom = mj_name2id(m, mjOBJ_GEOM, "ball");
+        const int ball_body = mj_name2id(m, mjOBJ_BODY, "ball");
+        if (ball_geom < 0 || ball_body < 0) {
+            fail("scene is missing the ball");
+            return;
+        }
+        for (double v : {m->geom_pos[3 * ball_geom], m->geom_pos[3 * ball_geom + 1], m->geom_pos[3 * ball_geom + 2]}) {
+            if (!approx(v, 0.0)) {
+                fail("ball geom still offset from its body origin after re-originating");
+            }
+        }
+        for (int key = 0; key < m->nkey; ++key) {
+            mj_resetDataKeyframe(m, d, key);
+            mj_kinematics(m, d);
+            const double* p = d->geom_xpos + 3 * ball_geom;
+            if (!approx(p[0], 1.38, 1e-9) || !approx(p[1], 0.0, 1e-9) || !approx(p[2], 0.0785, 1e-9)) {
+                fail(std::string("keyframe '") + mj_id2name(m, mjOBJ_KEY, key) + "' no longer rests the ball at (1.38, 0, 0.0785)");
+            }
+        }
+        mj_resetData(m, d);
+    }
+
 }  // namespace
 
 int main() {
@@ -399,10 +426,23 @@ int main() {
 
     const std::string model_path = resolve_test_model_path();
     char error[1024]             = {0};
-    mjModel* m                   = mj_loadXML(model_path.c_str(), nullptr, error, sizeof(error));
-    if (m == nullptr) {
-        std::fprintf(stderr, "mj_loadXML failed for '%s': %s\n", model_path.c_str(), error);
+    // Load the scene the way SimCore does: through the spec, with the ball body re-originated on its
+    // sphere (freebody::reorigin_body_at_geom) and the keyframes shifted to match.
+    mjSpec* spec = mj_parseXML(model_path.c_str(), nullptr, error, sizeof(error));
+    if (spec == nullptr) {
+        std::fprintf(stderr, "mj_parseXML failed for '%s': %s\n", model_path.c_str(), error);
         return 1;
+    }
+    const auto ball_offset = k1sim::freebody::reorigin_body_at_geom(spec, "ball", "ball");
+    mjModel* m             = mj_compile(spec, nullptr);
+    mj_deleteSpec(spec);
+    if (m == nullptr) {
+        std::fprintf(stderr, "mj_compile failed for '%s'\n", model_path.c_str());
+        return 1;
+    }
+    k1sim::freebody::shift_reoriginated_keyframes(m, mj_name2id(m, mjOBJ_BODY, "ball"), ball_offset);
+    if (ball_offset[0] == 0.0 && ball_offset[1] == 0.0 && ball_offset[2] == 0.0) {
+        fail("expected the scene ball to be re-originated (its geom sits off the body origin)");
     }
     mjData* d = mj_makeData(m);
     if (d == nullptr) {
@@ -414,6 +454,7 @@ int main() {
     test_placement_primitives(m, d);
     test_supervisor_logic(m, d);
     test_kickoff_transitions(m, d);
+    test_ball_keyframes(m, d);
 
     mj_deleteData(d);
     mj_deleteModel(m);

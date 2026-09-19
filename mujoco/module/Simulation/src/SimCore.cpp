@@ -6,6 +6,7 @@
 #include <stdexcept>
 
 #include "shared/k1/BoosterApi.hpp"
+#include "shared/sim/FreeBody.hpp"
 #include "shared/sim/HeadPose.hpp"
 #include "shared/util/Config.hpp"
 
@@ -67,12 +68,13 @@ namespace k1sim {
             return {x, y, 0.555};
         }
 
-        // Build a scene with (robots - 1) extra K1 copies attached via mjSpec. Each copy's
+        // Build the scene through mjSpec: re-originate the ball body on its sphere (see
+        // freebody::reorigin_body_at_geom) and attach (robots - 1) extra K1 copies. Each copy's
         // element names get a "subNN_" prefix, so the main robot's unprefixed names (and
         // every existing name-based lookup) stay valid. Extra copies' keyframes are dropped;
         // the parent scene's keyframes zero-pad the new free joints, landing each copy at
         // its attachment frame.
-        mjModel* load_multi_robot_model(const std::string& scene_path, int robots, char* error, int error_sz) {
+        mjModel* load_scene_model(const std::string& scene_path, int robots, char* error, int error_sz) {
             mjSpec* scene = mj_parseXML(scene_path.c_str(), nullptr, error, error_sz);
             if (scene == nullptr) {
                 throw std::runtime_error("mj_parseXML failed for '" + scene_path + "': " + error);
@@ -111,6 +113,9 @@ namespace k1sim {
                 mj_deleteSpec(robot);
             }
 
+            // Put the ball body's origin on its sphere (see freebody::reorigin_body_at_geom)
+            const auto ball_offset = freebody::reorigin_body_at_geom(scene, "ball", "ball");
+
             mjModel* m = mj_compile(scene, nullptr);
             if (m == nullptr) {
                 const std::string what = std::string("mj_compile failed for multi-robot scene: ") + mjs_getError(scene);
@@ -118,6 +123,7 @@ namespace k1sim {
                 throw std::runtime_error(what);
             }
             mj_deleteSpec(scene);
+            freebody::shift_reoriginated_keyframes(m, mj_name2id(m, mjOBJ_BODY, "ball"), ball_offset);
             return m;
         }
 
@@ -138,15 +144,8 @@ namespace k1sim {
         const std::string resolved = config::resolve_path(config_.model_path).string();
 
         char error[1024] = {0};
-        if (config_.robots <= 1) {
-            m_ = mj_loadXML(resolved.c_str(), nullptr, error, sizeof(error));
-            if (m_ == nullptr) {
-                throw std::runtime_error("mj_loadXML failed for '" + resolved + "': " + error);
-            }
-        }
-        else {
-            m_ = load_multi_robot_model(resolved, config_.robots, error, sizeof(error));
-        }
+        // Always through the spec (robots == 1 attaches no copies), so the ball is re-originated
+        m_ = load_scene_model(resolved, std::max(1, config_.robots), error, sizeof(error));
 
         // Throws if any joint/actuator is missing or there is no free root joint.
         map_ = ModelMap::build(m_);
