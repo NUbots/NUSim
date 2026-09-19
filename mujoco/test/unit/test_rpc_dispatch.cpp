@@ -11,18 +11,18 @@
 
 namespace {
 
-int failures = 0;
+    int failures = 0;
 
-void expect(bool cond, const std::string& what) {
-    if (!cond) {
-        std::fprintf(stderr, "FAIL: %s\n", what.c_str());
-        ++failures;
+    void expect(bool cond, const std::string& what) {
+        if (!cond) {
+            std::fprintf(stderr, "FAIL: %s\n", what.c_str());
+            ++failures;
+        }
     }
-}
 
-std::string header_for(int api_id) {
-    return "{\"api_id\":" + std::to_string(api_id) + "}";
-}
+    std::string header_for(int api_id) {
+        return "{\"api_id\":" + std::to_string(api_id) + "}";
+    }
 
 }  // namespace
 
@@ -43,8 +43,8 @@ int main() {
 
     // --- MOVE ---
     {
-        auto out = dispatch_rpc(header_for(k1sim::booster::MOVE), R"({"vx":0.1,"vy":-0.2,"vyaw":0.3})", 2,
-                                 kUnknownStatus);
+        auto out =
+            dispatch_rpc(header_for(k1sim::booster::MOVE), R"({"vx":0.1,"vy":-0.2,"vyaw":0.3})", 2, kUnknownStatus);
         expect(out.action.kind == RpcActionKind::WALK, "MOVE: action kind");
         expect(out.action.walk.vx == 0.1, "MOVE: vx");
         expect(out.action.walk.vy == -0.2, "MOVE: vy");
@@ -87,8 +87,8 @@ int main() {
     {
         auto out = dispatch_rpc(header_for(k1sim::booster::GET_MODE), "", 4, kUnknownStatus);
         expect(out.action.kind == RpcActionKind::NONE, "GET_MODE: no action emitted");
-        expect(out.response_body == R"({"mode":4})", "GET_MODE: response body echoes current mode (got '"
-                                                           + out.response_body + "')");
+        expect(out.response_body == R"({"mode":4})",
+               "GET_MODE: response body echoes current mode (got '" + out.response_body + "')");
         expect(out.status == 0, "GET_MODE: status 0");
     }
 

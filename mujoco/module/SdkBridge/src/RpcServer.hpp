@@ -22,28 +22,30 @@
 
 namespace k1sim::module::sdkbridge {
 
-class RpcServer : public eprosima::fastdds::dds::DataReaderListener {
-public:
-    RpcServer(DdsParticipant& dds, NUClear::Reactor& reactor, int64_t unknown_api_status);
+    class RpcServer : public eprosima::fastdds::dds::DataReaderListener {
+    public:
+        RpcServer(DdsParticipant& dds, NUClear::Reactor& reactor, int64_t unknown_api_status);
 
-    void on_data_available(eprosima::fastdds::dds::DataReader* reader) override;
+        void on_data_available(eprosima::fastdds::dds::DataReader* reader) override;
 
-    // SdkBridge's on<Trigger<SimStateUpdate>> handler calls this every tick so
-    // GET_MODE can answer from an atomic without touching the physics thread.
-    void set_current_mode(int mode) { current_mode_.store(mode, std::memory_order_relaxed); }
+        // SdkBridge's on<Trigger<SimStateUpdate>> handler calls this every tick so
+        // GET_MODE can answer from an atomic without touching the physics thread.
+        void set_current_mode(int mode) {
+            current_mode_.store(mode, std::memory_order_relaxed);
+        }
 
-private:
-    void handle_rpc_request();
-    void handle_joint_ctrl();
+    private:
+        void handle_rpc_request();
+        void handle_joint_ctrl();
 
-    NUClear::Reactor& reactor_;
-    int64_t unknown_api_status_;
-    std::atomic<int> current_mode_{0};
+        NUClear::Reactor& reactor_;
+        int64_t unknown_api_status_;
+        std::atomic<int> current_mode_{0};
 
-    eprosima::fastdds::dds::DataReader* rpc_req_reader_    = nullptr;
-    eprosima::fastdds::dds::DataReader* joint_ctrl_reader_ = nullptr;
-    eprosima::fastdds::dds::DataWriter* rpc_resp_writer_   = nullptr;
-};
+        eprosima::fastdds::dds::DataReader* rpc_req_reader_    = nullptr;
+        eprosima::fastdds::dds::DataReader* joint_ctrl_reader_ = nullptr;
+        eprosima::fastdds::dds::DataWriter* rpc_resp_writer_   = nullptr;
+    };
 
 }  // namespace k1sim::module::sdkbridge
 

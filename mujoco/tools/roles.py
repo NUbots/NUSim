@@ -3,6 +3,7 @@
 Reads mujoco/roles/**/*.role and, if a build exists, the ROLE_* state from its
 CMakeCache. Toggle with `./b configure --set-role/--unset-role`, or `-i` for ccmake.
 """
+
 import glob
 import os
 
@@ -26,6 +27,6 @@ def run(**kwargs):
 
     print("roles (./b run <role>):")
     for f in sorted(glob.glob(os.path.join(roles_dir, "**", "*.role"), recursive=True)):
-        rel = os.path.relpath(f, roles_dir)[:-5]            # sim/soccer
+        rel = os.path.relpath(f, roles_dir)[:-5]  # sim/soccer
         var = "ROLE_" + rel.replace("/", "-")
         print(f"  {rel:20} {state.get(var, 'ON (default)')}")
