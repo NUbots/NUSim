@@ -13,6 +13,9 @@
 //   - rt/head_pose received at least once with a finite, standing-height pose (the
 //     topic NUbots' K1Sensors places the camera and torso from). Only when the SDK
 //     ships booster/idl/geometry_msgs/Pose.h; SKIP printed otherwise.
+//   - rt/odom (nav_msgs Odometry, the source of NUbots' Sensors.vTw) received at
+//     least once with finite pose and twist, reporting its frames. Only when the SDK
+//     ships booster/idl/nav_msgs/Odometry.h (1.7.0 firmware); SKIP printed otherwise.
 //   - rt/battery_state received at least once during the 5s window (published at
 //     1 Hz via NUClear on<Every<1, std::chrono::seconds>>) with soc in (0, 100].
 //     Only when the SDK being built against ships booster/idl/b1/BatteryState.h —
@@ -48,6 +51,10 @@
 #if __has_include(<booster/idl/geometry_msgs/Pose.h>)
     #include <booster/idl/geometry_msgs/Pose.h>
     #define K1SIM_CHECK_HEAD_POSE 1
+#endif
+#if __has_include(<booster/idl/nav_msgs/Odometry.h>)
+    #include <booster/idl/nav_msgs/Odometry.h>
+    #define K1SIM_CHECK_ROS_ODOMETRY 1
 #endif
 #include <booster/idl/b1/LowState.h>
 #include <booster/idl/b1/Odometer.h>
@@ -105,6 +112,34 @@ namespace {
     }
 #endif
 
+#ifdef K1SIM_CHECK_ROS_ODOMETRY
+    std::atomic<uint64_t> g_ros_odom_count{0};
+    std::atomic<bool> g_ros_odom_finite{true};
+    std::string g_ros_odom_frames;  // written once, before the count is first incremented
+    void RosOdometryHandler(const void* msg) {
+        const auto* odom  = static_cast<const nav_msgs::msg::Odometry*>(msg);
+        const auto& p     = odom->pose().pose().position();
+        const auto& twist = odom->twist().twist();
+        if (g_ros_odom_count.load() == 0) {
+            g_ros_odom_frames = "'" + odom->header().frame_id() + "' -> '" + odom->child_frame_id() + "'";
+        }
+        for (double v : {p.x(),
+                         p.y(),
+                         p.z(),
+                         twist.linear().x(),
+                         twist.linear().y(),
+                         twist.linear().z(),
+                         twist.angular().x(),
+                         twist.angular().y(),
+                         twist.angular().z()}) {
+            if (!std::isfinite(v)) {
+                g_ros_odom_finite.store(false, std::memory_order_relaxed);
+            }
+        }
+        g_ros_odom_count.fetch_add(1, std::memory_order_relaxed);
+    }
+#endif
+
 #ifdef K1SIM_CHECK_BATTERY
     std::atomic<uint64_t> g_battery_count{0};
     std::atomic<float> g_battery_soc{-1.0f};
@@ -153,6 +188,10 @@ int main() {
     ChannelSubscriber<geometry_msgs::msg::Pose> head_pose_sub("rt/head_pose", HeadPoseHandler);
     head_pose_sub.InitChannel();
 #endif
+#ifdef K1SIM_CHECK_ROS_ODOMETRY
+    ChannelSubscriber<nav_msgs::msg::Odometry> ros_odom_sub(booster::robot::b1::kTopicRosOdometer, RosOdometryHandler);
+    ros_odom_sub.InitChannel();
+#endif
 #ifdef K1SIM_CHECK_BATTERY
     ChannelSubscriber<BatteryState> battery_sub("rt/battery_state", BatteryHandler);
     battery_sub.InitChannel();
@@ -190,6 +229,15 @@ int main() {
           "rt/head_pose z is a standing head height above the footprint (0.5, 1.2) m");
 #else
     std::printf("[SKIP] rt/head_pose checks (SDK build lacks booster/idl/geometry_msgs/Pose.h)\n");
+#endif
+#ifdef K1SIM_CHECK_ROS_ODOMETRY
+    std::printf("odom: %llu samples in window, frames %s\n",
+                static_cast<unsigned long long>(g_ros_odom_count.load()),
+                g_ros_odom_frames.c_str());
+    check(g_ros_odom_count.load() > 0, "rt/odom received at least once");
+    check(g_ros_odom_finite.load(), "rt/odom pose and twist are finite");
+#else
+    std::printf("[SKIP] rt/odom checks (SDK build lacks booster/idl/nav_msgs/Odometry.h)\n");
 #endif
 #ifdef K1SIM_CHECK_BATTERY
     std::printf("battery_state: %llu samples in window, last soc=%.1f\n",
