@@ -14,8 +14,9 @@ namespace k1sim::module::sdkbridge {
 
     class StatePublisher {
     public:
-        // battery_soc comes from config/dds.yaml (constant, published at 1 Hz).
-        StatePublisher(DdsParticipant& dds, double battery_soc);
+        // battery_soc comes from config/dds.yaml (constant, published at 1 Hz), odometry from
+        // config/odometry.yaml (the error model of rt/odometer_state and rt/odom).
+        StatePublisher(DdsParticipant& dds, double battery_soc, const OdometryModel::Config& odometry);
 
         // Called at the LowState cadence (50 Hz, on<Trigger<SimStateUpdate>>): writes
         // rt/low_state, rt/odometer_state, rt/odom and rt/head_pose every call, and rt/fall_down
@@ -35,6 +36,7 @@ namespace k1sim::module::sdkbridge {
         eprosima::fastdds::dds::DataWriter* button_event_writer_ = nullptr;  // created, never published
 
         double battery_soc_;
+        OdometryModel odometry_;
 
         bool have_last_fall_state_     = false;
         int last_fall_state_           = -1;
