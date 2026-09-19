@@ -1,7 +1,7 @@
 """./b run <role> [args] — run a role binary in docker (X11 + GPU + DDS passthrough).
 
 Role is given in path form, e.g. `./b run sim/soccer` → bin/sim/soccer. Everything
-after the role (including flags like --headless / --model / --rtf) passes straight
+after the role (including flags like --headless / --field / --rtf) passes straight
 through to the binary — argparse.REMAINDER, so ./b doesn't try to parse them.
 """
 import argparse

@@ -20,7 +20,7 @@ SimCore::Config build_sim_config() {
     auto gains_cfg = config::load("gains.yaml");
 
     SimCore::Config cfg;
-    cfg.model_path = !cli().model.empty() ? cli().model : config::field_scene(sim_cfg, cli().field);
+    cfg.model_path = config::field_scene(sim_cfg, cli().field);
     cfg.initial_keyframe =
         !cli().keyframe.empty() ? cli().keyframe : sim_cfg["initial_keyframe"].as<std::string>("ready");
     // CliOptions.rtf < 0 means "use config"; the config's real_time_factor may itself be 0

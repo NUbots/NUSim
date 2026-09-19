@@ -64,7 +64,7 @@ passthrough. Roles: `sim/soccer` (full sim). Args after the role pass through to
 ```bash
 ./b run sim/soccer --headless                            # no viewer window (CI / server)
 ./b run sim/soccer --field kidsize                       # the KidSize field instead of the M-Field
-./b run sim/soccer --model models/k1/k1_scene_flat.xml   # bare robot on a flat floor, no field/ball
+./b run sim/soccer --field no-field                      # bare robot on a flat floor, no field/ball
 ./b run sim/soccer --rtf 0                                # free-run (uncapped real-time factor)
 ./b run sim/soccer --robots 5                             # 4 extra K1s on the field (max 20 total)
 ```
@@ -76,10 +76,8 @@ joints/sensors (and every DDS/shm contract) are untouched. Extras spawn standing
 `ready` pose — uncontrolled standing obstacles for dribbling/navigation practice. Sim
 resets (Backspace) re-place them. The `--keyframe` flag only affects the main robot.
 
-> `--model` must point at a **scene** (`k1_scene_robocup.xml`, `k1_scene_flat.xml`), not the bare
-> `K1_22dof.xml` component (no floor/lights → black screen).
-
-> `K1_MODEL` must point at a **scene** (`k1_scene_robocup.xml`, `k1_scene_flat.xml`, or your own).
+> A new field goes in `simulation.yaml`'s `fields` and must point at a **scene** (`k1_scene_robocup.xml`,
+> `k1_scene_flat.xml`, or your own).
 > `K1_22dof.xml` is the robot *component* for `<include>`: standalone it has no floor and no lights,
 > so the robot free-falls out of view and the viewer renders black.
 
@@ -241,8 +239,8 @@ runs show whether the robot is actually moving.
 | `locomotion.yaml` | `module::Locomotion` — initial mode, prepare blend time, fall thresholds |
 | `dds.yaml` | `module::SdkBridge` — DDS domain, UDP-only fallback, battery SOC, unknown-RPC status |
 
-All are read at startup (`--config-dir` or `$K1SIM_CONFIG_DIR` to point elsewhere); `--model`/`--rtf` on the
-command line override the corresponding YAML value for one-off runs (this is what `K1_MODEL`/`K1_RTF` above
+All are read at startup (`--config-dir` or `$K1SIM_CONFIG_DIR` to point elsewhere); `--field`/`--rtf` on the
+command line override the corresponding YAML value for one-off runs (this is what `K1_FIELD`/`K1_RTF` above
 set).
 
 ## 5. The viewer (`module::Viewer`)
