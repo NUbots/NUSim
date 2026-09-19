@@ -35,40 +35,40 @@
 
 namespace {
 
-constexpr double kPi = 3.14159265358979323846;
+    constexpr double kPi = 3.14159265358979323846;
 
-std::string resolve_test_model_path() {
-    if (const char* override_path = std::getenv("K1SIM_TEST_MODEL")) {
-        return override_path;
+    std::string resolve_test_model_path() {
+        if (const char* override_path = std::getenv("K1SIM_TEST_MODEL")) {
+            return override_path;
+        }
+        auto cfg = k1sim::config::load("simulation.yaml");
+        return k1sim::config::resolve_path(k1sim::config::field_scene(cfg)).string();
     }
-    auto cfg = k1sim::config::load("simulation.yaml");
-    return k1sim::config::resolve_path(k1sim::config::field_scene(cfg)).string();
-}
 
-double clamp(double v, double lo, double hi) {
-    return v < lo ? lo : (v > hi ? hi : v);
-}
-
-// The trunk height NUbots' K1Sensors recovers from rt/head_pose: Hwt = Hrh * Hhp * Htp^-1 with
-// Hhp = translate(0, 0, -0.08) and Htp = [Rz(yaw) * Ry(pitch), (0.0056, 0, 0.2149 + 0.033)]
-// (NUbots_K1 module/input/K1Sensors: K1Sensors.yaml Hhp, k1_model.hpp compute_Htp).
-double k1sensors_trunk_z(const k1sim::message::SimStateUpdate& s) {
-    mjtNum R_h[9];  // row-major
-    mju_quat2Mat(R_h, s.head.quat.data());
-
-    const double yaw = s.joints[k1sim::HeadYaw].q, pitch = s.joints[k1sim::HeadPitch].q;
-    const double cy = std::cos(yaw), sy = std::sin(yaw), cp = std::cos(pitch), sp = std::sin(pitch);
-    const double R_tp[3][3] = {{cy * cp, -sy, cy * sp}, {sy * cp, cy, sy * sp}, {-sp, 0.0, cp}};
-    const double t_tp[3]    = {0.0056, 0.0, 0.2149 + 0.033};
-
-    // Trunk position in the head frame: Hhp's translation plus Htp^-1's (-R_tp^T t_tp).
-    double v[3];
-    for (int c = 0; c < 3; ++c) {
-        v[c] = -(R_tp[0][c] * t_tp[0] + R_tp[1][c] * t_tp[1] + R_tp[2][c] * t_tp[2]);
+    double clamp(double v, double lo, double hi) {
+        return v < lo ? lo : (v > hi ? hi : v);
     }
-    v[2] -= 0.08;
-    return s.head.position[2] + R_h[6] * v[0] + R_h[7] * v[1] + R_h[8] * v[2];
-}
+
+    // The trunk height NUbots' K1Sensors recovers from rt/head_pose: Hwt = Hrh * Hhp * Htp^-1 with
+    // Hhp = translate(0, 0, -0.08) and Htp = [Rz(yaw) * Ry(pitch), (0.0056, 0, 0.2149 + 0.033)]
+    // (NUbots_K1 module/input/K1Sensors: K1Sensors.yaml Hhp, k1_model.hpp compute_Htp).
+    double k1sensors_trunk_z(const k1sim::message::SimStateUpdate& s) {
+        mjtNum R_h[9];  // row-major
+        mju_quat2Mat(R_h, s.head.quat.data());
+
+        const double yaw = s.joints[k1sim::HeadYaw].q, pitch = s.joints[k1sim::HeadPitch].q;
+        const double cy = std::cos(yaw), sy = std::sin(yaw), cp = std::cos(pitch), sp = std::sin(pitch);
+        const double R_tp[3][3] = {{cy * cp, -sy, cy * sp}, {sy * cp, cy, sy * sp}, {-sp, 0.0, cp}};
+        const double t_tp[3]    = {0.0056, 0.0, 0.2149 + 0.033};
+
+        // Trunk position in the head frame: Hhp's translation plus Htp^-1's (-R_tp^T t_tp).
+        double v[3];
+        for (int c = 0; c < 3; ++c) {
+            v[c] = -(R_tp[0][c] * t_tp[0] + R_tp[1][c] * t_tp[1] + R_tp[2][c] * t_tp[2]);
+        }
+        v[2] -= 0.08;
+        return s.head.position[2] + R_h[6] * v[0] + R_h[7] * v[1] + R_h[8] * v[2];
+    }
 
 }  // namespace
 
@@ -77,8 +77,8 @@ int main() {
     using k1sim::message::SimStateUpdate;
 
     k1sim::SimCore::Config cfg;
-    cfg.model_path = resolve_test_model_path();
-    cfg.rtf        = 0.0;  // free-run: no pacing sleep
+    cfg.model_path            = resolve_test_model_path();
+    cfg.rtf                   = 0.0;  // free-run: no pacing sleep
     cfg.state_publish_divisor = 1;
     cfg.resync_threshold      = 0.05;  // unused in free-run
 
@@ -161,7 +161,7 @@ int main() {
         return 1;
     }
 
-    const auto wall_start = std::chrono::steady_clock::now();
+    const auto wall_start    = std::chrono::steady_clock::now();
     const auto wall_deadline = wall_start + std::chrono::seconds(60);  // generous CI safety net
     sim.start();
 
@@ -177,8 +177,8 @@ int main() {
 
     sim.stop();
 
-    const double wall_elapsed = std::chrono::duration<double>(wall_end - wall_start).count();
-    const uint64_t steps      = sim.step_count();
+    const double wall_elapsed  = std::chrono::duration<double>(wall_end - wall_start).count();
+    const uint64_t steps       = sim.step_count();
     const double steps_per_sec = wall_elapsed > 0.0 ? static_cast<double>(steps) / wall_elapsed : 0.0;
 
     bool ok = true;
@@ -188,9 +188,9 @@ int main() {
     }
     if (height_violation.load()) {
         std::fprintf(stderr,
-                      "FAIL: base height left [0.45, 0.62] after t=1s (min=%.4f max=%.4f)\n",
-                      min_height_after_1s.load(),
-                      max_height_after_1s.load());
+                     "FAIL: base height left [0.45, 0.62] after t=1s (min=%.4f max=%.4f)\n",
+                     min_height_after_1s.load(),
+                     max_height_after_1s.load());
         ok = false;
     }
     if (last_tilt_deg.load() >= 10.0) {

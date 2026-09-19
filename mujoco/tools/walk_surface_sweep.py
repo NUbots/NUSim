@@ -42,10 +42,11 @@ import math
 import pathlib
 import sys
 
-import mujoco
 import numpy as np
 import onnxruntime as ort
 import yaml
+
+import mujoco
 
 # JointIndexK1 serial order, matching the actuator order in models/k1/K1_22dof.xml and the
 # joint arrays in K1WalkPolicy.yaml.
@@ -386,9 +387,9 @@ def run_one(
             writer.writerows(rows)
 
     walking = [r for r in rows if r["t"] >= settle_s]
-    stance = [
-        (r["l_cop_x"], r["l_pitch"]) for r in walking if r["l_fz"] > 20.0
-    ] + [(r["r_cop_x"], r["r_pitch"]) for r in walking if r["r_fz"] > 20.0]
+    stance = [(r["l_cop_x"], r["l_pitch"]) for r in walking if r["l_fz"] > 20.0] + [
+        (r["r_cop_x"], r["r_pitch"]) for r in walking if r["r_fz"] > 20.0
+    ]
     cops = np.array([c for c, _ in stance]) if stance else np.array([np.nan])
     pitches = np.array([p for _, p in stance]) if stance else np.array([np.nan])
     end_xy = data.qpos[robot.root_qpos : robot.root_qpos + 2]
@@ -448,7 +449,9 @@ def main() -> int:
         default="true",
         help="82-obs contract only: how obs[0:3] is produced (default: true)",
     )
-    corruption.add_argument("--odom-rate", type=float, default=50.0, help="odometry publish rate for --linvel-mode aliased")
+    corruption.add_argument(
+        "--odom-rate", type=float, default=50.0, help="odometry publish rate for --linvel-mode aliased"
+    )
     corruption.add_argument("--obs-delay", type=float, default=0.0, help="observation transport delay, in 20 ms ticks")
     corruption.add_argument("--action-delay", type=float, default=0.0, help="command transport delay, in 20 ms ticks")
     corruption.add_argument("--imu-noise", type=float, default=0.0, help="gaussian sigma on gyro and projected gravity")
@@ -470,7 +473,9 @@ def main() -> int:
     corrupt = Corruption(args)
     print(f"policy {args.policy.name}  obs={obs_dim}  scene={args.scene.name}  vx={args.vx} m/s")
     print(f"corruption: {corrupt.describe()}  solref=[{args.solref_timeconst}, {args.solref_dampratio}]")
-    print(f"{'mu':>6} {'fell':>5} {'fall_t':>7} {'dist':>6} {'cop_x':>7} {'cop_p95':>8} {'sole_p':>7} {'sat':>6} {'knee':>6}")
+    print(
+        f"{'mu':>6} {'fell':>5} {'fall_t':>7} {'dist':>6} {'cop_x':>7} {'cop_p95':>8} {'sole_p':>7} {'sat':>6} {'knee':>6}"
+    )
     results = []
     for mu in args.friction:
         trace = args.trace_dir / f"walk_mu{mu:.2f}.csv" if args.trace_dir else None
