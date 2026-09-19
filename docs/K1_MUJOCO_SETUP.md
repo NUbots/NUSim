@@ -141,7 +141,7 @@ The full vision→localisation→behaviour stack runs against the sim too (verif
 by vision and dribbles it goalward autonomously):
 
 ```bash
-# terminal 1 — the sim (confirm "Camera: rendering 640 x 480" appears)
+# terminal 1 — the sim (confirm "Camera: rendering 544 x 448" appears)
 cd ~/NUSim && ./b run sim/soccer
 # terminal 2 — the Tester purpose (find_ball / walk_to_ball / align_ball_to_goal)
 cd ~/NUbots_K1
@@ -279,7 +279,7 @@ So the sim impersonates NUbridge: the **unchanged** NUbots `robocup`/`behaviour`
 Config: `mujoco/config/camera.yaml` (segment name, resolution, fps, intrinsics). Renders via **EGL**
 (offscreen, no window), so it works **headless** too — just needs a render device (`./b run` passes
 `/dev/dri` + GPU). No device ⇒ logs and disables, no crash — but then vision receives **zero** frames
-(`VisualMesh Stats: Receiving 0/s`): confirm the sim log shows `Camera: rendering 640 x 480 ...` before
+(`VisualMesh Stats: Receiving 0/s`): confirm the sim log shows `Camera: rendering 544 x 448 ...` before
 blaming the NUbots side. The right-camera segment (`_boostercamera_head_raw_right_rgb`) is not rendered
 yet; K1Camera warn-retries on it harmlessly (stereo is future work).
 
