@@ -37,6 +37,7 @@
 #include "module/Supervisor/src/SupervisorConfig.hpp"
 #include "module/Supervisor/src/SupervisorLogic.hpp"
 #include "module/Supervisor/src/SupervisorPlacement.hpp"
+#include "shared/message/Commands.hpp"
 #include "shared/sim/FreeBody.hpp"
 #include "shared/util/Config.hpp"
 
@@ -394,6 +395,107 @@ namespace {
     }
 
 
+    // rt/nusim/ball_command: placement, centre velocity through the off-origin geom, rolling spin,
+    // the robot-relative frame, and that a rolled ball keeps its speed instead of skidding.
+    void test_ball_command(const mjModel* m, mjData* d) {
+        namespace fb        = k1sim::freebody;
+        using Frame         = k1sim::message::BallCommand::Frame;
+        const int ball_body = mj_name2id(m, mjOBJ_BODY, "ball");
+        const int ball_geom = mj_name2id(m, mjOBJ_GEOM, "ball");
+        const int trunk     = mj_name2id(m, mjOBJ_BODY, "Trunk");
+        if (ball_body < 0 || ball_geom < 0 || trunk < 0) {
+            fail("scene is missing the ball body/geom or the Trunk");
+            return;
+        }
+        const double radius = m->geom_size[3 * ball_geom + 0];
+        mj_resetData(m, d);
+
+        // World frame, resting on the floor, rolling
+        k1sim::message::BallCommand cmd;
+        cmd.frame    = Frame::WORLD;
+        cmd.position = {2.0, 0.5, -1.0};
+        cmd.velocity = {-3.0, 0.5, 0.0};
+        cmd.rolling  = true;
+        if (!sup::apply_ball_command(m, d, ball_body, ball_geom, trunk, cmd)) {
+            fail("apply_ball_command returned false for a valid world command");
+            return;
+        }
+        const auto state = fb::geom_centre_state(m, d, ball_body, ball_geom);
+        if (!approx(state.position[0], 2.0) || !approx(state.position[1], 0.5) || !approx(state.position[2], radius)) {
+            fail("ball command: centre not at (2, 0.5, radius)");
+        }
+        if (!approx(state.lin_vel[0], -3.0) || !approx(state.lin_vel[1], 0.5) || !approx(state.lin_vel[2], 0.0)) {
+            fail("ball command: centre velocity != commanded");
+        }
+        // Rolling without slipping: the contact point r below the centre is at rest
+        const double cx = state.lin_vel[0] + state.ang_vel[1] * -radius;
+        const double cy = state.lin_vel[1] - state.ang_vel[0] * -radius;
+        if (!approx(cx, 0.0, 1e-9) || !approx(cy, 0.0, 1e-9)) {
+            fail("ball command: contact point moves, so the ball is not rolling");
+        }
+
+        // Cross-check the free-joint arithmetic against MuJoCo's own object velocity at the geom
+        mj_forward(m, d);
+        mjtNum vel6[6];
+        mj_objectVelocity(m, d, mjOBJ_GEOM, ball_geom, vel6, 0);
+        if (!approx(vel6[3], -3.0, 1e-6) || !approx(vel6[4], 0.5, 1e-6) || !approx(vel6[5], 0.0, 1e-6)) {
+            fail("ball command: mj_objectVelocity at the geom disagrees with the commanded centre velocity (got "
+                 + std::to_string(vel6[3]) + ", " + std::to_string(vel6[4]) + ", " + std::to_string(vel6[5]) + ")");
+        }
+
+        // A rolled ball keeps (nearly) its speed over 0.2 s instead of skidding and losing a chunk of it
+        const double speed0 = std::hypot(-3.0, 0.5);
+        const int steps     = static_cast<int>(0.2 / m->opt.timestep);
+        for (int i = 0; i < steps; ++i) {
+            mj_step(m, d);
+        }
+        const auto rolled = fb::geom_centre_state(m, d, ball_body, ball_geom);
+        const double speed = std::hypot(rolled.lin_vel[0], rolled.lin_vel[1]);
+        if (speed < 0.9 * speed0 || speed > speed0 * 1.001) {
+            fail("rolled ball speed after 0.2 s is " + std::to_string(speed) + " (started at " + std::to_string(speed0)
+                 + "): expected only rolling-resistance loss");
+        }
+        if (rolled.position[0] > 2.0 - 0.5) {
+            fail("rolled ball did not travel in the commanded direction");
+        }
+
+        // Robot frame: Trunk at (1, 2) yawed +90 deg, ball 1 m in front moving forward
+        mj_resetData(m, d);
+        const int tq = m->jnt_qposadr[m->body_jntadr[trunk]];
+        d->qpos[tq + 0] = 1.0;
+        d->qpos[tq + 1] = 2.0;
+        d->qpos[tq + 3] = std::cos(M_PI / 4.0);
+        d->qpos[tq + 4] = 0.0;
+        d->qpos[tq + 5] = 0.0;
+        d->qpos[tq + 6] = std::sin(M_PI / 4.0);
+        cmd.frame       = Frame::ROBOT;
+        cmd.position    = {1.0, 0.0, -1.0};
+        cmd.velocity    = {1.0, 0.0, 0.0};
+        cmd.rolling     = false;
+        cmd.angular_velocity = {0.0, 0.0, 0.0};
+        if (!sup::apply_ball_command(m, d, ball_body, ball_geom, trunk, cmd)) {
+            fail("apply_ball_command returned false for a valid robot command");
+            return;
+        }
+        const auto rel = fb::geom_centre_state(m, d, ball_body, ball_geom);
+        if (!approx(rel.position[0], 1.0, 1e-9) || !approx(rel.position[1], 3.0, 1e-9)) {
+            fail("robot-frame ball command: centre not at world (1, 3)");
+        }
+        if (!approx(rel.lin_vel[0], 0.0, 1e-9) || !approx(rel.lin_vel[1], 1.0, 1e-9)) {
+            fail("robot-frame ball command: velocity not rotated into world (0, 1)");
+        }
+
+        // Invalid ball, and a robot-relative command without a free robot body
+        if (sup::apply_ball_command(m, d, -1, ball_geom, trunk, cmd)) {
+            fail("apply_ball_command accepted an invalid ball body");
+        }
+        if (sup::apply_ball_command(m, d, ball_body, ball_geom, -1, cmd)) {
+            fail("apply_ball_command accepted a robot-relative command without a robot body");
+        }
+        mj_resetData(m, d);
+    }
+
+
     // Re-originating the ball must not move it in any keyframe: every inherited keyframe zero-pads
     // the ball, which used to mean "body at the origin, sphere at its offset spot".
     void test_ball_keyframes(const mjModel* m, mjData* d) {
@@ -454,6 +556,7 @@ int main() {
     test_placement_primitives(m, d);
     test_supervisor_logic(m, d);
     test_kickoff_transitions(m, d);
+    test_ball_command(m, d);
     test_ball_keyframes(m, d);
 
     mj_deleteData(d);

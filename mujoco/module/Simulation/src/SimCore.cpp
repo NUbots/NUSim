@@ -1,6 +1,7 @@
 #include "module/Simulation/src/SimCore.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <ctime>
 #include <stdexcept>
@@ -154,6 +155,13 @@ namespace k1sim {
 
         left_foot_body_id_  = mj_name2id(m_, mjOBJ_BODY, "left_foot_link");
         right_foot_body_id_ = mj_name2id(m_, mjOBJ_BODY, "right_foot_link");
+
+        ball_body_id_ = mj_name2id(m_, mjOBJ_BODY, "ball");
+        ball_geom_id_ = mj_name2id(m_, mjOBJ_GEOM, "ball");
+        if (!freebody::valid_free_body_geom(m_, ball_body_id_, ball_geom_id_)) {
+            ball_body_id_ = ball_geom_id_ = -1;
+            std::fprintf(stderr, "SimCore: scene has no free \"ball\" body/geom; ball ground truth is off\n");
+        }
 
         head_body_id_ = mj_name2id(m_, mjOBJ_BODY, "Head_2");
         if (head_body_id_ < 0) {
@@ -458,6 +466,9 @@ namespace k1sim {
     std::unique_ptr<message::SimStateUpdate> SimCore::make_snapshot(uint64_t steps) const {
         auto s        = std::make_unique<message::SimStateUpdate>();
         s->sim_time   = d_->time;
+        s->wall_time_ns =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch())
+                .count();
         s->step_count = steps;
 
         for (std::size_t i = 0; i < JOINT_COUNT; ++i) {
@@ -543,6 +554,14 @@ namespace k1sim {
             s->head.valid           = true;
             s->head.position        = Hrh.position;
             s->head.quat            = Hrh.quat;
+        }
+
+        if (ball_body_id_ >= 0) {
+            const auto ball    = freebody::geom_centre_state(m_, d_, ball_body_id_, ball_geom_id_);
+            s->ball.valid      = true;
+            s->ball.position   = ball.position;
+            s->ball.lin_vel    = ball.lin_vel;
+            s->ball.ang_vel    = ball.ang_vel;
         }
 
         StepController* ctrl = controller_.load(std::memory_order_acquire);

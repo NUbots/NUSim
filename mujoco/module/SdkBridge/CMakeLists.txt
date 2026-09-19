@@ -41,8 +41,8 @@ target_link_libraries(k1sim_idl PUBLIC fastrtps fastcdr)
 
 # --- module::SdkBridge ---
 add_library(
-  k1sim_module_sdkbridge STATIC src/DdsParticipant.cpp src/RpcDispatch.cpp src/RpcServer.cpp src/SdkBridge.cpp
-                                src/StatePublisher.cpp
+  k1sim_module_sdkbridge STATIC src/BallCommandReader.cpp src/DdsParticipant.cpp src/GroundTruthPublisher.cpp
+                                src/RpcDispatch.cpp src/RpcServer.cpp src/SdkBridge.cpp src/StatePublisher.cpp
 )
 target_link_libraries(
   k1sim_module_sdkbridge
