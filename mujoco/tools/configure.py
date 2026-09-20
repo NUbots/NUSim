@@ -9,6 +9,7 @@
 Roles are named in path form (sim/soccer) or target form (sim-soccer). After
 toggling, `./b build` only builds the enabled roles.
 """
+
 import os
 
 from _util import k1sim
@@ -16,14 +17,14 @@ from _util import k1sim
 
 def register(command):
     command.description = "CMake-configure the sim in docker"
-    command.add_argument("-i", "--interactive", action="store_true",
-                         help="open the ccmake TUI to toggle roles/options")
-    command.add_argument("--clean", action="store_true",
-                         help="wipe the build dir (CMakeCache etc.) before configuring")
-    command.add_argument("--set-role", action="append", default=[], metavar="ROLE",
-                         help="enable a role, e.g. sim/soccer (repeatable)")
-    command.add_argument("--unset-role", action="append", default=[], metavar="ROLE",
-                         help="disable a role (repeatable)")
+    command.add_argument("-i", "--interactive", action="store_true", help="open the ccmake TUI to toggle roles/options")
+    command.add_argument("--clean", action="store_true", help="wipe the build dir (CMakeCache etc.) before configuring")
+    command.add_argument(
+        "--set-role", action="append", default=[], metavar="ROLE", help="enable a role, e.g. sim/soccer (repeatable)"
+    )
+    command.add_argument(
+        "--unset-role", action="append", default=[], metavar="ROLE", help="disable a role (repeatable)"
+    )
 
 
 def _role_var(role):
