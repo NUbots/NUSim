@@ -593,6 +593,13 @@ namespace k1sim {
         double window_wall_start   = to_seconds(deadline);
         uint64_t window_step_start = 0;
         uint64_t steps             = 0;
+        // MuJoCo counts its automatic resets (bad qpos, qvel or qacc) in these warnings; the counts survive the
+        // reset itself
+        const auto auto_resets = [this] {
+            return d_->warning[mjWARN_BADQPOS].number + d_->warning[mjWARN_BADQVEL].number
+                   + d_->warning[mjWARN_BADQACC].number;
+        };
+        int auto_resets_seen = auto_resets();
 
         while (running_.load(std::memory_order_acquire)) {
             std::unique_ptr<message::SimStateUpdate> snapshot;
@@ -612,6 +619,19 @@ namespace k1sim {
                 }
                 mj_step(m_, d_);
                 ++steps;
+
+                // When the physics blows up (NaN/Inf/huge qpos, qvel or qacc), mj_step resets the data to qpos0 on
+                // its own, which lies the robot down at the world origin. Reset to the startup keyframe instead, as
+                // the viewer's Backspace does, so a run carries on from where it started.
+                if (auto_resets() != auto_resets_seen) {
+                    std::fprintf(stderr, "SimCore: physics unstable; resetting to the startup keyframe\n");
+                    if (reset_key_ >= 0) {
+                        mj_resetDataKeyframe(m_, d_, reset_key_);
+                    }
+                    place_extras();
+                    mj_forward(m_, d_);
+                    auto_resets_seen = auto_resets();
+                }
                 step_count_.store(steps, std::memory_order_relaxed);
 
                 if (publish_every > 0 && steps % publish_every == 0) {
