@@ -46,9 +46,9 @@ sim/soccer  (docker container, NUClear)
 | Display | Optional. Only needed for the GLFW viewer window; `--headless` (or `K1_HEADLESS=1`, see below) skips it entirely — useful for CI or a bare server — and `--viser` serves the viewer to a browser instead (§5). |
 
 Nothing else to install for the **sim** itself: `mujoco/docker/k1sim.sh` builds the image (Ubuntu 22.04 +
-pinned MuJoCo/Fast-DDS/NUClear/GLFW versions — see `mujoco/tools/install_deps.sh`) the first time it's
-needed. The host-side `./b` formatters use [uv](https://docs.astral.sh/uv/) — see
-[Host tooling & dependencies](#host-tooling--dependencies-uv) below.
+pinned MuJoCo/Fast-DDS/fastddsgen/NUClear/GLFW versions, plus the JRE fastddsgen needs — see
+`mujoco/tools/install_deps.sh`) the first time it's needed. The host-side `./b` formatters use
+[uv](https://docs.astral.sh/uv/) — see [Host tooling & dependencies](#host-tooling--dependencies-uv) below.
 
 ## 2. Quick start
 
@@ -63,6 +63,7 @@ passthrough. Roles: `sim/soccer` (full sim). Args after the role pass through to
 
 ```bash
 ./b run sim/soccer --headless                            # no viewer window (CI / server)
+./b run sim/soccer --field kidsize                       # the KidSize field instead of the M-Field
 ./b run sim/soccer --model models/k1/k1_scene_flat.xml   # bare robot on a flat floor, no field/ball
 ./b run sim/soccer --rtf 0                                # free-run (uncapped real-time factor)
 ./b run sim/soccer --robots 5                             # 4 extra K1s on the field (max 20 total)
@@ -166,7 +167,7 @@ There are **two separate environments** — keep them straight:
 
 | Environment | Manages | Lives in | Used by |
 | --- | --- | --- | --- |
-| **docker image** | C++ sim toolchain: cmake/ninja, the **MuJoCo C library**, Fast-DDS, NUClear (`tools/install_deps.sh`) | the `k1sim` image | `./b configure` / `build` / `run` |
+| **docker image** | C++ sim toolchain: cmake/ninja, the **MuJoCo C library**, Fast-DDS, fastddsgen + a JRE, NUClear (`tools/install_deps.sh`) | the `k1sim` image | `./b configure` / `build` / `run` |
 | **host uv venv** | Python: the `./b` formatters | repo-root `.venv` (`pyproject.toml` + `uv.lock`) | formatters |
 
 The Python dependency manager is [uv](https://docs.astral.sh/uv/) (as in NUbots). From the repo root:
@@ -178,6 +179,38 @@ uv sync                 # host tooling (formatters) — light
 The C++ deploy MuJoCo version is pinned in `cmake/MuJoCoTarget.cmake`, `docker/Dockerfile`, and
 `tools/install_deps.sh`. Keep the training side (the mujoco_playground fork, §7) on the same MuJoCo
 version to avoid a sim2sim gap; bumping one means bumping **all** and rebuilding the image (`./b image`).
+
+`tools/install_deps.sh` **always** installs fastddsgen (pinned v3.2.1); the old
+`--with-fastddsgen` flag is still accepted but does nothing. It is part of the standard set now
+because the Fast-DDS type support is **generated during the build** from `mujoco/idl/**/*.idl` into
+`build-docker/idl_gen/` instead of being committed — the same arrangement NUbots uses for protobuf.
+fastddsgen is a Java program, so a **Java 11+ runtime is a hard requirement** for a native
+(non-docker) build; the image already installs `default-jre-headless`, so the `./b` workflow needs
+nothing extra.
+
+Adding a message is therefore one step: write the `.idl` under `mujoco/idl/<package>/msg/` and
+build. No regeneration script to run by hand, no generated files to commit, no CMake edit — CMake
+picks a new `.idl` up on its own and re-runs the generator when one changes. The generator flags
+are wire-format-critical and live in `mujoco/idl/regenerate.sh`: read
+`mujoco/module/SdkBridge/PROTOCOL.md` §5 before changing them.
+
+### Formatting
+
+`./b format` runs the same formatters, at the same pinned versions and against the same configs, as
+NUbots: clang-format 14.0.6 (`.clang-format`), cmake-format (`.cmake-format.py`), isort and black. A
+given file therefore formats identically in either repo.
+
+```bash
+./b format              # files that differ from origin/main
+./b format --all        # every tracked file
+./b format --check      # print a diff instead of writing; exits 1 if anything differs
+./b format '*.cpp'      # limit to a glob
+```
+
+It runs on the host out of the uv environment (`uv sync` happens automatically), not in the docker
+image. Generated Fast-DDS types are never formatted: they are built into `build-docker/idl_gen/`,
+which is not tracked, and `tools/format.py` excludes the path outright in case a manual
+`idl/regenerate.sh` run ever drops one in the source tree.
 
 ### Extra `./b` commands
 

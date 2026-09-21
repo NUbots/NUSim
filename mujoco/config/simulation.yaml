@@ -1,5 +1,12 @@
 # Physics / stepping configuration (module::Simulation)
-model: models/k1/k1_scene_robocup.xml # MJCF scene, relative to mujoco/
+
+# Field to play on, overridable with --field <name>. Each field is an MJCF scene, relative to
+# mujoco/; --model <path> loads any scene instead. The default is the field of the Middle
+# Division the K1 plays in.
+field: middle
+fields:
+  middle: models/k1/k1_scene_robocup_middle.xml # RoboCup 2026 HSL M-Field, 14 x 9 m
+  kidsize: models/k1/k1_scene_robocup.xml # RoboCup KidSize (pre-2026 rules), 9 x 6 m
 
 real_time_factor: 1.0 # 0 = free-run (tests/training)
 state_publish_divisor: 20 # physics steps per SimStateUpdate (1 kHz / 20 = 50 Hz LowState)

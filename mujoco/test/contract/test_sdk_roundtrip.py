@@ -68,18 +68,31 @@ def docker(*args: str, **kwargs) -> subprocess.CompletedProcess:
 
 def start_sim(build_dir: str, synthetic: bool) -> None:
     binary = "./" + sim_binary(build_dir, synthetic)
-    cmd = [
-        "run", "-d", "--rm",
-        "--name", CONTAINER_NAME,
-        "--network", "host", "--ipc", "host",
-        # CRITICAL: run as the invoking user. A root-run sim leaves root-owned
-        # Fast-DDS SHM segments in the shared /dev/shm that the host client
-        # can't write to -> host->sim RPC silently times out. See PROTOCOL.md §4.
-        "--user", f"{os.getuid()}:{os.getgid()}",
-        "-v", f"{REPO_DIR}:/workspace/NUSim",
-        "-w", "/workspace/NUSim/mujoco",
-        IMAGE,
-    ] + [binary] + ([] if synthetic else ["--headless"])
+    cmd = (
+        [
+            "run",
+            "-d",
+            "--rm",
+            "--name",
+            CONTAINER_NAME,
+            "--network",
+            "host",
+            "--ipc",
+            "host",
+            # CRITICAL: run as the invoking user. A root-run sim leaves root-owned
+            # Fast-DDS SHM segments in the shared /dev/shm that the host client
+            # can't write to -> host->sim RPC silently times out. See PROTOCOL.md §4.
+            "--user",
+            f"{os.getuid()}:{os.getgid()}",
+            "-v",
+            f"{REPO_DIR}:/workspace/NUSim",
+            "-w",
+            "/workspace/NUSim/mujoco",
+            IMAGE,
+        ]
+        + [binary]
+        + ([] if synthetic else ["--headless"])
+    )
     print(f"[roundtrip] starting sim: {binary}" + (" (synthetic state source)" if synthetic else ""), flush=True)
     docker(*cmd, check=True, stdout=subprocess.DEVNULL)
 

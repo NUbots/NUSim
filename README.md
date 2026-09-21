@@ -80,7 +80,8 @@ Parsed in [`mujoco/shared/CliOptions.hpp`](mujoco/shared/CliOptions.hpp); `--hel
 | Flag | Default | Description |
 | --- | --- | --- |
 | `--headless` | off | Run without the GLFW viewer window (CI / headless servers). Physics, DDS and the camera bridge all still run. |
-| `--model <path>` | `simulation.yaml`'s `model` | MJCF **scene** to load, relative to `mujoco/`. Must be a scene (`models/k1/k1_scene_robocup.xml`, `models/k1/k1_scene_flat.xml`) — the bare `K1_22dof.xml` is a component with no floor or lights, so the robot free-falls and the viewer renders black. |
+| `--field <name>` | `simulation.yaml`'s `field` (`middle`) | Field to play on, one of `simulation.yaml`'s `fields`: `middle` — the RoboCup 2026 Humanoid Soccer League M-Field (14 × 9 m), the field of the Middle Division the K1 plays in; `kidsize` — RoboCup KidSize under the pre-2026 rules (9 × 6 m). NUbots' `FieldDescription.yaml` `field_type` must match for localisation. |
+| `--model <path>` | the `--field` scene | MJCF **scene** to load, relative to `mujoco/`, overriding `--field`. Must be a scene (`models/k1/k1_scene_robocup_middle.xml`, `models/k1/k1_scene_robocup.xml`, `models/k1/k1_scene_flat.xml`) — the bare `K1_22dof.xml` is a component with no floor or lights, so the robot free-falls and the viewer renders black. |
 | `--config-dir <dir>` | `mujoco/config` | Config directory to read the YAML from. |
 | `--keyframe <name>` | `ready` | Startup keyframe for the **main** robot (e.g. `lying_front` to start fallen and exercise the get-up chain). |
 | `--rtf <factor>` | `simulation.yaml`'s `real_time_factor` | Real-time factor; `0` = free-run (uncapped, for tests/sweeps). |
@@ -91,6 +92,7 @@ Parsed in [`mujoco/shared/CliOptions.hpp`](mujoco/shared/CliOptions.hpp); `--hel
 
 ```bash
 ./b run sim/soccer --headless                            # no viewer window (CI / server)
+./b run sim/soccer --field kidsize                       # the KidSize field instead of the M-Field
 ./b run sim/soccer --model models/k1/k1_scene_flat.xml   # bare robot on a flat floor, no field/ball
 ./b run sim/soccer --rtf 0                               # free-run (uncapped real-time factor)
 ./b run sim/soccer --keyframe lying_front                # start fallen, to exercise GetUp

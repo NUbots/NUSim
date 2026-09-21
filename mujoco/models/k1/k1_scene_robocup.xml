@@ -191,7 +191,8 @@
       Own half, bottom-left corner: base at (-3.5, -2.5) on our side (own goal is
       the -x goal, per "kickoff" above), facing +x toward the opponent goal. Same
       base height + joint angles as "ready"/"kickoff". Launch with
-      `./b run sim/soccer --keyframe own_bottom_left`. Flip y to +2.5 for top-left.
+      `./b run sim/soccer --field kidsize --keyframe own_bottom_left`. Flip y to
+      +2.5 for top-left.
     -->
     <key name="own_bottom_left"
          qpos="-3.5 -2.5 0.555 1 0 0 0

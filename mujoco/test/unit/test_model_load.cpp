@@ -4,7 +4,7 @@
 //   1. $K1SIM_TEST_MODEL   — interim override while models/k1/k1_scene_robocup.xml
 //                            (workstream A, M1) is still landing; points at a scratch scene
 //                            during development.
-//   2. config/simulation.yaml's `model` key — the real acceptance path once A lands.
+//   2. the scene of config/simulation.yaml's default `field` — the real acceptance path once A lands.
 //
 // Asserts: ModelMap::build succeeds (all 22 joints/actuators found), a free root joint is
 // present, and the physics timestep is 0.001s.
@@ -20,13 +20,13 @@
 
 namespace {
 
-std::string resolve_test_model_path() {
-    if (const char* override_path = std::getenv("K1SIM_TEST_MODEL")) {
-        return override_path;
+    std::string resolve_test_model_path() {
+        if (const char* override_path = std::getenv("K1SIM_TEST_MODEL")) {
+            return override_path;
+        }
+        auto cfg = k1sim::config::load("simulation.yaml");
+        return k1sim::config::resolve_path(k1sim::config::field_scene(cfg)).string();
     }
-    auto cfg = k1sim::config::load("simulation.yaml");
-    return k1sim::config::resolve_path(cfg["model"].as<std::string>()).string();
-}
 
 }  // namespace
 
@@ -34,7 +34,7 @@ int main() {
     const std::string model_path = resolve_test_model_path();
 
     char error[1024] = {0};
-    mjModel* m = mj_loadXML(model_path.c_str(), nullptr, error, sizeof(error));
+    mjModel* m       = mj_loadXML(model_path.c_str(), nullptr, error, sizeof(error));
     if (m == nullptr) {
         std::fprintf(stderr, "mj_loadXML failed for '%s': %s\n", model_path.c_str(), error);
         return 1;
@@ -61,10 +61,10 @@ int main() {
 
     if (ok) {
         std::printf("test_model_load OK (model: %s, nq=%d, nu=%d, timestep=%.6f)\n",
-                     model_path.c_str(),
-                     m->nq,
-                     m->nu,
-                     m->opt.timestep);
+                    model_path.c_str(),
+                    m->nq,
+                    m->nu,
+                    m->opt.timestep);
     }
 
     mj_deleteModel(m);
