@@ -492,6 +492,24 @@ namespace {
         if (sup::apply_ball_command(m, d, ball_body, ball_geom, -1, cmd)) {
             fail("apply_ball_command accepted a robot-relative command without a robot body");
         }
+
+        // Garbage in the command (an unset field's uninitialised memory) is refused, leaving the ball alone
+        k1sim::message::BallCommand garbage{};
+        garbage.frame    = k1sim::message::BallCommand::Frame::WORLD;
+        garbage.position = {1.0, 1.0, -1.0};
+        garbage.velocity = {std::nan(""), 0.0, 0.0};
+        if (sup::apply_ball_command(m, d, ball_body, ball_geom, trunk, garbage)) {
+            fail("apply_ball_command accepted a NaN velocity");
+        }
+        garbage.velocity         = {0.0, 0.0, 0.0};
+        garbage.angular_velocity = {1e300, 0.0, 0.0};
+        if (sup::apply_ball_command(m, d, ball_body, ball_geom, trunk, garbage)) {
+            fail("apply_ball_command accepted an absurd spin");
+        }
+        garbage.rolling = true;
+        if (!sup::apply_ball_command(m, d, ball_body, ball_geom, trunk, garbage)) {
+            fail("apply_ball_command refused a rolling command over an unused spin field");
+        }
         mj_resetData(m, d);
     }
 

@@ -100,6 +100,11 @@ namespace k1sim::module::supervisor {
     // (world) velocity and ignores angular_velocity, so the ball does not skid and lose speed on
     // its first contact. Returns false (no write) for an invalid ball, or a missing/non-free robot
     // body when the command is robot-relative. Caller holds the sim mutex.
+    /// Largest ball position (m, per axis), speed (m/s, per axis) and spin (rad/s, per axis) a command may ask for
+    constexpr double MAX_BALL_POSITION = 100.0;
+    constexpr double MAX_BALL_SPEED    = 30.0;
+    constexpr double MAX_BALL_SPIN     = 500.0;
+
     inline bool apply_ball_command(const mjModel* m,
                                    mjData* d,
                                    int ball_body_id,
@@ -107,6 +112,17 @@ namespace k1sim::module::supervisor {
                                    int robot_body_id,
                                    const k1sim::message::BallCommand& cmd) {
         if (!k1sim::freebody::valid_free_body_geom(m, ball_body_id, ball_geom_id)) {
+            return false;
+        }
+
+        // Refuse a command no ball could follow: NaN, Inf or absurd values (a sender that left a field unset can hand
+        // over uninitialised memory) blow the physics up on the next step
+        const auto sane = [](const std::array<double, 3>& v, const double limit) {
+            return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2])
+                   && std::abs(v[0]) <= limit && std::abs(v[1]) <= limit && std::abs(v[2]) <= limit;
+        };
+        if (!sane(cmd.position, MAX_BALL_POSITION) || !sane(cmd.velocity, MAX_BALL_SPEED)
+            || (!cmd.rolling && !sane(cmd.angular_velocity, MAX_BALL_SPIN))) {
             return false;
         }
 
