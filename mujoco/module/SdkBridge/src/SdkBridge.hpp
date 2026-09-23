@@ -9,6 +9,7 @@
 #include "module/SdkBridge/src/GroundTruthPublisher.hpp"
 #include "module/SdkBridge/src/RpcServer.hpp"
 #include "module/SdkBridge/src/StatePublisher.hpp"
+#include "shared/sim/BallForecast.hpp"
 
 namespace k1sim::module {
 
@@ -29,6 +30,9 @@ namespace k1sim::module {
         // NUSim-only test surface: ground truth out, ball commands in (PROTOCOL.md §6)
         std::unique_ptr<sdkbridge::GroundTruthPublisher> ground_truth_;
         std::unique_ptr<sdkbridge::BallCommandReader> ball_command_reader_;
+        // Rolls the ball ahead without the robot for rt/nusim/gt/ball_crossing/*; built from the scene
+        // once it is loaded, null if the scene has no ball
+        std::unique_ptr<BallForecast> ball_forecast_;
     };
 
 }  // namespace k1sim::module

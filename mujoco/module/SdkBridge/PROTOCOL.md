@@ -384,7 +384,7 @@ reader code — see `test/contract/README.md`.
 
 These are **not** part of the Booster SDK surface. A real robot never publishes or listens on
 them. They exist so NUbots-side tools can validate estimators against the simulator and drive
-repeatable ball scenarios without a GameController. All three use `nav_msgs::msg::dds_::Odometry_`,
+repeatable ball scenarios without a GameController. All of them use `nav_msgs::msg::dds_::Odometry_`,
 which both NUSim and NUbots_K1 already generate, so neither side needs new IDL. Topic names are
 in `shared/k1/NUSimApi.hpp`. QoS: the writers use `state_writer_qos()` and the command reader
 uses `rpc_request_reader_qos(5)` (§4).
@@ -393,6 +393,8 @@ uses `rpc_request_reader_qos(5)` (§4).
 |---|---|---|
 | `rt/nusim/gt/ball` | sim → client | 50 Hz (every `SimStateUpdate`), only while the scene has a free `ball` body with a `ball` geom |
 | `rt/nusim/gt/robot` | sim → client | 50 Hz |
+| `rt/nusim/gt/ball_crossing/robot` | sim → client | up to 50 Hz, with `gt/ball` (a snapshot is skipped if the previous forecast is still running) |
+| `rt/nusim/gt/ball_crossing/goal` | sim → client | as above |
 | `rt/nusim/ball_command` | client → sim | on demand |
 
 **Ground truth (`gt/ball`, `gt/robot`)**
@@ -404,6 +406,27 @@ uses `rpc_request_reader_qos(5)` (§4).
   - `twist.angular` is the spin, in world axes.
   - The orientation is always identity: a uniform ball's orientation carries no information.
 - `gt/robot`: the Trunk's pose, linear velocity and angular velocity (world axes). This is the same state `rt/odometer_state` and `rt/odom` are derived from.
+
+**Ball crossings (`gt/ball_crossing/robot`, `gt/ball_crossing/goal`)**
+
+Ground truth for where the ball is going, not only where it is. For each snapshot, `shared/sim/BallForecast.hpp`
+rolls the ball ahead from its state (position, velocity, spin) in a copy of the scene with the robot taken out, for
+up to `BALL_FORECAST_HORIZON` (5 s) or until it stops. The copy keeps the floor, the goals and the tuned ball/floor
+contact pair, so away from the robot the forecast is what the live ball does (`test_ball_forecast` checks it
+against the live scene). Leaving the robot out means the crossing is where the shot would go if nothing stopped it,
+which is what a goalie has to predict.
+- `header.stamp` is the **wall clock when the ball crosses** (the snapshot's wall clock plus the forecast time). When
+  it doesn't cross, it is the snapshot's wall clock.
+- `child_frame_id` is `"crossing"`, or `"none"` if the ball doesn't cross within the horizon.
+- `pose.position` is the ball centre as it crosses, and `twist.linear` is its velocity there. The orientation is
+  identity and `twist.angular` is zero.
+- `gt/ball_crossing/robot`: the robot's frontal plane, crossed from in front. `header.frame_id` is `"robot"`: the
+  yaw-only frame at the `Trunk`'s ground projection at the snapshot, as for ball commands, so `pose.position.x` is
+  0 and `pose.position.y` is the lateral offset at which the ball passes the robot. A ball that starts behind the
+  plane never crosses it.
+- `gt/ball_crossing/goal`: the first goal line the ball leaves the field over (the lines through the scene's
+  `goal_pos_x` and `goal_neg_x` bodies), `header.frame_id` `"world"`. A ball that starts off the field never
+  crosses one.
 
 **Ball command (`ball_command`)**
 - `header.frame_id` selects the frame of `pose.position`, `twist.linear` and `twist.angular`:

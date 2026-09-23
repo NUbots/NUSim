@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <mujoco/mujoco.h>
 #include <mutex>
+#include <string>
 
 #include "shared/k1/JointIndex.hpp"
 
@@ -74,6 +75,7 @@ namespace k1sim::message {
         mjData* data                      = nullptr;
         std::mutex* mutex                 = nullptr;
         std::atomic<double>* measured_rtf = nullptr;
+        std::string scene_path{};  // the scene file the model was loaded from, resolved
     };
 
 }  // namespace k1sim::message

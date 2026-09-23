@@ -39,6 +39,17 @@ namespace k1sim::module::sdkbridge {
             return msg;
         }
 
+        // A forecast crossing, stamped with the wall clock when the ball crosses
+        nav_msgs::msg::dds_::Odometry_ make_crossing(int64_t wall_time_ns,
+                                                     const char* frame,
+                                                     const BallForecast::Crossing& crossing) {
+            const int64_t at = wall_time_ns + (crossing.crosses ? static_cast<int64_t>(crossing.time * 1e9) : 0);
+            auto msg         = make_odometry(at, crossing.position, {1.0, 0.0, 0.0, 0.0}, crossing.velocity, {});
+            msg.header().frame_id(frame);
+            msg.child_frame_id(crossing.crosses ? "crossing" : "none");
+            return msg;
+        }
+
     }  // namespace
 
     GroundTruthPublisher::GroundTruthPublisher(DdsParticipant& dds) {
@@ -47,6 +58,10 @@ namespace k1sim::module::sdkbridge {
                                                               DdsParticipant::state_writer_qos());
         robot_writer_ = dds.create_writer<Odometry_PubSubType>(k1sim::nusim::TOPIC_GT_ROBOT,
                                                                DdsParticipant::state_writer_qos());
+        robot_crossing_writer_ = dds.create_writer<Odometry_PubSubType>(k1sim::nusim::TOPIC_GT_BALL_CROSSING_ROBOT,
+                                                                        DdsParticipant::state_writer_qos());
+        goal_crossing_writer_  = dds.create_writer<Odometry_PubSubType>(k1sim::nusim::TOPIC_GT_BALL_CROSSING_GOAL,
+                                                                        DdsParticipant::state_writer_qos());
     }
 
     void GroundTruthPublisher::publish(const k1sim::message::SimStateUpdate& update) {
@@ -68,6 +83,14 @@ namespace k1sim::module::sdkbridge {
                                       update.ball.ang_vel);
             ball_writer_->write(&ball);
         }
+    }
+
+    void GroundTruthPublisher::publish_forecast(const k1sim::message::SimStateUpdate& update,
+                                                const BallForecast::Result& forecast) {
+        auto robot = make_crossing(update.wall_time_ns, "robot", forecast.robot_plane);
+        robot_crossing_writer_->write(&robot);
+        auto goal = make_crossing(update.wall_time_ns, "world", forecast.goal_line);
+        goal_crossing_writer_->write(&goal);
     }
 
 }  // namespace k1sim::module::sdkbridge

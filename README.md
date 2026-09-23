@@ -61,8 +61,10 @@ and the NUbots_K1-side requirements (`skill::K1WalkPolicy` + `skill::K1GetUpPoli
 
 ## Ground truth and ball commands (testing)
 
-NUSim publishes the ball's and robot's ground truth on `rt/nusim/gt/ball` and `rt/nusim/gt/robot`, and accepts
-`rt/nusim/ball_command` to place or roll the ball (all `nav_msgs/Odometry`). NUbots-side tools use them to
+NUSim publishes the ball's and robot's ground truth on `rt/nusim/gt/ball` and `rt/nusim/gt/robot`, where the
+ball will cross the robot's frontal plane and the goal line on `rt/nusim/gt/ball_crossing/robot` and `.../goal`
+(from rolling it ahead without the robot), and accepts `rt/nusim/ball_command` to place or roll the ball (all
+`nav_msgs/Odometry`). NUbots-side tools use them to
 validate estimators and to run repeatable shot scenarios. The wire contract is in
 [module/SdkBridge/PROTOCOL.md §6](mujoco/module/SdkBridge/PROTOCOL.md).
 

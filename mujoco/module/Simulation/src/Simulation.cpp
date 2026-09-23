@@ -64,6 +64,7 @@ namespace k1sim::module {
             handles->data         = sim_->data();
             handles->mutex        = &sim_->mutex();
             handles->measured_rtf = &sim_->measured_rtf();
+            handles->scene_path   = config::resolve_path(scene).string();
             emit(handles);
 
             log<NUClear::LogLevel::INFO>("Simulation ready (scene",

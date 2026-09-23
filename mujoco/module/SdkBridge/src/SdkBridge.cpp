@@ -1,8 +1,10 @@
 #include "module/SdkBridge/src/SdkBridge.hpp"
 
 #include <cstdlib>
+#include <stdexcept>
 #include <string>
 
+#include "shared/k1/NUSimApi.hpp"
 #include "shared/message/Commands.hpp"
 #include "shared/message/SimMessages.hpp"
 #include "shared/util/Config.hpp"
@@ -47,6 +49,28 @@ namespace k1sim::module {
                 ground_truth_->publish(update);
             }
         });
+
+        on<Trigger<message::SimHandles>, Sync<BallForecast>>().then([this](const message::SimHandles& handles) {
+            try {
+                ball_forecast_ = std::make_unique<BallForecast>(handles.scene_path);
+            }
+            catch (const std::runtime_error& e) {
+                log<NUClear::LogLevel::WARN>(e.what(), "- no rt/nusim/gt/ball_crossing/*");
+            }
+        });
+
+        // The ball forecast is thousands of ball-only physics steps while the ball rolls (well under a
+        // millisecond each), so it runs apart from the state publishing, and skips snapshots it can't
+        // keep up with rather than queueing them.
+        on<Trigger<message::SimStateUpdate>, Single, Sync<BallForecast>>().then(
+            [this](const message::SimStateUpdate& update) {
+                if (!ground_truth_ || !ball_forecast_ || !update.ball.valid) {
+                    return;
+                }
+                ground_truth_->publish_forecast(
+                    update,
+                    ball_forecast_->forecast(update.ball, update.base, k1sim::nusim::BALL_FORECAST_HORIZON));
+            });
 
         on<Every<1, std::chrono::seconds>>().then([this] {
             if (state_publisher_) {
