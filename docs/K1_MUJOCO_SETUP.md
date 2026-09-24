@@ -197,6 +197,24 @@ picks a new `.idl` up on its own and re-runs the generator when one changes. The
 are wire-format-critical and live in `mujoco/idl/regenerate.sh`: read
 `mujoco/module/SdkBridge/PROTOCOL.md` §5 before changing them.
 
+### Formatting
+
+`./b format` runs the same formatters, at the same pinned versions and against the same configs, as
+NUbots: clang-format 14.0.6 (`.clang-format`), cmake-format (`.cmake-format.py`), isort and black. A
+given file therefore formats identically in either repo.
+
+```bash
+./b format              # files that differ from origin/main
+./b format --all        # every tracked file
+./b format --check      # print a diff instead of writing; exits 1 if anything differs
+./b format '*.cpp'      # limit to a glob
+```
+
+It runs on the host out of the uv environment (`uv sync` happens automatically), not in the docker
+image. Generated Fast-DDS types are never formatted: they are built into `build-docker/idl_gen/`,
+which is not tracked, and `tools/format.py` excludes the path outright in case a manual
+`idl/regenerate.sh` run ever drops one in the source tree.
+
 ### Extra `./b` commands
 
 - **`./b image`** — (re)build the docker toolchain image. `./b build` only builds it when it's *missing*, so

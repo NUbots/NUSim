@@ -10,11 +10,11 @@
 #include "shared/gl/XThreads.hpp"
 
 namespace {
-void handle_signal(int /*signum*/) {
-    if (NUClear::PowerPlant::powerplant != nullptr) {
-        NUClear::PowerPlant::powerplant->shutdown();
+    void handle_signal(int /*signum*/) {
+        if (NUClear::PowerPlant::powerplant != nullptr) {
+            NUClear::PowerPlant::powerplant->shutdown();
+        }
     }
-}
 }  // namespace
 
 int main(int argc, char** argv) {

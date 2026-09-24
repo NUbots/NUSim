@@ -14,44 +14,44 @@
 
 namespace k1sim::config {
 
-// Config directory resolution order: --config-dir, $K1SIM_CONFIG_DIR, <source>/config.
-inline std::filesystem::path config_dir() {
-    if (!cli().config_dir.empty()) {
-        return cli().config_dir;
-    }
-    if (const char* env = std::getenv("K1SIM_CONFIG_DIR")) {
-        return env;
-    }
-    return std::filesystem::path(K1SIM_SOURCE_DIR) / "config";
-}
-
-inline YAML::Node load(const std::string& filename) {
-    return YAML::LoadFile((config_dir() / filename).string());
-}
-
-// Model/asset paths in configs are relative to the mujoco/ source root.
-inline std::filesystem::path resolve_path(const std::string& path) {
-    std::filesystem::path p(path);
-    return p.is_absolute() ? p : std::filesystem::path(K1SIM_SOURCE_DIR) / p;
-}
-
-// The scene simulation.yaml lists under `fields` for the named field, or for its default `field`
-// when none is named. Exits listing the known fields if there is no such field.
-inline std::string field_scene(const YAML::Node& sim_cfg, std::string field = "") {
-    if (field.empty()) {
-        field = sim_cfg["field"].as<std::string>();
-    }
-    const YAML::Node fields = sim_cfg["fields"];
-    if (!fields[field]) {
-        std::string known;
-        for (const auto& entry : fields) {
-            known += " " + entry.first.as<std::string>();
+    // Config directory resolution order: --config-dir, $K1SIM_CONFIG_DIR, <source>/config.
+    inline std::filesystem::path config_dir() {
+        if (!cli().config_dir.empty()) {
+            return cli().config_dir;
         }
-        std::fprintf(stderr, "unknown field '%s' (known:%s)\n", field.c_str(), known.c_str());
-        std::exit(1);
+        if (const char* env = std::getenv("K1SIM_CONFIG_DIR")) {
+            return env;
+        }
+        return std::filesystem::path(K1SIM_SOURCE_DIR) / "config";
     }
-    return fields[field].as<std::string>();
-}
+
+    inline YAML::Node load(const std::string& filename) {
+        return YAML::LoadFile((config_dir() / filename).string());
+    }
+
+    // Model/asset paths in configs are relative to the mujoco/ source root.
+    inline std::filesystem::path resolve_path(const std::string& path) {
+        std::filesystem::path p(path);
+        return p.is_absolute() ? p : std::filesystem::path(K1SIM_SOURCE_DIR) / p;
+    }
+
+    // The scene simulation.yaml lists under `fields` for the named field, or for its default `field`
+    // when none is named. Exits listing the known fields if there is no such field.
+    inline std::string field_scene(const YAML::Node& sim_cfg, std::string field = "") {
+        if (field.empty()) {
+            field = sim_cfg["field"].as<std::string>();
+        }
+        const YAML::Node fields = sim_cfg["fields"];
+        if (!fields[field]) {
+            std::string known;
+            for (const auto& entry : fields) {
+                known += " " + entry.first.as<std::string>();
+            }
+            std::fprintf(stderr, "unknown field '%s' (known:%s)\n", field.c_str(), known.c_str());
+            std::exit(1);
+        }
+        return fields[field].as<std::string>();
+    }
 
 // A --game from simulation.yaml's `games`: the field it is played on, and a spawn (x, y, yaw)
 // per robot, main robot first. The yaml lists one team's (x, y) kickoff positions, facing +x;

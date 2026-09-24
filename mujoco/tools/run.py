@@ -4,6 +4,7 @@ Role is given in path form, e.g. `./b run sim/soccer` → bin/sim/soccer. Everyt
 after the role (including flags like --headless / --field / --rtf) passes straight
 through to the binary — argparse.REMAINDER, so ./b doesn't try to parse them.
 """
+
 import argparse
 
 from _util import k1sim
