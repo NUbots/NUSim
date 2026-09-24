@@ -10,11 +10,10 @@
 # bias_time_constant, so over a window of T seconds it drifts the pose steadily by about
 # bias_sigma * T while T is short of the time constant, and like more random walk beyond it.
 #
-# The values below are untuned placeholders. Fit them from a real recording with motion capture
-# (NUbots_K1 branch tumminello/k1_odom_record: record with the data/odometry_mocap role, then
-# `./b nbs odometry_fit <recording>` prints these values), then enable.
+# The values below have been fit to a real K1 data recording made from the data/odometry_mocap 
+# role in branch tumminello/k1_odom_record, then fit with odometry_fit.py. 
 
-enabled: false # false = publish the ground truth
+enabled: true # false = publish the ground truth
 
 # Multiplicative error on the true body velocity [vx, vy, wz]; 1 is exact
 scale: [1.0915, 0.2448, 1.0013]
