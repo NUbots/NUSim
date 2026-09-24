@@ -53,39 +53,39 @@ namespace k1sim::config {
         return fields[field].as<std::string>();
     }
 
-// A --game from simulation.yaml's `games`: the field it is played on, and a spawn (x, y, yaw)
-// per robot, main robot first. The yaml lists one team's (x, y) kickoff positions, facing +x;
-// the other team is the point-mirror through the centre spot, facing -x.
-struct Game {
-    std::string field;
-    std::vector<std::array<double, 3>> spawns;
-};
+    // A --game from simulation.yaml's `games`: the field it is played on, and a spawn (x, y, yaw)
+    // per robot, main robot first. The yaml lists one team's (x, y) kickoff positions, facing +x;
+    // the other team is the point-mirror through the centre spot, facing -x.
+    struct Game {
+        std::string field;
+        std::vector<std::array<double, 3>> spawns;
+    };
 
-// Exits listing the known games if there is no such game.
-inline Game game(const YAML::Node& sim_cfg, const std::string& name) {
-    const YAML::Node games = sim_cfg["games"];
-    if (!games[name]) {
-        std::string known;
-        for (const auto& entry : games) {
-            known += " " + entry.first.as<std::string>();
+    // Exits listing the known games if there is no such game.
+    inline Game game(const YAML::Node& sim_cfg, const std::string& name) {
+        const YAML::Node games = sim_cfg["games"];
+        if (!games[name]) {
+            std::string known;
+            for (const auto& entry : games) {
+                known += " " + entry.first.as<std::string>();
+            }
+            std::fprintf(stderr, "unknown game '%s' (known:%s)\n", name.c_str(), known.c_str());
+            std::exit(1);
         }
-        std::fprintf(stderr, "unknown game '%s' (known:%s)\n", name.c_str(), known.c_str());
-        std::exit(1);
+        Game g;
+        g.field = games[name]["field"].as<std::string>();
+        std::vector<std::array<double, 2>> team;
+        for (const auto& p : games[name]["team"]) {
+            team.push_back({p[0].as<double>(), p[1].as<double>()});
+        }
+        for (const auto& p : team) {
+            g.spawns.push_back({p[0], p[1], 0.0});
+        }
+        for (const auto& p : team) {
+            g.spawns.push_back({-p[0], -p[1], M_PI});
+        }
+        return g;
     }
-    Game g;
-    g.field = games[name]["field"].as<std::string>();
-    std::vector<std::array<double, 2>> team;
-    for (const auto& p : games[name]["team"]) {
-        team.push_back({p[0].as<double>(), p[1].as<double>()});
-    }
-    for (const auto& p : team) {
-        g.spawns.push_back({p[0], p[1], 0.0});
-    }
-    for (const auto& p : team) {
-        g.spawns.push_back({-p[0], -p[1], M_PI});
-    }
-    return g;
-}
 
 }  // namespace k1sim::config
 
