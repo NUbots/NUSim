@@ -1,12 +1,33 @@
 # Physics / stepping configuration (module::Simulation)
 
 # Field to play on, overridable with --field <name>. Each field is an MJCF scene, relative to
-# mujoco/; --model <path> loads any scene instead. The default is the field of the Middle
-# Division the K1 plays in.
+# mujoco/. The default is the field of the Middle Division the K1 plays in.
 field: middle
 fields:
   middle: models/k1/k1_scene_robocup_middle.xml # RoboCup 2026 HSL M-Field, 14 x 9 m
   kidsize: models/k1/k1_scene_robocup.xml # RoboCup KidSize (pre-2026 rules), 9 x 6 m
+  no-field: models/k1/k1_scene_flat.xml # bare flat floor, no field or ball
+
+# Matches for --game <name>, instead of --field/--robots. `team` is one team's kickoff (x, y)
+# positions in metres, in its own -x half facing +x; the other team is the point-mirror
+# (-x, -y) facing -x. The first entry is the main robot -- the one NUbots controls -- the
+# rest are PD-held at the ready pose. Middle field: 14 x 9 m, centre circle radius 1.5 m,
+# penalty area 3 m deep, goal line x = -7.
+games:
+  3v3:
+    field: middle
+    team:
+      - [-2.0, 0.0] # striker, just outside the centre circle
+      - [-3.5, 1.5] # defender
+      - [-6.5, 0.0] # goalkeeper
+  5v5:
+    field: middle
+    team:
+      - [-2.0, 0.0] # striker
+      - [-3.0, 2.5] # left wing
+      - [-3.0, -2.5] # right wing
+      - [-4.5, 0.0] # defender
+      - [-6.5, 0.0] # goalkeeper
 
 real_time_factor: 1.0 # 0 = free-run (tests/training)
 state_publish_divisor: 20 # physics steps per SimStateUpdate (1 kHz / 20 = 50 Hz LowState)

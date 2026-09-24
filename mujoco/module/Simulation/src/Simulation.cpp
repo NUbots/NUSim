@@ -20,13 +20,21 @@ namespace k1sim::module {
             auto gains_cfg = config::load("gains.yaml");
 
             SimCore::Config cfg;
-            cfg.model_path = !cli().model.empty() ? cli().model : config::field_scene(sim_cfg, cli().field);
+            if (!cli().game.empty()) {
+                config::Game game = config::game(sim_cfg, cli().game);
+                cfg.model_path    = config::field_scene(sim_cfg, game.field);
+                cfg.robots        = static_cast<int>(game.spawns.size());
+                cfg.spawns        = std::move(game.spawns);
+            }
+            else {
+                cfg.model_path = config::field_scene(sim_cfg, cli().field);
+                cfg.robots     = cli().robots;
+            }
             cfg.initial_keyframe =
                 !cli().keyframe.empty() ? cli().keyframe : sim_cfg["initial_keyframe"].as<std::string>("ready");
             // CliOptions.rtf < 0 means "use config"; the config's real_time_factor may itself be 0
             // (free-run) — SimCore treats rtf <= 0 as free-run.
             cfg.rtf                   = cli().rtf >= 0.0 ? cli().rtf : sim_cfg["real_time_factor"].as<double>(1.0);
-            cfg.robots                = cli().robots;
             cfg.state_publish_divisor = sim_cfg["state_publish_divisor"].as<int>(20);
             cfg.resync_threshold      = sim_cfg["resync_threshold"].as<double>(0.05);
 

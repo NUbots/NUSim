@@ -4,7 +4,7 @@
   K1_22dof.xml is the robot *component* — standalone it has no floor and no
   lights, so the robot free-falls out of view and the viewer shows black.
 
-    K1_MODEL=mujoco/models/k1/k1_scene_flat.xml scripts/k1/run_mujoco.sh
+    ./b run sim/soccer --field no-field
 -->
 <mujoco model="K1 flat">
   <include file="K1_22dof.xml"/>
