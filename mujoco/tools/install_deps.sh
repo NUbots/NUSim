@@ -2,14 +2,23 @@
 # Installs the k1_mujoco_sim build prerequisites that CMake does not fetch itself:
 #   - MuJoCo prebuilt release (headers + libmujoco.so)
 #   - Fast-CDR / foonathan_memory_vendor / Fast-DDS (built from source)
+#   - Fast-DDS-Gen (fastddsgen), the IDL code generator
+#
+# fastddsgen is part of the standard set, not an extra: CMake now runs it at
+# build time to generate the Fast-DDS types into the build dir, so they are no
+# longer committed to the repo. A Java 11+ runtime is therefore a hard
+# requirement of this script and of the sim build, not an optional add-on.
 #
 # This is normally run INSIDE the docker image build (docker/Dockerfile) with
 # PREFIX=/opt/k1sim-deps — see docker/k1sim.sh for the supported workflow.
 # Running it directly on a host is a fallback for native development only.
 #
 # Usage:
-#   tools/install_deps.sh                  # runtime/build deps only
-#   tools/install_deps.sh --with-fastddsgen  # also build the IDL code generator (needs java 11+)
+#   tools/install_deps.sh                  # installs everything, fastddsgen included
+#   tools/install_deps.sh --with-fastddsgen  # accepted for backwards compatibility; does nothing
+#
+# (Unknown arguments are ignored rather than fatal, so older callers such as
+# docker/Dockerfile that still pass --with-fastddsgen keep working unchanged.)
 #
 # Version pins (rationale in docs/K1_MUJOCO_SETUP.md):
 #   Fast-DDS v2.13.6 matches the minor version bundled with Booster's SDK (2.13.1),
@@ -71,21 +80,19 @@ build fastdds https://github.com/eProsima/Fast-DDS.git "$FASTDDS_TAG" \
     -DCOMPILE_TOOLS=OFF \
     -DSECURITY=OFF
 
-# --- fastddsgen (optional, for regenerating idl_gen/) ------------------------
-if [[ "${1:-}" == "--with-fastddsgen" ]]; then
-    if [ ! -f "$PREFIX/share/fastddsgen/java/fastddsgen.jar" ]; then
-        echo "== Fast-DDS-Gen $FASTDDSGEN_TAG"
-        rm -rf "$SRC/fastddsgen"
-        git clone --recursive --depth 1 --branch "$FASTDDSGEN_TAG" \
-            https://github.com/eProsima/Fast-DDS-Gen.git "$SRC/fastddsgen"
-        (cd "$SRC/fastddsgen" && ./gradlew assemble)
-        mkdir -p "$PREFIX/share/fastddsgen/java" "$PREFIX/bin"
-        cp "$SRC/fastddsgen/share/fastddsgen/java/fastddsgen.jar" "$PREFIX/share/fastddsgen/java/"
-        cp "$SRC/fastddsgen/scripts/fastddsgen" "$PREFIX/bin/"
-        chmod +x "$PREFIX/bin/fastddsgen"
-    else
-        echo "== Fast-DDS-Gen (cached)"
-    fi
+# --- fastddsgen (required, CMake generates the DDS types at build time) ------
+if [ ! -f "$PREFIX/share/fastddsgen/java/fastddsgen.jar" ]; then
+    echo "== Fast-DDS-Gen $FASTDDSGEN_TAG"
+    rm -rf "$SRC/fastddsgen"
+    git clone --recursive --depth 1 --branch "$FASTDDSGEN_TAG" \
+        https://github.com/eProsima/Fast-DDS-Gen.git "$SRC/fastddsgen"
+    (cd "$SRC/fastddsgen" && ./gradlew assemble)
+    mkdir -p "$PREFIX/share/fastddsgen/java" "$PREFIX/bin"
+    cp "$SRC/fastddsgen/share/fastddsgen/java/fastddsgen.jar" "$PREFIX/share/fastddsgen/java/"
+    cp "$SRC/fastddsgen/scripts/fastddsgen" "$PREFIX/bin/"
+    chmod +x "$PREFIX/bin/fastddsgen"
+else
+    echo "== Fast-DDS-Gen (cached)"
 fi
 
 echo
