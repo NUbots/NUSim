@@ -101,7 +101,7 @@
             of this exact camera at the "ready" keyframe: horizon centred,
             floor/sky split behaves exactly as predicted from cam_xpos/cam_xmat.
           -->
-          <camera name="head" pos="0.075 0 0.089" xyaxes="0 -1 0  0 0 1" fovy="70"/>
+          <camera name="head" pos="0.075 0 0.089" xyaxes="0 -1 0  0 0 1" fovy="95.7"/>
         </body>
       </body>
       <body name="Left_Arm_1" pos="0 0.077 0.1845">
