@@ -216,5 +216,3 @@ MuJoCo remains the default for this interactive simulator.
 
 Forked from [NUWebots](https://github.com/NUbots/NUWebots); the Webots/NUgus simulation has been removed in
 favour of the MuJoCo path (see git history if you need it).
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for building, validating and preparing an upstream contribution.
