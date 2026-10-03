@@ -20,8 +20,8 @@ namespace k1sim::module {
             auto gains_cfg = config::load("gains.yaml");
 
             SimCore::Config cfg;
-            if (!cli().game.empty()) {
-                config::Game game = config::game(sim_cfg, cli().game);
+            if (cli().game > 0) {
+                config::Game game = config::game(sim_cfg, cli().game, cli().on_field_positions);
                 cfg.model_path    = config::field_scene(sim_cfg, game.field);
                 cfg.robots        = static_cast<int>(game.spawns.size());
                 cfg.spawns        = std::move(game.spawns);
