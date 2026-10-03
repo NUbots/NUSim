@@ -12,8 +12,8 @@ Webots build *and* the `mck` motion runner — with one NUClear-based binary tha
 SDK wire protocol (FastDDS, domain 0):
 
 ```
-sim/soccer  (docker container, NUClear)
-   physics (MuJoCo, 1 kHz) + locomotion policy + head camera + GameController supervisor + GLFW viewer
+sim/soccer  (native macOS / Linux docker container, NUClear)
+   physics (MuJoCo, 1 kHz) + servo/mode machine + head camera + GameController supervisor + GLFW viewer
         │  Booster SDK over FastDDS (domain 0)          │  camera frames → shared memory
         ▼                                               ▼
  NUbots_K1  platform::Booster::HardwareIO         input::K1Camera → ImageCompressor → NUsight
@@ -25,10 +25,8 @@ sim/soccer  (docker container, NUClear)
   LowCmd servo tracking (`module::Locomotion`), the DDS publishers/RPC server (`module::SdkBridge`), the head
   camera → shared-memory bridge (`module::Camera`), the GameController-aware body-placement supervisor
   (`module::Supervisor`), and the GLFW viewer (`module::Viewer`) — one process, all in this repo.
-- **Locomotion**: NUbots sends only high-level `Move(vx,vy,vyaw)`; the sim owns the gait. The default
-  backend is a non-dynamic kinematic glide; real dynamic walking comes from a trained RL policy
-  (`backend: policy`) — see [Getting a locomotion policy](#7-getting-a-locomotion-policy). Both consume the
-  same `Move` command.
+- **Locomotion**: NUbots runs the walking/get-up policies and sends low-level joint commands; the sim
+  tracks them in CUSTOM mode — see [Getting a locomotion policy](#7-getting-a-locomotion-policy).
 - **NUbots** (the [`NUbots_K1`](https://github.com/NUbots/NUbots_K1) repo) connects over DDS exactly as it
   does today: same topics, same RPC surface, same `platform::Booster::HardwareIO` role wiring documented in
   [docs/K1_WEBOTS_SETUP.md](K1_WEBOTS_SETUP.md). **No changes to NUbots_K1 roles are required** to switch
@@ -41,16 +39,19 @@ sim/soccer  (docker container, NUClear)
 
 | | |
 | --- | --- |
-| OS | Linux with **Docker** (the toolchain and all dependencies are baked into a docker image — nothing to install natively) |
+| OS | Linux with **Docker**, or a native **macOS** build (see below) |
 | GPU | Optional. `nvidia-container-toolkit` gives GPU-accelerated rendering (`--gpus all`); otherwise the container falls back to `/dev/dri` (Mesa). The sim also runs fully **headless** on a machine with no GPU/display at all. |
 | Display | Optional. Only needed for the GLFW viewer window; `--headless` (or `K1_HEADLESS=1`, see below) skips it entirely — useful for CI or a bare server. |
 
-Nothing else to install for the **sim** itself: `mujoco/docker/k1sim.sh` builds the image (Ubuntu 22.04 +
+On Linux, the container installs the **sim** prerequisites: `mujoco/docker/k1sim.sh` builds the image (Ubuntu 22.04 +
 pinned MuJoCo/Fast-DDS/fastddsgen/NUClear/GLFW versions, plus the JRE fastddsgen needs — see
 `mujoco/tools/install_deps.sh`) the first time it's needed. The host-side `./b` formatters use
 [uv](https://docs.astral.sh/uv/) — see [Host tooling & dependencies](#host-tooling--dependencies-uv) below.
 
 ## 2. Quick start
+
+The following container commands are the default on Linux. On macOS, complete the native setup first;
+the same `./b configure`, `./b build` and `./b run` commands then use the native backend.
 
 ```bash
 # from this repo — NUbots-style ./b workflow
@@ -58,8 +59,9 @@ pinned MuJoCo/Fast-DDS/fastddsgen/NUClear/GLFW versions, plus the JRE fastddsgen
 ./b run sim/soccer              # launch the soccer sim (viewer + DDS + camera + supervisor)
 ```
 
-`./b run <role>` execs `bin/<role>` in the container with X11 + GPU + `--network host --ipc host` (DDS)
-passthrough. Roles: `sim/soccer` (full sim). Args after the role pass through to the binary:
+The Docker backend's `./b run <role>` execs `bin/<role>` in the container with X11 + GPU +
+`--network host --ipc host` (DDS) passthrough. The native backend runs the executable directly.
+Roles: `sim/soccer` (full sim). Args after the role pass through to the binary:
 
 ```bash
 ./b run sim/soccer --headless                            # no viewer window (CI / server)
@@ -83,7 +85,8 @@ resets (Backspace) re-place them. The `--keyframe` flag only affects the main ro
 > `K1_22dof.xml` is the robot *component* for `<include>`: standalone it has no floor and no lights,
 > so the robot free-falls out of view and the viewer renders black.
 
-Then, exactly as with the Webots setup, drive it from **`NUbots_K1`**:
+For the Linux setup, drive it from **`NUbots_K1`** as follows. Native macOS connections have the
+shared-memory restrictions described below.
 
 > **Required:** the Booster SDK's `ChannelFactory::Init(0)` (what `platform::Booster::HardwareIO`
 > calls) refuses to create its DDS participant unless `FASTRTPS_DEFAULT_PROFILES_FILE` points at a
@@ -135,6 +138,62 @@ build the explicit output `bin/keyboardwalk`.)
 DDS reaches `k1_mujoco_sim` on the host (domain 0) the same way it reached `mck` before. No further NUbots_K1
 patches beyond what that doc already describes are needed — the wire protocol is unchanged.
 
+### Native macOS
+
+Install Xcode or its Command Line Tools (`xcode-select --install`) and [Homebrew](https://brew.sh), then:
+
+```bash
+brew install cmake ninja boost yaml-cpp openjdk@17
+export JAVA_HOME="$(brew --prefix openjdk@17)/libexec/openjdk.jdk/Contents/Home"
+export PATH="$JAVA_HOME/bin:$PATH"
+./mujoco/tools/install_deps.sh
+./b configure
+./b build
+./b test
+./b run sim/soccer
+# Camera rendering and DDS continue without the viewer:
+./b run sim/soccer --headless
+```
+
+The installer stores dependencies under `mujoco/.deps/install`, including the official MuJoCo 3.10.0
+universal framework for Apple Silicon and Intel Macs. The pinned DDS versions and generator flags are
+identical to Linux. Fast-DDS-Gen 3.2.1 uses Gradle 7.6: building it requires **JDK 11–19** (17 recommended),
+even though a newer Java runtime can run the finished generator. Keep `JAVA_HOME` and `PATH` set in any
+shell that builds the simulator.
+
+Two small compatibility patches retain the pinned dependencies: NUClear's dependent template calls
+are corrected for Clang 21, and Fast-DDS skips applying an unspecified thread-affinity tag on macOS.
+The latter prevents an Apple Silicon setup error from deadlocking DDS's own logging thread.
+
+`./b` defaults to native builds on macOS, using `mujoco/build-native`; Linux continues to default to
+Docker and `mujoco/build-docker`. `K1SIM_BACKEND=native|docker` overrides that choice, and
+`K1SIM_BUILD_DIR` overrides the build directory. Keep native and container build directories separate.
+`K1SIM_CMAKE_ARGS` and role toggles work with either backend; `./b image` always builds the Docker image.
+Native Linux builds need the development packages listed in `mujoco/docker/Dockerfile`.
+
+The viewer uses GLFW's Cocoa backend on NUClear's main thread. The camera uses a separate native CGL
+context on its render thread, including in headless mode; Linux retains EGL. macOS does not need XQuartz,
+Mesa, EGL or `librt` for this native path. OpenGL is deprecated by Apple but remains available; a future
+Apple removal would require a different renderer.
+
+The camera context test requires working OpenGL by default. The GitHub-hosted macOS workflow sets
+`K1SIM_TEST_ALLOW_NO_OPENGL=1` so CTest reports a skip if its VM cannot create a context; model, DDS and
+physics tests still run. Rendering failures after context creation still fail the test. Validate the
+camera locally with `./b test` without that variable set.
+
+**Connecting to NUbots:** DDS can use UDP between machines, subject to network discovery and firewall
+configuration. Use `K1_DDS_UDP_ONLY=1` when connecting across a container or OS boundary. The RGB and
+head-pose bridges use local shared memory: they cannot cross from macOS into a Linux VM/container, even
+with `--ipc host`. Their struct layouts also depend on the platform's Boost/pthread ABI. Full vision
+integration therefore needs a compatible native consumer or both processes in the same Linux environment.
+The real Booster SDK contract client in `test/contract/host_client/build.sh` currently links Linux x86_64
+SDK libraries; the native C++ tests do not establish that external SDK round trip on macOS.
+
+The training policies live in the separate [mujoco_playground fork](https://github.com/Tom0Brien/mujoco_playground/tree/feat/k1-training),
+and inference runs in `NUbots_K1`. Checking out a NUSim feature branch does not add a walk policy to this
+simulator. Use the existing PD/locomotion tests to validate the native port, then a compatible NUbots
+environment for policy testing.
+
 ### Autonomous behaviour / dribble test
 
 The full vision→localisation→behaviour stack runs against the sim too (verified: the robot finds the ball
@@ -162,11 +221,12 @@ Two NUbots_K1-side requirements, both easy to miss:
 
 ## Host tooling & dependencies (uv)
 
-There are **two separate environments** — keep them straight:
+The C++ runtime and Python formatting tools have separate environments:
 
 | Environment | Manages | Lives in | Used by |
 | --- | --- | --- | --- |
 | **docker image** | C++ sim toolchain: cmake/ninja, the **MuJoCo C library**, Fast-DDS, fastddsgen + a JRE, NUClear (`tools/install_deps.sh`) | the `k1sim` image | `./b configure` / `build` / `run` |
+| **native build** | C++ sim toolchain: system development packages plus pinned MuJoCo, Fast-DDS and fastddsgen (`tools/install_deps.sh`) | system packages + `mujoco/.deps/install` | native `./b configure` / `build` / `run` |
 | **host uv venv** | Python: the `./b` formatters | repo-root `.venv` (`pyproject.toml` + `uv.lock`) | formatters |
 
 The Python dependency manager is [uv](https://docs.astral.sh/uv/) (as in NUbots). From the repo root:
@@ -184,8 +244,8 @@ version to avoid a sim2sim gap; bumping one means bumping **all** and rebuilding
 because the Fast-DDS type support is **generated during the build** from `mujoco/idl/**/*.idl` into
 `build-docker/idl_gen/` instead of being committed — the same arrangement NUbots uses for protobuf.
 fastddsgen is a Java program, so a **Java 11+ runtime is a hard requirement** for a native
-(non-docker) build; the image already installs `default-jre-headless`, so the `./b` workflow needs
-nothing extra.
+(non-docker) build. Building the pinned generator also needs JDK 11–19; see the native setup above.
+The image already installs `default-jre-headless`, so the Docker workflow needs nothing extra.
 
 Adding a message is therefore one step: write the `.idl` under `mujoco/idl/<package>/msg/` and
 build. No regeneration script to run by hand, no generated files to commit, no CMake edit — CMake
@@ -215,7 +275,7 @@ which is not tracked, and `tools/format.py` excludes the path outright in case a
 
 - **`./b image`** — (re)build the docker toolchain image. `./b build` only builds it when it's *missing*, so
   after changing a baked dependency (e.g. the MuJoCo version) you must run this explicitly.
-- **`./b configure --clean`** — wipe the build dir (`build-docker/`, incl. `CMakeCache.txt`) before
+- **`./b configure --clean`** — wipe the selected build dir (including `CMakeCache.txt`) before
   configuring. Needed when a cached path goes stale — e.g. cmake caches `MUJOCO_INCLUDE_DIR-NOTFOUND` after a
   version bump and keeps failing until it's cleared.
 
@@ -292,9 +352,9 @@ glibc `pthread_mutex_lock` owner assertion on the first frame.
 So the sim impersonates NUbridge: the **unchanged** NUbots `robocup`/`behaviour` role reads the segment →
 `ImageCompressor` → `NetworkForwarder` → **NUsight** shows `CompressedImage`, same as on the real robot.
 `--ipc host` (already used by `./b run` and NUbots' `./b run`) shares `/dev/shm` across the containers.
-Config: `mujoco/config/camera.yaml` (segment name, resolution, fps, intrinsics). Renders via **EGL**
-(offscreen, no window), so it works **headless** too — just needs a render device (`./b run` passes
-`/dev/dri` + GPU). No device ⇒ logs and disables, no crash — but then vision receives **zero** frames
+Config: `mujoco/config/camera.yaml` (segment name, resolution, fps, intrinsics). Renders offscreen via
+**EGL on Linux** or **CGL on macOS**, so it works **headless** too. Linux needs a render device
+(`./b run` passes `/dev/dri` + GPU). No device ⇒ logs and disables, no crash — but then vision receives **zero** frames
 (`VisualMesh Stats: Receiving 0/s`): confirm the sim log shows `Camera: rendering 640 x 480 ...` before
 blaming the NUbots side. The right-camera segment (`_boostercamera_head_raw_right_rgb`) is not rendered
 yet; K1Camera warn-retries on it harmlessly (stereo is future work).
@@ -370,9 +430,9 @@ on the network ⇒ idle no-op. Config: `mujoco/config/supervisor.yaml`.
 
 ## Known limitations
 
-- **Camera needs a render device.** `module::Camera` renders offscreen via EGL — works headless, but needs
-  `/dev/dri` or an NVIDIA device (both passed by `./b run`). With no device it disables gracefully (and
-  vision on the NUbots side starves — see §6).
+- **Camera needs a render device.** On Linux, `module::Camera` uses EGL and needs `/dev/dri` or an NVIDIA
+  device (both passed by `./b run`). Native macOS uses CGL. If context creation fails, the camera disables
+  gracefully and vision on the NUbots side starves — see §6.
 - **Mono camera only.** The K1 has stereo head cameras; the sim renders the left one. NUbots' K1Camera
   retries the right segment forever (harmless warning spam).
 - **Single robot, one DDS domain.** One robot on domain 0. A multi-robot field needs one sim process per

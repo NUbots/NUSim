@@ -47,3 +47,12 @@ add_library(mujoco::mujoco SHARED IMPORTED)
 set_target_properties(
   mujoco::mujoco PROPERTIES IMPORTED_LOCATION "${MUJOCO_LIBRARY}" INTERFACE_INCLUDE_DIRECTORIES "${MUJOCO_INCLUDE_DIR}"
 )
+
+# The macOS release retains its signed framework and @rpath install name. The lib/ symlink is for discovery only; dyld
+# needs the framework's parent.
+if(APPLE)
+  get_filename_component(_mj_root "${MUJOCO_INCLUDE_DIR}" DIRECTORY)
+  if(EXISTS "${_mj_root}/mujoco.framework")
+    target_link_options(mujoco::mujoco INTERFACE "LINKER:-rpath,${_mj_root}")
+  endif()
+endif()

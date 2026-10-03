@@ -1,6 +1,7 @@
 #include "module/Simulation/src/SimCore.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
 #include <ctime>
 #include <stdexcept>
@@ -44,6 +45,30 @@ namespace k1sim {
             t.tv_sec += sec_adjust;
             t.tv_nsec = static_cast<long>(total_nsec - static_cast<double>(sec_adjust) * 1e9);
             return t;
+        }
+
+        void sleep_until_monotonic(const timespec& deadline) {
+#if defined(__APPLE__)
+            // macOS has clock_gettime/nanosleep, but no clock_nanosleep(TIMER_ABSTIME).
+            // Recompute against the absolute deadline after interruptions so pacing cannot drift.
+            while (true) {
+                timespec now{};
+                clock_gettime(CLOCK_MONOTONIC, &now);
+                timespec remaining{deadline.tv_sec - now.tv_sec, deadline.tv_nsec - now.tv_nsec};
+                if (remaining.tv_nsec < 0) {
+                    --remaining.tv_sec;
+                    remaining.tv_nsec += 1000000000L;
+                }
+                if (remaining.tv_sec < 0 || (remaining.tv_sec == 0 && remaining.tv_nsec == 0)) {
+                    return;
+                }
+                if (nanosleep(&remaining, nullptr) == 0 || errno != EINTR) {
+                    return;
+                }
+            }
+#else
+            clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &deadline, nullptr);
+#endif
         }
 
         // Name prefix for the k-th extra robot's joints/actuators/bodies (k starts at 1).
@@ -615,7 +640,7 @@ namespace k1sim {
                     deadline = now_ts;
                     dropped_deadlines_.fetch_add(1, std::memory_order_relaxed);
                 }
-                clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &deadline, nullptr);
+                sleep_until_monotonic(deadline);
             }
 
             timespec wall_now{};

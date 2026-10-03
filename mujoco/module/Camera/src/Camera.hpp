@@ -22,11 +22,11 @@ namespace k1sim::module {
     // must keep rendering under --headless too (it feeds NUsight, not a local
     // window), so it cannot piggyback on Viewer's MainThread reactions, and it must
     // not gate on cli().headless the way Viewer does. Instead render_loop() runs on
-    // its own dedicated std::thread with its own hidden GLFW window/context, paced
+    // its own dedicated std::thread with its own CGL (macOS) or EGL context, paced
     // by its own sleep_until loop rather than on<Every<>> (a NUClear thread-pool
     // reaction is not guaranteed to run on the same OS thread twice, which would
     // violate the one-thread-owns-the-context rule). See Camera.cpp for the full
-    // rationale, including why it deliberately never calls glfwTerminate().
+    // rationale. It never shares GLFW state with the viewer.
     class Camera : public NUClear::Reactor {
     public:
         explicit Camera(std::unique_ptr<NUClear::Environment> environment);
