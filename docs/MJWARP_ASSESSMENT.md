@@ -38,9 +38,3 @@ directly for joint control, sensors, rendering, resets and supervisor placement.
 MJWarp supplies Python APIs and device arrays. Adopting it would require a new physics backend and
 state-transfer boundary for those modules, with synchronisation/readback for DDS and the existing
 renderer. It would not solve the macOS camera/shared-memory boundary or supply a walking policy.
-
-For training in the separate `mujoco_playground` repository, benchmark the actual K1 task on CUDA at
-1, 128, 1,024 and 4,096 independent worlds. Include policy inference and resets, check memory/contact
-limits, and compare ball restitution, foot friction, standing, falls/get-up and the frozen
-[observation/action contract](OBS_ACTION_CONTRACT.md) before changing a training backend.
-Keep the deployment MuJoCo version pinned while performing that experiment.
