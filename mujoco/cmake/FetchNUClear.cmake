@@ -8,15 +8,18 @@ set(BUILD_TESTS
 )
 
 FetchContent_Declare(
-  NUClear URL https://github.com/Fastcode/NUClear/archive/925dca0f31484a7df64fd335de5a6c9335483c7f.tar.gz
+  NUClear
+  URL https://github.com/Fastcode/NUClear/archive/925dca0f31484a7df64fd335de5a6c9335483c7f.tar.gz
+      # Populate without automatically adding NUClear: its helper paths must be installed first.
+      SOURCE_SUBDIR k1sim-download-only
 )
 
 # NUClear's top-level CMakeLists resolves its helper modules (ClangTidy, CompilerOptions, Sanitizers) via
 # CMAKE_SOURCE_DIR, which under FetchContent is *this* project — so add its module dirs to our path before
 # add_subdirectory.
-FetchContent_GetProperties(NUClear)
-if(NOT nuclear_POPULATED)
-  FetchContent_Populate(NUClear)
+FetchContent_MakeAvailable(NUClear)
+include(${CMAKE_CURRENT_LIST_DIR}/PatchNUClear.cmake)
+if(NOT TARGET nuclear)
   list(APPEND CMAKE_MODULE_PATH "${nuclear_SOURCE_DIR}/cmake" "${nuclear_SOURCE_DIR}/cmake/Modules")
   add_subdirectory("${nuclear_SOURCE_DIR}" "${nuclear_BINARY_DIR}")
 

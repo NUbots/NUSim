@@ -5,9 +5,9 @@
 # Booster's Webots build AND the `mck` runner in one step — no gated
 # downloads, no separate runner process. See docs/K1_MUJOCO_SETUP.md.
 #
-#   scripts/k1/run_mujoco.sh                    # viewer window, default model + RTF
+#   scripts/k1/run_mujoco.sh                    # viewer window, default field + RTF
 #   K1_HEADLESS=1 scripts/k1/run_mujoco.sh       # no viewer window (--headless)
-#   K1_MODEL=mujoco/models/k1/foo.xml run_mujoco.sh
+#   K1_FIELD=kidsize scripts/k1/run_mujoco.sh    # --field (middle, kidsize, no-field)
 #   K1_RTF=0 scripts/k1/run_mujoco.sh            # free-run (e.g. training)
 #   scripts/k1/run_mujoco.sh --config-dir path   # extra args forwarded as-is
 #
@@ -23,7 +23,7 @@ export K1SIM_IMAGE="${K1SIM_IMAGE:-k1sim:latest}"
 
 args=()
 [ "${K1_HEADLESS:-0}" = 1 ] && args+=(--headless)
-[ -n "${K1_MODEL:-}" ] && args+=(--model "$K1_MODEL")
+[ -n "${K1_FIELD:-}" ] && args+=(--field "$K1_FIELD")
 [ -n "${K1_RTF:-}" ] && args+=(--rtf "$K1_RTF")
 
 exec "$k1sim" run "${args[@]}" "$@"

@@ -1,4 +1,4 @@
-"""./b configure — CMake-configure the sim in docker.
+"""./b configure — CMake-configure the sim with the selected backend.
 
   ./b configure                         # plain configure
   ./b configure --clean                 # wipe the build dir first, then reconfigure
@@ -16,7 +16,7 @@ from _util import k1sim
 
 
 def register(command):
-    command.description = "CMake-configure the sim in docker"
+    command.description = "CMake-configure the sim (native on macOS, Docker on Linux)"
     command.add_argument("-i", "--interactive", action="store_true", help="open the ccmake TUI to toggle roles/options")
     command.add_argument("--clean", action="store_true", help="wipe the build dir (CMakeCache etc.) before configuring")
     command.add_argument(

@@ -21,3 +21,13 @@ foreach(test_script ${test_scripts})
     add_test(NAME ${test_name} COMMAND ${Python3_EXECUTABLE} ${test_script})
     set_tests_properties(${test_name} PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 endforeach()
+set_tests_properties(test_dds_transport PROPERTIES TIMEOUT 20)
+
+# macOS offscreen rendering must work on a worker thread without a window server API.
+if(APPLE)
+  find_package(Boost REQUIRED)
+  add_executable(test_camera_context ../platform/test_camera_context.cpp)
+  target_link_libraries(test_camera_context PRIVATE k1sim_module_camera Boost::headers)
+  add_test(NAME test_camera_context COMMAND test_camera_context)
+  set_tests_properties(test_camera_context PROPERTIES SKIP_RETURN_CODE 77)
+endif()

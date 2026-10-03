@@ -5,6 +5,13 @@ project(
   LANGUAGES C CXX
 )
 
+if(POLICY CMP0135)
+  cmake_policy(SET CMP0135 NEW)
+endif()
+if(POLICY CMP0167)
+  cmake_policy(SET CMP0167 NEW)
+endif()
+
 # Self-contained MuJoCo replacement for the Webots+mck K1 simulation. Prerequisite: tools/install_deps.sh (installs
 # MuJoCo + Fast-DDS into .deps/install).
 
@@ -34,6 +41,9 @@ include(cmake/MuJoCoTarget.cmake)
 
 find_package(Threads REQUIRED)
 find_package(yaml-cpp REQUIRED)
+if(NOT TARGET yaml-cpp::yaml-cpp)
+  add_library(yaml-cpp::yaml-cpp ALIAS yaml-cpp)
+endif()
 find_package(fastcdr REQUIRED)
 find_package(fastrtps REQUIRED) # Fast-DDS 2.x exports the 'fastrtps' package
 
@@ -41,12 +51,14 @@ find_package(fastrtps REQUIRED) # Fast-DDS 2.x exports the 'fastrtps' package
 # "module/Simulation/src/Simulation.hpp").
 add_library(k1sim_shared INTERFACE)
 target_include_directories(k1sim_shared INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(k1sim_shared INTERFACE mujoco::mujoco NUClear::nuclear yaml-cpp Threads::Threads)
+target_link_libraries(k1sim_shared INTERFACE mujoco::mujoco NUClear::nuclear yaml-cpp::yaml-cpp Threads::Threads)
 # XInitThreads() (shared/gl/XThreads.hpp) is called by every role's main to make Xlib thread-safe for the Viewer +
 # Camera GL threads; link X11 for the symbol.
-find_package(X11)
-if(X11_FOUND)
-  target_link_libraries(k1sim_shared INTERFACE ${X11_LIBRARIES})
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  find_package(X11)
+  if(X11_FOUND)
+    target_link_libraries(k1sim_shared INTERFACE ${X11_LIBRARIES})
+  endif()
 endif()
 target_compile_definitions(k1sim_shared INTERFACE K1SIM_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 
