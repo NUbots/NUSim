@@ -59,6 +59,13 @@ and the NUbots_K1-side requirements (`skill::K1WalkPolicy` + `skill::K1GetUpPoli
 > `libopenvino_intel_cpu_plugin.so`, and inference prefers TensorRT on the GPU anyway. No overlay,
 > no `--volume`, no `LD_LIBRARY_PATH`.
 
+## Ground truth and ball commands (testing)
+
+NUSim publishes the ball's and robot's ground truth on `rt/nusim/gt/ball` and `rt/nusim/gt/robot`, and accepts
+`rt/nusim/ball_command` to place or roll the ball (all `nav_msgs/Odometry`). NUbots-side tools use them to
+validate estimators and to run repeatable shot scenarios. The wire contract is in
+[module/SdkBridge/PROTOCOL.md §6](mujoco/module/SdkBridge/PROTOCOL.md).
+
 ## Command reference
 
 `./b` wraps the container workflow; everything after the role name passes straight through to the
@@ -140,7 +147,7 @@ no build flag, no shim and no code change — the same code path they use agains
   (`Failed to create participant`). `./b run` sets it for you. If you pass `--environment` yourself, note it
   takes ONE comma-separated argument and **replaces** the default — re-include the FastDDS var or all DDS dies.
 - **Vision is not DDS.** Head-camera frames are rendered offscreen and written to a Boost.Interprocess
-  shared-memory segment (`_boostercamera_head_rgb`, rgb8 640×480 @ 30 Hz) whose header matches NUbots'
+  shared-memory segment (`_boostercamera_head_rgb`, rgb8 544×448 @ 30 Hz) whose header matches NUbots'
   `input::K1Camera` byte-for-byte; head pose goes to a second segment (`_head_pose`, `K1Sensors` "NBPO"
   layout) and is the only path torso tilt takes into NUbots, i.e. what makes fall detection and the get-up
   chain work. Segment names must match `K1Camera.yaml` / `K1Sensors.yaml` on the NUbots side. Only the left
