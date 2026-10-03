@@ -2,6 +2,7 @@
 // without initialising GLFW/Cocoa. Exercise native rendering and shared-memory publication.
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <memory>
@@ -23,6 +24,13 @@ int main() {
                 OffscreenContext context(320, 240);
                 if (!context.valid()) {
                     std::fprintf(stderr, "Could not create an offscreen context on a worker thread\n");
+                    // Hosted macOS VMs may have no OpenGL device. Only an explicit opt-in permits
+                    // a skip, and only before any rendering has succeeded. Local tests stay strict.
+                    const char* allow_no_gl = std::getenv("K1SIM_TEST_ALLOW_NO_OPENGL");
+                    if (attempt == 0 && allow_no_gl != nullptr && std::strcmp(allow_no_gl, "1") == 0) {
+                        std::fprintf(stderr, "Skipping camera rendering: this runner has no OpenGL context\n");
+                        result = 77;
+                    }
                     return;
                 }
                 char error[1024]{};

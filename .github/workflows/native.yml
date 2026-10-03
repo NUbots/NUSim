@@ -38,4 +38,8 @@ jobs:
       - name: Configure
         run: ./b configure
       - name: Build and test
+        # Standard macOS VMs may lack an OpenGL device. Keep the camera test built and
+        # attempted, but report an explicit skip when context creation is unavailable.
+        env:
+          K1SIM_TEST_ALLOW_NO_OPENGL: ${{ runner.os == 'macOS' && '1' || '0' }}
         run: ./b test

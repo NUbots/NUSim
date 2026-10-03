@@ -176,6 +176,11 @@ context on its render thread, including in headless mode; Linux retains EGL. mac
 Mesa, EGL or `librt` for this native path. OpenGL is deprecated by Apple but remains available; a future
 Apple removal would require a different renderer.
 
+The camera context test requires working OpenGL by default. The GitHub-hosted macOS workflow sets
+`K1SIM_TEST_ALLOW_NO_OPENGL=1` so CTest reports a skip if its VM cannot create a context; model, DDS and
+physics tests still run. Rendering failures after context creation still fail the test. Validate the
+camera locally with `./b test` without that variable set.
+
 **Connecting to NUbots:** DDS can use UDP between machines, subject to network discovery and firewall
 configuration. Use `K1_DDS_UDP_ONLY=1` when connecting across a container or OS boundary. The RGB and
 head-pose bridges use local shared memory: they cannot cross from macOS into a Linux VM/container, even
