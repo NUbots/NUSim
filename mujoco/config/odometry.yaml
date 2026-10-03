@@ -1,0 +1,30 @@
+# Error model of the controller's odometry (module::SdkBridge OdometryModel), as published on
+# rt/odometer_state and rt/odom. The sim's base state is ground truth; the real K1's odometry is
+# the controller's estimate, which drifts. Per planar body axis (forward x, sideways y, yaw z):
+#
+#   v_est = scale * v_true + bias + white noise,
+#
+# and the odometry pose is integrated from v_est. The white noise is a density, so the pose error
+# grows the same whatever the publish rate: a density s gives a position (heading) random walk of
+# s * sqrt(t). The bias is stationary (standard deviation bias_sigma) and wanders over
+# bias_time_constant, so over a window of T seconds it drifts the pose steadily by about
+# bias_sigma * T while T is short of the time constant, and like more random walk beyond it.
+#
+# The values below have been fit to a real K1 data recording made from the data/odometry_mocap 
+# role in branch tumminello/k1_odom_record, then fit with odometry_fit.py. 
+
+enabled: true # false = publish the ground truth
+
+# Multiplicative error on the true body velocity [vx, vy, wz]; 1 is exact
+scale: [1.0915, 0.2448, 1.0013]
+
+# White noise density on the body velocity [m/sqrt(s), m/sqrt(s), rad/sqrt(s)]
+velocity_noise_density: [0.0001, 0.03133, 0.0001]
+
+# Standard deviation of the velocity bias [m/s, m/s, rad/s]
+bias_sigma: [0.1269, 0.08808, 0.0001]
+
+# Time over which the bias decorrelates [s]
+bias_time_constant: [1.02, 3.81, 0.5]
+
+seed: 0 # random seed; 0 seeds randomly each run
