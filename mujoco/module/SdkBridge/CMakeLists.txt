@@ -16,7 +16,15 @@ foreach(generated ${k1sim_idl_outputs})
 endforeach()
 
 add_library(k1sim_idl STATIC ${k1sim_idl_outputs})
-target_include_directories(k1sim_idl PUBLIC ${k1sim_idl_packages})
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  # On case-insensitive volumes (including Docker bind mounts), generated Time.h shadows system <time.h>. Consumer
+  # includes use quotes; keep these dirs out of angle-bracket searches.
+  foreach(pkg ${k1sim_idl_packages})
+    target_compile_options(k1sim_idl PUBLIC "-iquote${pkg}")
+  endforeach()
+else()
+  target_include_directories(k1sim_idl PUBLIC ${k1sim_idl_packages})
+endif()
 target_link_libraries(k1sim_idl PUBLIC fastrtps fastcdr)
 
 # --- module::SdkBridge ---

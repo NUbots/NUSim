@@ -1,0 +1,41 @@
+name: Native build
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-14]
+    runs-on: ${{ matrix.os }}
+    env:
+      K1SIM_BACKEND: native
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install Linux development packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libyaml-cpp-dev libboost-dev \
+            libgl1-mesa-dev libegl1-mesa-dev libx11-dev libxrandr-dev \
+            libxinerama-dev libxcursor-dev libxi-dev
+      - name: Install macOS development packages
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja boost yaml-cpp
+      - name: Install pinned dependencies
+        run: ./mujoco/tools/install_deps.sh
+      - name: Configure
+        run: ./b configure
+      - name: Build and test
+        run: ./b test
