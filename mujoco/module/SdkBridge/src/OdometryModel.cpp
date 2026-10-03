@@ -1,13 +1,11 @@
 #include "module/SdkBridge/src/OdometryModel.hpp"
 
 #include <cmath>
+#include <numbers>
 
 namespace k1sim::module::sdkbridge {
 
     namespace {
-
-        // Avoid M_PI: not reliably available under this project's -std=c++17 build
-        constexpr double kPi = 3.14159265358979323846;
 
         std::array<double, 3> triple(const YAML::Node& node, const std::array<double, 3>& fallback) {
             if (!node) {
@@ -65,7 +63,7 @@ namespace k1sim::module::sdkbridge {
         const double cm = std::cos(yaw_mid), sm = std::sin(yaw_mid);
         estimate_.x += (cm * estimate_.velocity[0] - sm * estimate_.velocity[1]) * dt;
         estimate_.y += (sm * estimate_.velocity[0] + cm * estimate_.velocity[1]) * dt;
-        estimate_.yaw = std::remainder(estimate_.yaw + estimate_.velocity[2] * dt, 2.0 * kPi);
+        estimate_.yaw = std::remainder(estimate_.yaw + estimate_.velocity[2] * dt, 2.0 * std::numbers::pi_v<double>);
         return estimate_;
     }
 

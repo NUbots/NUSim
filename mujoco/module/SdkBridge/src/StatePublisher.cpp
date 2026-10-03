@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <numbers>
 
 #include "BatteryState.h"
 #include "BatteryStatePubSubTypes.h"
@@ -31,9 +32,6 @@ namespace k1sim::module::sdkbridge {
             const double w = q[0], x = q[1], y = q[2], z = q[3];
             return std::atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z));
         }
-
-        // Avoid M_PI: not reliably available under this project's -std=c++17 build
-        constexpr double kPi = 3.14159265358979323846;
 
         // Hamilton product a * b of {w, x, y, z} quaternions
         std::array<double, 4> quat_mul(const std::array<double, 4>& a, const std::array<double, 4>& b) {
@@ -154,7 +152,7 @@ namespace k1sim::module::sdkbridge {
         const std::array<double, 3> v_true_planar{cy * update.base.lin_vel[0] + sy * update.base.lin_vel[1],
                                                   -sy * update.base.lin_vel[0] + cy * update.base.lin_vel[1],
                                                   update.base.ang_vel[2]};
-        const double half_dyaw = 0.5 * std::remainder(est.yaw - yaw_true, 2.0 * kPi);
+        const double half_dyaw = 0.5 * std::remainder(est.yaw - yaw_true, 2.0 * std::numbers::pi_v<double>);
         const std::array<double, 4> q =
             quat_mul({std::cos(half_dyaw), 0.0, 0.0, std::sin(half_dyaw)}, update.base.quat);
 
