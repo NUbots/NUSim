@@ -1,4 +1,4 @@
-"""./b run <role> [args] — run a role binary in docker (X11 + GPU + DDS passthrough).
+"""./b run <role> [args] — run a role binary with the selected backend.
 
 Role is given in path form, e.g. `./b run sim/soccer` → bin/sim/soccer. Everything
 after the role (including flags like --headless / --field / --rtf) passes straight
@@ -11,7 +11,7 @@ from _util import k1sim
 
 
 def register(command):
-    command.description = "Run a sim role binary in docker"
+    command.description = "Run a sim role binary (native on macOS, Docker on Linux)"
     command.add_argument("role", help="role in path form, e.g. sim/soccer")
     command.add_argument("args", nargs=argparse.REMAINDER, help="arguments forwarded to the role binary")
 

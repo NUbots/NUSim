@@ -1,13 +1,13 @@
 # NUSim
 
-A self-contained, docker-based **MuJoCo** simulator for the **Booster Robotics K1** humanoid, used by
+A self-contained **MuJoCo** simulator for the **Booster Robotics K1** humanoid, used by
 [NUbots](https://nubots.net) for RoboCup development. It replaces **both** Booster's gated Webots build
 **and** their closed-source `mck` motion runner with one inspectable, NUClear-based simulator that speaks
 the **Booster SDK over FastDDS** — the same wire protocol as the real robot — so `NUbots_K1` binaries drive
 it **unchanged**.
 
 ```
-sim/soccer  (docker container, NUClear)
+sim/soccer  (native macOS / Linux docker container, NUClear)
    MuJoCo physics + servo/mode machine + head camera + GLFW viewer + GameController supervisor
         │  Booster SDK over FastDDS (domain 0)            │  camera frames → shared memory
         ▼                                                 ▼
@@ -26,7 +26,7 @@ sim/soccer  (docker container, NUClear)
 
 ## Quick start
 
-Requirements: **Docker** (everything else is baked into the image). Full setup, config reference, and
+On **Linux**, requirements are **Docker** (everything else is baked into the image). Full setup, config reference, and
 troubleshooting are in **[docs/K1_MUJOCO_SETUP.md](docs/K1_MUJOCO_SETUP.md)**.
 
 ```bash
@@ -34,6 +34,23 @@ troubleshooting are in **[docs/K1_MUJOCO_SETUP.md](docs/K1_MUJOCO_SETUP.md)**.
 ./b build                       # build the sim in docker (first run builds the image)
 ./b run sim/soccer              # launch the soccer sim (viewer + DDS + camera + supervisor)
 ```
+
+On **macOS**, `./b` builds and runs natively using Apple's OpenGL for the viewer and offscreen camera:
+
+```bash
+brew install cmake ninja boost yaml-cpp openjdk@17
+export JAVA_HOME="$(brew --prefix openjdk@17)/libexec/openjdk.jdk/Contents/Home"
+export PATH="$JAVA_HOME/bin:$PATH"
+./mujoco/tools/install_deps.sh   # pinned MuJoCo + DDS libraries + IDL generator
+./b configure
+./b build
+./b test
+./b run sim/soccer
+```
+
+See [native macOS setup](docs/K1_MUJOCO_SETUP.md#native-macos) for prerequisites, headless rendering and
+the networking/camera limitations when connecting to a Linux container. Use `K1SIM_BACKEND=docker`
+to select Docker explicitly, or `K1SIM_BACKEND=native` for a native Linux build.
 
 Then drive it from **[`NUbots_K1`](https://github.com/NUbots/NUbots_K1)** exactly as against the real robot:
 
@@ -61,16 +78,17 @@ and the NUbots_K1-side requirements (`skill::K1WalkPolicy` + `skill::K1GetUpPoli
 
 ## Command reference
 
-`./b` wraps the container workflow; everything after the role name passes straight through to the
+`./b` selects a native workflow on macOS and the container workflow on Linux; everything after the role name passes straight through to the
 binary (`argparse.REMAINDER`), so sim flags are never parsed by `./b`.
 
 | Command | Description |
 | --- | --- |
-| `./b configure [-i] [--clean] [--set-role R] [--unset-role R]` | CMake-configure in docker; `-i` drops into `ccmake`, `--clean` wipes the build dir. |
-| `./b build [targets...]` | Ninja build in docker (default: everything; e.g. `./b build sim-soccer`). |
-| `./b run <role> [args]` | Exec `bin/<role>` in the container. Only role today: `sim/soccer`. |
+| `./b configure [-i] [--clean] [--set-role R] [--unset-role R]` | CMake-configure with the selected backend; `-i` opens `ccmake`, `--clean` wipes the build dir. |
+| `./b build [targets...]` | Ninja build with the selected backend (default: everything; e.g. `./b build sim-soccer`). |
+| `./b run <role> [args]` | Run `bin/<role>` natively or in the container. Only role today: `sim/soccer`. |
 | `./b roles` | List sim roles and their enabled/disabled state. |
 | `./b image` | (Re)build the docker toolchain image. |
+| `./b test` | Build and run the C++ unit tests with the selected backend. |
 
 ### `sim/soccer` flags
 
@@ -106,6 +124,8 @@ Parsed in [`mujoco/shared/CliOptions.hpp`](mujoco/shared/CliOptions.hpp); `--hel
 | `FASTRTPS_DEFAULT_PROFILES_FILE` | **Required** by the Booster SDK (see Networking). `./b run` defaults it to the repo's copy. |
 | `K1SIM_CONFIG_DIR` | Config directory, same as `--config-dir` (the flag wins). |
 | `K1_DDS_UDP_ONLY` | `1` strips the FastDDS shared-memory transport, leaving UDPv4 only — the fallback when the sim and NUbots are on opposite sides of a docker boundary. Equivalent to `udp_only: true` in `config/dds.yaml`. |
+| `K1SIM_BACKEND` | `native` or `docker`; defaults to native on macOS and Docker elsewhere. |
+| `K1SIM_BUILD_DIR` | Build directory relative to `mujoco/` (default `build-native` or `build-docker` for the selected backend). |
 
 ### Viewer keys
 
@@ -180,6 +200,9 @@ the NUbots side (`NUbots_K1` `module/skill/K1WalkPolicy` and `module/skill/K1Get
 walk observation/action interface is pinned in
 **[docs/OBS_ACTION_CONTRACT.md](docs/OBS_ACTION_CONTRACT.md)** — anything that trains a walk policy for
 the K1 must match it.
+
+See [the MJWarp assessment](docs/MJWARP_ASSESSMENT.md) for the local CPU comparison and why native
+MuJoCo remains the default for this interactive simulator.
 
 ## Layout
 
