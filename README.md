@@ -1,13 +1,13 @@
 # NUSim
 
-A self-contained, docker-based **MuJoCo** simulator for the **Booster Robotics K1** humanoid, used by
+A self-contained **MuJoCo** simulator for the **Booster Robotics K1** humanoid, used by
 [NUbots](https://nubots.net) for RoboCup development. It replaces **both** Booster's gated Webots build
 **and** their closed-source `mck` motion runner with one inspectable, NUClear-based simulator that speaks
 the **Booster SDK over FastDDS** — the same wire protocol as the real robot — so `NUbots_K1` binaries drive
 it **unchanged**.
 
 ```
-sim/soccer  (docker container, NUClear)
+sim/soccer  (native macOS / Linux docker container, NUClear)
    MuJoCo physics + servo/mode machine + head camera + GLFW viewer + GameController supervisor
         │  Booster SDK over FastDDS (domain 0)            │  camera frames → shared memory
         ▼                                                 ▼
@@ -26,7 +26,7 @@ sim/soccer  (docker container, NUClear)
 
 ## Quick start
 
-Requirements: **Docker** (everything else is baked into the image). Full setup, config reference, and
+On **Linux**, requirements are **Docker** (everything else is baked into the image). Full setup, config reference, and
 troubleshooting are in **[docs/K1_MUJOCO_SETUP.md](docs/K1_MUJOCO_SETUP.md)**.
 
 ```bash
@@ -34,6 +34,23 @@ troubleshooting are in **[docs/K1_MUJOCO_SETUP.md](docs/K1_MUJOCO_SETUP.md)**.
 ./b build                       # build the sim in docker (first run builds the image)
 ./b run sim/soccer              # launch the soccer sim (viewer + DDS + camera + supervisor)
 ```
+
+On **macOS**, `./b` builds and runs natively using Apple's OpenGL for the viewer and offscreen camera:
+
+```bash
+brew install cmake ninja boost yaml-cpp openjdk@17
+export JAVA_HOME="$(brew --prefix openjdk@17)/libexec/openjdk.jdk/Contents/Home"
+export PATH="$JAVA_HOME/bin:$PATH"
+./mujoco/tools/install_deps.sh   # pinned MuJoCo + DDS libraries + IDL generator
+./b configure
+./b build
+./b test
+./b run sim/soccer
+```
+
+See [native macOS setup](docs/K1_MUJOCO_SETUP.md#native-macos) for prerequisites, headless rendering and
+the networking/camera limitations when connecting to a Linux container. Use `K1SIM_BACKEND=docker`
+to select Docker explicitly, or `K1SIM_BACKEND=native` for a native Linux build.
 
 Then drive it from **[`NUbots_K1`](https://github.com/NUbots/NUbots_K1)** exactly as against the real robot:
 
@@ -61,16 +78,17 @@ and the NUbots_K1-side requirements (`skill::K1WalkPolicy` + `skill::K1GetUpPoli
 
 ## Command reference
 
-`./b` wraps the container workflow; everything after the role name passes straight through to the
+`./b` selects a native workflow on macOS and the container workflow on Linux; everything after the role name passes straight through to the
 binary (`argparse.REMAINDER`), so sim flags are never parsed by `./b`.
 
 | Command | Description |
 | --- | --- |
-| `./b configure [-i] [--clean] [--set-role R] [--unset-role R]` | CMake-configure in docker; `-i` drops into `ccmake`, `--clean` wipes the build dir. |
-| `./b build [targets...]` | Ninja build in docker (default: everything; e.g. `./b build sim-soccer`). |
-| `./b run <role> [args]` | Exec `bin/<role>` in the container. Only role today: `sim/soccer`. |
+| `./b configure [-i] [--clean] [--set-role R] [--unset-role R]` | CMake-configure with the selected backend; `-i` opens `ccmake`, `--clean` wipes the build dir. |
+| `./b build [targets...]` | Ninja build with the selected backend (default: everything; e.g. `./b build sim-soccer`). |
+| `./b run <role> [args]` | Run `bin/<role>` natively or in the container. Only role today: `sim/soccer`. |
 | `./b roles` | List sim roles and their enabled/disabled state. |
 | `./b image` | (Re)build the docker toolchain image. |
+| `./b test` | Build and run the C++ unit tests with the selected backend. |
 
 ### `sim/soccer` flags
 
@@ -79,8 +97,9 @@ Parsed in [`mujoco/shared/CliOptions.hpp`](mujoco/shared/CliOptions.hpp); `--hel
 | Flag | Default | Description |
 | --- | --- | --- |
 | `--headless` | off | Run without the GLFW viewer window (CI / headless servers). Physics, DDS and the camera bridge all still run. |
-| `--field <name>` | `simulation.yaml`'s `field` (`middle`) | Field to play on, one of `simulation.yaml`'s `fields`: `middle` — the RoboCup 2026 Humanoid Soccer League M-Field (14 × 9 m), the field of the Middle Division the K1 plays in; `kidsize` — RoboCup KidSize under the pre-2026 rules (9 × 6 m). NUbots' `FieldDescription.yaml` `field_type` must match for localisation. |
-| `--model <path>` | the `--field` scene | MJCF **scene** to load, relative to `mujoco/`, overriding `--field`. Must be a scene (`models/k1/k1_scene_robocup_middle.xml`, `models/k1/k1_scene_robocup.xml`, `models/k1/k1_scene_flat.xml`) — the bare `K1_22dof.xml` is a component with no floor or lights, so the robot free-falls and the viewer renders black. |
+| `--field <name>` | `simulation.yaml`'s `field` (`middle`) | Field to play on, one of `simulation.yaml`'s `fields`: `middle` — the RoboCup 2026 Humanoid Soccer League M-Field (14 × 9 m), the field of the Middle Division the K1 plays in; `kidsize` — RoboCup KidSize under the pre-2026 rules (9 × 6 m); `no-field` — a bare flat floor with no field or ball. NUbots' `FieldDescription.yaml` `field_type` must match for localisation. |
+| `--game <n>` | none | A match of `n` robots a side, 1–11 (so 2–22 K1s), on `simulation.yaml`'s `game.field` (`middle`). Sets the field and robot count itself, so it can't be combined with `--field` or `--robots`. Team 1 is in the -x half, team 2 is its mirror image; by default each team lines up just off the touchlines facing into the field, two at a time on alternate sides, starting level with its penalty mark and filling towards the halfway line. The main robot is team 1's first. Only the main robot is controlled, the rest are PD-held at the `ready` pose like `--robots` extras. `--keyframe` still sets the main robot's pose, moved to its game spot. |
+| `--on-field-positions` | off | With `--game`, start in kickoff positions facing the opponent's goal instead of on the touchlines: the attacker (the main robot), then the goalkeeper (2v2+), left wing (3v3+), right wing (4v4+), and the 5th to 11th robots spread evenly through the rest of the team's half (outside the centre circle). Positions are in `simulation.yaml`'s `game`. |
 | `--config-dir <dir>` | `mujoco/config` | Config directory to read the YAML from. |
 | `--keyframe <name>` | `ready` | Startup keyframe for the **main** robot (e.g. `lying_front` to start fallen and exercise the get-up chain). |
 | `--rtf <factor>` | `simulation.yaml`'s `real_time_factor` | Real-time factor; `0` = free-run (uncapped, for tests/sweeps). |
@@ -90,7 +109,9 @@ Parsed in [`mujoco/shared/CliOptions.hpp`](mujoco/shared/CliOptions.hpp); `--hel
 ```bash
 ./b run sim/soccer --headless                            # no viewer window (CI / server)
 ./b run sim/soccer --field kidsize                       # the KidSize field instead of the M-Field
-./b run sim/soccer --model models/k1/k1_scene_flat.xml   # bare robot on a flat floor, no field/ball
+./b run sim/soccer --field no-field                      # bare robot on a flat floor, no field/ball
+./b run sim/soccer --game 3                              # 3 a side lined up on the M-Field touchlines
+./b run sim/soccer --game 5 --on-field-positions         # 5 a side in kickoff positions
 ./b run sim/soccer --rtf 0                               # free-run (uncapped real-time factor)
 ./b run sim/soccer --keyframe lying_front                # start fallen, to exercise GetUp
 ./b run sim/soccer --robots 5                            # 4 extra K1s on the field (max 20 total)
@@ -103,6 +124,8 @@ Parsed in [`mujoco/shared/CliOptions.hpp`](mujoco/shared/CliOptions.hpp); `--hel
 | `FASTRTPS_DEFAULT_PROFILES_FILE` | **Required** by the Booster SDK (see Networking). `./b run` defaults it to the repo's copy. |
 | `K1SIM_CONFIG_DIR` | Config directory, same as `--config-dir` (the flag wins). |
 | `K1_DDS_UDP_ONLY` | `1` strips the FastDDS shared-memory transport, leaving UDPv4 only — the fallback when the sim and NUbots are on opposite sides of a docker boundary. Equivalent to `udp_only: true` in `config/dds.yaml`. |
+| `K1SIM_BACKEND` | `native` or `docker`; defaults to native on macOS and Docker elsewhere. |
+| `K1SIM_BUILD_DIR` | Build directory relative to `mujoco/` (default `build-native` or `build-docker` for the selected backend). |
 
 ### Viewer keys
 
@@ -179,6 +202,9 @@ the NUbots side (`NUbots_K1` `module/skill/K1WalkPolicy` and `module/skill/K1Get
 walk observation/action interface is pinned in
 **[docs/OBS_ACTION_CONTRACT.md](docs/OBS_ACTION_CONTRACT.md)** — anything that trains a walk policy for
 the K1 must match it.
+
+See [the MJWarp assessment](docs/MJWARP_ASSESSMENT.md) for the local CPU comparison and why native
+MuJoCo remains the default for this interactive simulator.
 
 ## Layout
 
