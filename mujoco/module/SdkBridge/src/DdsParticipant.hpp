@@ -35,6 +35,10 @@ namespace k1sim::module::sdkbridge {
 
         // PROTOCOL.md §4: state writers use RELIABLE + VOLATILE + KEEP_LAST(depth).
         static eprosima::fastdds::dds::DataWriterQos state_writer_qos(int depth = 5);
+        // PROTOCOL.md §4: camera images use RELIABLE + VOLATILE + KEEP_LAST(1). RELIABLE so
+        // a reliable reader (ROS 2 tools default to one) still matches; depth 1 so a reader
+        // that falls behind only ever costs the newest frame a resend, never a backlog.
+        static eprosima::fastdds::dds::DataWriterQos image_writer_qos();
         // PROTOCOL.md §4: the RPC request reader uses RELIABLE + KEEP_LAST(depth) so a
         // burst of calls at startup (e.g. NUbots' immediate ChangeMode) isn't dropped.
         static eprosima::fastdds::dds::DataReaderQos rpc_request_reader_qos(int depth = 10);

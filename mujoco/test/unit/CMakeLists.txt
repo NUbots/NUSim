@@ -12,7 +12,7 @@ foreach(test_src ${test_sources})
   add_test(NAME ${test_name} COMMAND ${test_name})
   set_tests_properties(${test_name} PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 endforeach()
-set_tests_properties(test_dds_transport PROPERTIES TIMEOUT 20)
+set_tests_properties(test_dds_transport test_camera_dds PROPERTIES TIMEOUT 20)
 
 # macOS offscreen rendering must work on a worker thread without a window server API.
 if(APPLE)

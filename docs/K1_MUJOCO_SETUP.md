@@ -14,7 +14,7 @@ SDK wire protocol (FastDDS, domain 0):
 ```
 sim/soccer  (native macOS / Linux docker container, NUClear)
    physics (MuJoCo, 1 kHz) + servo/mode machine + head camera + GameController supervisor + GLFW viewer
-        │  Booster SDK over FastDDS (domain 0)          │  camera frames → shared memory
+        │  Booster SDK over FastDDS (domain 0)          │  camera: sensor_msgs Image over the same DDS
         ▼                                               ▼
  NUbots_K1  platform::Booster::HardwareIO         input::K1Camera → ImageCompressor → NUsight
         ▲   (B1LocoClient: Move / RotateHead / …)
@@ -22,8 +22,9 @@ sim/soccer  (native macOS / Linux docker container, NUClear)
 ```
 
 - **`sim/soccer`** (the role binary) owns the physics (`module::Simulation`), the reduced mode machine +
-  LowCmd servo tracking (`module::Locomotion`), the DDS publishers/RPC server (`module::SdkBridge`), the head
-  camera → shared-memory bridge (`module::Camera`), the GameController-aware body-placement supervisor
+  LowCmd servo tracking (`module::Locomotion`), the DDS publishers/RPC server (`module::SdkBridge`, which
+  also publishes the camera), the offscreen head-camera renderer (`module::Camera`), the GameController-aware
+  body-placement supervisor
   (`module::Supervisor`), and the GLFW viewer (`module::Viewer`) — one process, all in this repo.
 - **Locomotion**: NUbots runs the walking/get-up policies and sends low-level joint commands; the sim
   tracks them in CUSTOM mode — see [Getting a locomotion policy](#7-getting-a-locomotion-policy).
@@ -127,8 +128,8 @@ cd ~/NUbots_K1
 > rather than merging with it — include the var yourself if you add your own. Likewise a second
 > `--environment` flag silently replaces the first. Losing
 > `FASTRTPS_DEFAULT_PROFILES_FILE` kills the whole Booster SDK participant (`Failed to
-> create participant`): vision keeps running off shared memory while LowState/RPCs
-> silently vanish, and the robot collapses when a policy skill switches to CUSTOM with
+> create participant`): LowState, RPCs and the DDS camera silently vanish (on the
+> `roles/nusim/*` roles vision keeps running off shared memory, which hides it), and the robot collapses when a policy skill switches to CUSTOM with
 > nothing streaming. (The sim now PD-holds the entry pose in that case, but the robot
 > still won't move.) Check the K1 log for `Loaded walk policy` + no
 > `Failed to get current mode` spam before debugging anything else.
@@ -188,10 +189,11 @@ physics tests still run. Rendering failures after context creation still fail th
 camera locally with `./b test` without that variable set.
 
 **Connecting to NUbots:** DDS can use UDP between machines, subject to network discovery and firewall
-configuration. Use `K1_DDS_UDP_ONLY=1` when connecting across a container or OS boundary. The RGB and
-head-pose bridges use local shared memory: they cannot cross from macOS into a Linux VM/container, even
-with `--ipc host`. Their struct layouts also depend on the platform's Boost/pthread ABI. Full vision
-integration therefore needs a compatible native consumer or both processes in the same Linux environment.
+configuration. Use `K1_DDS_UDP_ONLY=1` when connecting across a container or OS boundary. The camera and
+head pose go over DDS too (`rt/boostercamera/head/rgb`, `rt/head_pose`), so they cross with the rest, at
+~221 Mbit/s for the camera. Only the legacy shared-memory copies (`NUSimCamera`'s segment, `_head_pose`)
+cannot cross from macOS into a Linux VM/container, even with `--ipc host`; their struct layouts also
+depend on the platform's Boost/pthread ABI.
 The real Booster SDK contract client in `test/contract/host_client/build.sh` currently links Linux x86_64
 SDK libraries; the native C++ tests do not establish that external SDK round trip on macOS.
 
@@ -349,25 +351,36 @@ A GLFW + MuJoCo GPU-rendered window, skipped entirely under `--headless`. Standa
 
 ## 6. Camera → NUsight (`module::Camera`)
 
-`sim/soccer` renders the K1's head camera (a `<camera name="head">` in the model) offscreen and writes rgb8
-frames into a **Boost.Interprocess shared-memory segment** (`_boostercamera_head_rgb` — the left-camera
-entry in NUbots_K1's `K1Camera.yaml`; NUbridge dropped the "raw" from the topic during RoboCup 2026) laid
-out exactly like NUbots' `input::K1Camera` `SharedImageHeader` **including the leading magic/version fields
-robocup2026 added** — a layout mismatch shifts the interprocess mutex offset and aborts the reader with a
-glibc `pthread_mutex_lock` owner assertion on the first frame.
-So the sim impersonates NUbridge: the **unchanged** NUbots `robocup`/`behaviour` role reads the segment →
-`ImageCompressor` → `NetworkForwarder` → **NUsight** shows `CompressedImage`, same as on the real robot.
-`--ipc host` (already used by `./b run` and NUbots' `./b run`) shares `/dev/shm` across the containers.
-Config: `mujoco/config/camera.yaml` (segment name, resolution, fps, intrinsics). Renders offscreen via
-**EGL on Linux** or **CGL on macOS**, so it works **headless** too. Linux needs a render device
-(`./b run` passes `/dev/dri` + GPU). No device ⇒ logs and disables, no crash — but then vision receives **zero** frames
-(`VisualMesh Stats: Receiving 0/s`): confirm the sim log shows `Camera: rendering 640 x 480 ...` before
-blaming the NUbots side. The right-camera segment (`_boostercamera_head_raw_right_rgb`) is not rendered
-yet; K1Camera warn-retries on it harmlessly (stereo is future work).
+`sim/soccer` renders the K1's head camera (a `<camera name="head">` in the model) offscreen as rgb8 frames
+and `module::SdkBridge` publishes each one the way the robot's camera driver does: a `sensor_msgs` `Image`
+on **`rt/boostercamera/head/rgb`** (ROS 2 `/boostercamera/head/rgb`) and a `CameraInfo` on
+`rt/boostercamera/head/rgb/camera_info`, both stamped with the wall-clock capture time. NUbots_K1's
+**unchanged** `input::K1Camera` subscribes to that pair → `ImageCompressor` → `NetworkForwarder` →
+**NUsight** shows `CompressedImage`, same as on the real robot. The intrinsics come from the MJCF camera's
+`fovy` and the render size: an ideal pinhole, principal point at the image centre, zero distortion. Wire
+layouts are in [`PROTOCOL.md`](../mujoco/module/SdkBridge/PROTOCOL.md) §1.
 
-The same render thread also publishes the **head-pose segment** (`_head_pose`, K1Sensors' "NBPO" layout,
-`pose_segment:` in `camera.yaml`): the `Head_2` pose in the yaw-only base footprint frame, exactly what
-NUbridge publishes on the real robot. This matters more than it looks: NUbots' odometry is yaw-only, so
+Each 640×480 frame is ~0.9 MB (~221 Mbit/s at 30 fps). Over shared memory on one host that costs nothing;
+between machines it needs a fast wired link. K1Camera compares each stamp with its own clock and falls back
+to receive time beyond 1 s of skew, so keep the machines NTP-synced.
+
+Config: `mujoco/config/camera.yaml` (`topic`, resolution, fps). `topic` must match the entry in NUbots_K1's
+`K1Camera.yaml`. Renders offscreen via **EGL on Linux** or **CGL on macOS**, so it works **headless** too.
+Linux needs a render device (`./b run` passes `/dev/dri` + GPU). No device ⇒ logs and disables, no crash —
+but then vision receives **zero** frames (`VisualMesh Stats: Receiving 0/s`): confirm the sim log shows
+`Camera: rendering 640 x 480 ...` before blaming the NUbots side. Only the left camera is rendered (stereo
+is future work).
+
+**Legacy shared memory.** Each frame is also written to a Boost.Interprocess segment
+(`_boostercamera_head_rgb`, `segment:` in `camera.yaml`) laid out exactly as NUbots_K1's
+`input::NUSimCamera` reads it. That module and the `roles/nusim/*` roles that use it live on
+`jmontano/nusim-local` and the branches built on it; they predate K1Camera's move to DDS (NUbots_K1
+`07cd00d`). `--ipc host` (already used by `./b run` and NUbots' `./b run`) shares `/dev/shm` across the
+containers. Set `segment: ""` to turn it off once nothing uses NUSimCamera.
+
+The head pose — the `Head_2` pose in the yaw-only base footprint frame — goes out as **`rt/head_pose`**
+over DDS (what current K1Sensors reads), and the render thread also writes it to the legacy **head-pose
+segment** (`_head_pose`, K1Sensors' "NBPO" layout, `pose_segment:` in `camera.yaml`) for older builds. This matters more than it looks: NUbots' odometry is yaw-only, so
 `Sensors.Htw` gets its pitch/roll **only** from this pose — without it `GetUpPlanner` never sees the robot
 as fallen and the whole FallRecovery → GetUpPlanner → `K1GetUpPolicy` chain stays dead. The NUbots-side
 walk policy (`K1WalkPolicy`) also masks the head joints out of its observation: the policy trained with a
@@ -439,8 +452,7 @@ on the network ⇒ idle no-op. Config: `mujoco/config/supervisor.yaml`.
 - **Camera needs a render device.** On Linux, `module::Camera` uses EGL and needs `/dev/dri` or an NVIDIA
   device (both passed by `./b run`). Native macOS uses CGL. If context creation fails, the camera disables
   gracefully and vision on the NUbots side starves — see §6.
-- **Mono camera only.** The K1 has stereo head cameras; the sim renders the left one. NUbots' K1Camera
-  retries the right segment forever (harmless warning spam).
+- **Mono camera only.** The K1 has stereo head cameras; the sim renders the left one.
 - **Single robot, one DDS domain.** One robot on domain 0. A multi-robot field needs one sim process per
   robot, each on its own domain.
 - **Render fidelity vs vision networks.** The field is a procedural green checker with box-geom lines and a

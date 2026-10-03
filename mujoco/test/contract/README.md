@@ -31,6 +31,8 @@ Checks (each printed as `[PASS]`/`[FAIL]`, exit code 0 iff all pass):
 | 8 | `Move(0.1,0,0)` returns 0 within 1000 ms |
 | 9 | `RotateHead(0.2,0.3)` returns 0 within 1000 ms |
 | 10 | `GetUp()` returns 0 within 1000 ms |
+| 11 | `rt/boostercamera/head/rgb` (`sensor_msgs` `Image`) at ≥ 20 frames/s, every frame a whole rgb8 image stamped within 1 s of the client's clock (SDKs shipping `sensor_msgs/Image.h` only; skipped with `--synthetic`) |
+| 12 | `rt/boostercamera/head/rgb/camera_info` received with a usable intrinsic matrix (same conditions) |
 
 ## Client build strategy (what was chosen and why)
 
@@ -77,7 +79,11 @@ cd mujoco && ./docker/k1sim.sh build           # or K1SIM_BUILD_DIR=... ./docker
 
 The script starts `k1_mujoco_sim --headless` in docker (`--network host --ipc host
 --user $(id -u)`), waits for `SdkBridge ready`, runs the client, prints the
-PASS/FAIL summary and stops the container. `--synthetic` swaps in
+PASS/FAIL summary and stops the container. It runs the `sim/soccer` role binary
+(`bin/sim/soccer --headless`) with the same GPU flags as `docker/k1sim.sh run`, since the
+camera needs an EGL device. `--udp-only` sets `K1_DDS_UDP_ONLY=1` on the sim, so every
+topic — including ~0.9 MB camera frames, as fragmented datagrams — crosses UDP the way it
+would between machines. `--synthetic` swaps in
 `sdkbridge_synthetic_sim` (ConsoleLog + SdkBridge + a scripted `SimStateUpdate`
 source, no physics — see `module/SdkBridge/test_support/`) for when
 `module::Simulation` is stubbed or being bisected.
@@ -86,6 +92,20 @@ source, no physics — see `module/SdkBridge/test_support/`) for when
 `--user`). It leaves root-owned Fast-DDS SHM segments in the shared `/dev/shm`
 which a later uid-1000 participant can neither write to nor delete — host→sim RPC
 then times out while some sim→host topics still flow. Details in PROTOCOL.md §4.
+
+## Recorded results (2026-10-03, `bin/sim/soccer --headless`, build-docker, SDK d5d8f7ae)
+
+The SDK NUbots_K1 main pins (`d5d8f7ae`) ships its Fast-DDS inside the `.a`; `build.sh`
+links it when the SDK has no `third_party/` directory. All checks `PASS`:
+
+| Metric | UDP + SHM | `--udp-only` (loopback) |
+|---|---|---|
+| `rt/boostercamera/head/rgb` | 26.8–29.0 frames/s over two runs, 640x480 rgb8, max stamp skew 5 ms | 27.2 frames/s, max stamp skew 6 ms |
+| `camera_info` | 194 samples/5 s, fx=342.8 | 195 samples/5 s |
+| `rt/low_state` rate | 50.00 msgs/s | 50.00 msgs/s |
+
+Loopback has no NIC, MTU or switch in the way, so `--udp-only` is a floor for what a real
+network costs, not a measurement of one.
 
 ## Recorded results (2026-07-08, real `k1_mujoco_sim --headless`, build-wsC)
 

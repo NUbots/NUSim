@@ -120,6 +120,42 @@ covariances zero (the sim's base state is ground truth). HardwareIO logs the fra
 first message it receives, which shows which convention the real robot uses. Layouts and
 registered names verified against the SDK (`d5d8f7ae`) with `getName()`, as for `Pose_`.
 
+### `sensor_msgs::msg::dds_::Image_` (sensor_msgs/Image.h)
+| # | field | type | notes |
+|---|---|---|---|
+| 1 | `header` | `std_msgs::msg::dds_::Header_` | wall-clock capture time, `frame_id` `"head_camera"` |
+| 2 | `height` | `unsigned long` (`uint32_t`) | |
+| 3 | `width` | `unsigned long` (`uint32_t`) | |
+| 4 | `encoding` | `string` | always `"rgb8"` |
+| 5 | `is_bigendian` | `octet` (`uint8_t`) | 0 |
+| 6 | `step` | `unsigned long` (`uint32_t`) | `width * 3` |
+| 7 | `data` | `sequence<octet>` | top-down rows |
+
+Topic `rt/boostercamera/head/rgb` (`config/camera.yaml: topic`). Not an SDK API topic: it is
+the ROS 2 topic `/boostercamera/head/rgb` the robot's camera driver publishes, which NUbots_K1's
+`input::K1Camera` subscribes to (best-effort) through `ChannelFactory`. K1Camera also accepts
+`bgr8`, `mono8`, Bayer and `nv12`; the sim sends `rgb8`, what it renders.
+
+### `sensor_msgs::msg::dds_::CameraInfo_` (sensor_msgs/CameraInfo.h)
+| # | field | type | notes |
+|---|---|---|---|
+| 1 | `header` | `Header_` | same as the frame's `Image_` |
+| 2 | `height` | `unsigned long` | |
+| 3 | `width` | `unsigned long` | |
+| 4 | `distortion_model` | `string` | `"plumb_bob"` |
+| 5 | `d` | `sequence<double>` | five zeros (MuJoCo has no lens distortion) |
+| 6 | `k` | `double[9]` | `[fx 0 cx; 0 fy cy; 0 0 1]`, `fx = fy` from the MJCF `fovy`, `(cx, cy)` the image centre |
+| 7 | `r` | `double[9]` | identity |
+| 8 | `p` | `double[12]` | `K` with a zero fourth column |
+| 9 | `binning_x`, `binning_y` | `unsigned long` | 0 |
+| 10 | `roi` | `sensor_msgs::msg::dds_::RegionOfInterest_` (`x_offset`, `y_offset`, `height`, `width` : `unsigned long`, `do_rectify` : `boolean`) | all zero |
+
+Topic `<image topic>/camera_info`, published once per frame. K1Camera subscribes reliably and reads
+`k[0]`, `k[2]`, `k[5]`, `width`, `height` and `d[0..1]`. The SDK header's `k`/`r`/`p` are
+`std::array` typedefs (`double__9`, `double__12`), i.e. IDL fixed arrays. Layouts read from the
+private member lists of the SDK headers (`d5d8f7ae`, the version NUbots_K1 main pins); decoding
+verified end to end by the contract test's SDK client.
+
 ### `booster_interface::msg::dds_::FallDownState_` (FallDownState.h)
 Enum `FallDownStateType : unsigned long` (C++ `uint32_t`) = `{IS_READY=0, IS_FALLING=1,
 HAS_FALLEN=2, IS_GETTING_UP=3}`.
@@ -217,6 +253,8 @@ booster_interface::msg::dds_::MotorCmd_
 booster_msgs::msg::dds_::RpcReqMsg_
 booster_msgs::msg::dds_::RpcRespMsg_
 geometry_msgs::msg::dds_::Pose_        (+ nested Point_, Quaternion_; rt/head_pose)
+sensor_msgs::msg::dds_::Image_         (rt/boostercamera/head/rgb)
+sensor_msgs::msg::dds_::CameraInfo_    (+ nested RegionOfInterest_; rt/boostercamera/head/rgb/camera_info)
 nav_msgs::msg::dds_::Odometry_         (+ nested std_msgs Header_, builtin_interfaces Time_,
                                         geometry_msgs PoseWithCovariance_, TwistWithCovariance_,
                                         Twist_, Vector3_; rt/odom)
@@ -336,6 +374,12 @@ to widen, not narrow), `module::SdkBridge` uses:
   `battery_state`, `button_event`): `RELIABLE` + `VOLATILE` durability + `KEEP_LAST(5)`
   history. `head_pose` must be `RELIABLE`: K1Sensors creates its reader with
   `reliable = true`, which a best-effort writer would not match.
+- **Camera image writer** (`rt/boostercamera/head/rgb`): `RELIABLE` + `VOLATILE` +
+  `KEEP_LAST(1)`. K1Camera's reader is best-effort; `RELIABLE` still matches it and also
+  matches ROS 2 tools, which default to reliable readers. Depth 1 means a reader that falls
+  behind only ever has the newest frame resent, never a backlog of ~0.9 MB samples, and
+  `SdkBridge` drops a frame that arrives while the previous one is still being written
+  (`Single`). The frame's `CameraInfo` uses the state writer QoS.
 - **RPC request reader** (`rt/LocoApiTopicReq`): `RELIABLE` + `KEEP_LAST(10)` history
   (bursts of calls at startup — e.g. NUbots issuing `ChangeMode` immediately — must not
   drop).

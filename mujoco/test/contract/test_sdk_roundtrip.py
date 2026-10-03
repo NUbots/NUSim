@@ -5,10 +5,14 @@ running the sim in docker and driving it with a client built against the actual
 Booster SDK (client only — never linked into the sim). See README.md here.
 
 Usage:
-    ./test_sdk_roundtrip.py [--synthetic] [--build-dir NAME] [--keep-sim]
+    ./test_sdk_roundtrip.py [--synthetic] [--udp-only] [--build-dir NAME] [--keep-sim]
 
     --synthetic   run the sdkbridge_synthetic_sim test binary instead of the real
-                  k1_mujoco_sim (for when module::Simulation is stubbed/broken)
+                  sim/soccer role (for when module::Simulation is stubbed/broken);
+                  it renders no camera, so the camera checks are skipped
+    --udp-only    strip the sim's SHM transport (K1_DDS_UDP_ONLY=1), so everything,
+                  including ~0.9 MB camera frames, crosses as fragmented UDP like it
+                  would between machines
     --build-dir   docker build dir under mujoco/ containing the binaries
                   (default: $K1SIM_BUILD_DIR, else auto-detect)
     --keep-sim    leave the sim container running after the test (debugging)
@@ -34,7 +38,7 @@ def sim_binary(build_dir: str, synthetic: bool) -> str:
     return (
         f"{build_dir}/module/SdkBridge/test_support/sdkbridge_synthetic_sim"
         if synthetic
-        else f"{build_dir}/k1_mujoco_sim"
+        else f"{build_dir}/bin/sim/soccer"
     )
 
 
@@ -66,7 +70,18 @@ def docker(*args: str, **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run(["docker", *args], **kwargs)
 
 
-def start_sim(build_dir: str, synthetic: bool) -> None:
+def gpu_flags() -> list[str]:
+    """The camera renders offscreen through EGL, which needs a GPU: the same flags as
+    docker/k1sim.sh's run_flags (mesa render nodes, and NVIDIA via CDI or its runtime)."""
+    flags = ["--device", "/dev/dri"] if os.path.isdir("/dev/dri") else []
+    if any(pathlib.Path(d).glob("nvidia*.yaml") for d in ("/etc/cdi", "/var/run/cdi")):
+        flags += ["--device", "nvidia.com/gpu=all", "-e", "NVIDIA_DRIVER_CAPABILITIES=all"]
+    elif '"nvidia"' in docker("info", "--format", "{{json .Runtimes}}", capture_output=True, text=True).stdout:
+        flags += ["--gpus", "all", "-e", "NVIDIA_DRIVER_CAPABILITIES=all"]
+    return flags
+
+
+def start_sim(build_dir: str, synthetic: bool, udp_only: bool) -> None:
     binary = "./" + sim_binary(build_dir, synthetic)
     cmd = (
         [
@@ -84,6 +99,10 @@ def start_sim(build_dir: str, synthetic: bool) -> None:
             # can't write to -> host->sim RPC silently times out. See PROTOCOL.md §4.
             "--user",
             f"{os.getuid()}:{os.getgid()}",
+        ]
+        + ([] if synthetic else gpu_flags())
+        + (["-e", "K1_DDS_UDP_ONLY=1"] if udp_only else [])
+        + [
             "-v",
             f"{REPO_DIR}:/workspace/NUSim",
             "-w",
@@ -116,6 +135,7 @@ def stop_sim() -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--synthetic", action="store_true")
+    parser.add_argument("--udp-only", action="store_true")
     parser.add_argument("--build-dir", default=None)
     parser.add_argument("--keep-sim", action="store_true")
     args = parser.parse_args()
@@ -124,10 +144,10 @@ def main() -> int:
     client = ensure_client()
 
     stop_sim()  # clear any leftover container from an aborted run
-    start_sim(build_dir, args.synthetic)
+    start_sim(build_dir, args.synthetic, args.udp_only)
     try:
         # Client prints its own [PASS]/[FAIL] lines and a summary.
-        result = subprocess.run([str(client)], timeout=120)
+        result = subprocess.run([str(client)] + (["--no-camera"] if args.synthetic else []), timeout=120)
         code = result.returncode
     except subprocess.TimeoutExpired:
         print("[roundtrip] FAIL: client did not finish within 120 s", flush=True)

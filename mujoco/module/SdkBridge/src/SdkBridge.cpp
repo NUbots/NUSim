@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <string>
 
+#include "module/Camera/src/CameraConfig.hpp"
 #include "shared/message/Commands.hpp"
 #include "shared/message/SimMessages.hpp"
 #include "shared/util/Config.hpp"
@@ -30,6 +31,12 @@ namespace k1sim::module {
             state_publisher_ = std::make_unique<sdkbridge::StatePublisher>(*dds_, battery_soc);
             rpc_server_      = std::make_unique<sdkbridge::RpcServer>(*dds_, *this, unknown_api_status);
 
+            // The camera topic lives with the rest of the camera's config, which module::Camera owns
+            const std::string camera_topic = camera::load_config(config::load("camera.yaml")).topic;
+            if (!camera_topic.empty()) {
+                camera_publisher_ = std::make_unique<sdkbridge::CameraPublisher>(*dds_, camera_topic);
+            }
+
             log<NUClear::LogLevel::INFO>("SdkBridge ready (DDS domain", domain, udp_only ? "UDP-only" : "UDP+SHM", ")");
         });
 
@@ -43,6 +50,14 @@ namespace k1sim::module {
             state_publisher_->publish(update);
         });
 
+        // Single: a frame that arrives while the previous one is still being written is dropped, so
+        // a slow transport sheds frames instead of queueing ~1 MB each in NUClear
+        on<Trigger<message::CameraFrame>, Single>().then([this](const message::CameraFrame& frame) {
+            if (camera_publisher_) {
+                camera_publisher_->publish(frame);
+            }
+        });
+
         on<Every<1, std::chrono::seconds>>().then([this] {
             if (state_publisher_) {
                 state_publisher_->publish_battery();
@@ -52,6 +67,7 @@ namespace k1sim::module {
         on<Shutdown>().then([this] {
             log<NUClear::LogLevel::INFO>("SdkBridge shutting down");
             // Destroy in reverse-dependency order: readers/writers before the participant.
+            camera_publisher_.reset();
             rpc_server_.reset();
             state_publisher_.reset();
             dds_.reset();

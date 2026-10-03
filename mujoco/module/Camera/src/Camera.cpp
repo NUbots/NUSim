@@ -21,7 +21,7 @@ namespace k1sim::module {
 
     namespace {
 
-        // Mirrors K1Camera.cpp's MAX_IMAGE_BYTES exactly -- the reader drops (logs WARN
+        // Mirrors NUSimCamera.cpp's MAX_IMAGE_BYTES exactly -- the reader drops (logs WARN
         // and skips) any frame whose data_size exceeds this, so it's not enough to just
         // fit in the segment; we must fit in what the reader will accept.
         constexpr std::size_t kMaxImageBytes = 2 * 1024 * 1024;
@@ -36,8 +36,10 @@ namespace k1sim::module {
 
         on<Startup>().then([this] {
             camera::CameraConfig cfg = camera::load_config(config::load("camera.yaml"));
-            log<NUClear::LogLevel::INFO>("Camera: starting offscreen render thread (segment",
-                                         cfg.segment.c_str(),
+            log<NUClear::LogLevel::INFO>("Camera: starting offscreen render thread (topic",
+                                         cfg.topic.empty() ? "<disabled>" : cfg.topic.c_str(),
+                                         ", segment",
+                                         cfg.segment.empty() ? "<disabled>" : cfg.segment.c_str(),
                                          ",",
                                          cfg.width,
                                          "x",
@@ -73,14 +75,22 @@ namespace k1sim::module {
         // writer) is local to this function/thread on purpose -- see the
         // class-level comment in Camera.hpp for the threading rationale.
 
+        if (cfg.topic.empty() && cfg.segment.empty()) {
+            log<NUClear::LogLevel::WARN>(
+                "Camera: both topic and segment are disabled in config/camera.yaml -- "
+                "not rendering");
+            return;
+        }
+
         const auto frame_bytes = static_cast<std::size_t>(cfg.width) * static_cast<std::size_t>(cfg.height) * 3;
-        if (frame_bytes > kMaxImageBytes) {
+        if (!cfg.segment.empty() && frame_bytes > kMaxImageBytes) {
             log<NUClear::LogLevel::ERROR>("Camera: configured",
                                           cfg.width,
                                           "x",
                                           cfg.height,
-                                          "rgb8 exceeds K1Camera's MAX_IMAGE_BYTES (2 MiB) -- the reader would drop "
-                                          "every frame. Lower width/height in config/camera.yaml.");
+                                          "rgb8 exceeds NUSimCamera's MAX_IMAGE_BYTES (2 MiB) -- the reader would "
+                                          "drop every frame. Lower width/height in config/camera.yaml, or disable "
+                                          "the segment.");
             return;
         }
 
@@ -97,18 +107,22 @@ namespace k1sim::module {
         }
 
         // Created from config alone (doesn't need the model), so the segment exists
-        // whether the sim or NUbots' K1Camera process starts first -- K1Camera
+        // whether the sim or NUbots' NUSimCamera process starts first -- NUSimCamera
         // retries opening it every 500 ms until it appears.
         std::unique_ptr<camera::SharedImageWriter> writer;
-        try {
-            writer = std::make_unique<camera::SharedImageWriter>(cfg.segment, cfg.width, cfg.height);
-        }
-        catch (const std::exception& e) {
-            log<NUClear::LogLevel::ERROR>("Camera: failed to create shared-memory segment",
-                                          cfg.segment.c_str(),
-                                          ":",
-                                          e.what());
-            return;
+        if (!cfg.segment.empty()) {
+            try {
+                writer = std::make_unique<camera::SharedImageWriter>(cfg.segment, cfg.width, cfg.height);
+            }
+            catch (const std::exception& e) {
+                log<NUClear::LogLevel::ERROR>("Camera: failed to create shared-memory segment",
+                                              cfg.segment.c_str(),
+                                              ":",
+                                              e.what());
+                if (cfg.topic.empty()) {
+                    return;
+                }
+            }
         }
 
         while (running_.load(std::memory_order_acquire) && !handles_ready_.load(std::memory_order_acquire)) {
@@ -189,18 +203,22 @@ namespace k1sim::module {
 
         // Pinhole intrinsics derived from the MJCF camera's fovy + configured
         // resolution (MuJoCo has no lens-distortion model, so k1/k2 published via
-        // SharedImageWriter::publish are always 0). `fov` follows the same
-        // "diagonal angle from the optical axis to the farthest image corner"
-        // convention module/platform/Webots.cpp used for its own simulated camera on
-        // the NUbots side (see utility::vision::projection's RECTILINEAR model and
-        // Webots.cpp's "auto fov" branch): unproject the far image corner and take
-        // twice that half-angle.
+        // SharedImageWriter::publish and CameraInfo's d are always 0). The segment's
+        // `fov` follows the same "diagonal angle from the optical axis to the
+        // farthest image corner" convention module/platform/Webots.cpp used for its
+        // own simulated camera on the NUbots side (see utility::vision::projection's
+        // RECTILINEAR model and Webots.cpp's "auto fov" branch): unproject the far
+        // image corner and take twice that half-angle.
         const double fovy_rad          = model->cam_fovy[cam_id] * kPi / 180.0;
         const double focal_px          = (static_cast<double>(cfg.height) * 0.5) / std::tan(fovy_rad * 0.5);
         const double focal_length_norm = focal_px / static_cast<double>(cfg.width);
         const double aspect            = static_cast<double>(cfg.height) / static_cast<double>(cfg.width);
         const double half_diag_norm    = 0.5 * std::sqrt(1.0 + aspect * aspect);
         const double fov_rad           = 2.0 * std::atan(half_diag_norm / focal_length_norm);
+        // CameraInfo's principal point: the image centre, which K1Camera turns into the same
+        // zero centre offset the segment carries
+        const double centre_x_px = static_cast<double>(cfg.width) * 0.5;
+        const double centre_y_px = static_cast<double>(cfg.height) * 0.5;
 
         log<NUClear::LogLevel::INFO>("Camera: rendering",
                                      cfg.width,
@@ -221,9 +239,11 @@ namespace k1sim::module {
             mjtNum head_q[4]{1, 0, 0, 0};  // wxyz
             mjtNum base_xy[2]{};
             mjtNum base_q[4]{1, 0, 0, 0};  // wxyz, free-joint qpos[3:7]
+            std::chrono::system_clock::time_point stamp;
             {
                 std::lock_guard<std::mutex> lock(*sim_mutex);
                 mjv_updateScene(model, data, &opt, nullptr, &cam, mjCAT_ALL, &scn);
+                stamp = std::chrono::system_clock::now();
                 if (pose_writer != nullptr) {
                     for (int i = 0; i < 3; ++i) {
                         head_p[i] = data->xpos[3 * head_body_id + i];
@@ -257,12 +277,27 @@ namespace k1sim::module {
                 std::memcpy(dst, src, static_cast<std::size_t>(cfg.width) * 3);
             }
 
-            writer->publish(flipped.data(),
-                            flipped.size(),
-                            static_cast<float>(focal_length_norm),
-                            static_cast<float>(fov_rad),
-                            0.0f,
-                            0.0f);
+            if (writer != nullptr) {
+                writer->publish(flipped.data(),
+                                flipped.size(),
+                                static_cast<float>(focal_length_norm),
+                                static_cast<float>(fov_rad),
+                                0.0f,
+                                0.0f);
+            }
+
+            if (!cfg.topic.empty()) {
+                auto frame    = std::make_unique<message::CameraFrame>();
+                frame->stamp  = stamp;
+                frame->width  = static_cast<uint32_t>(cfg.width);
+                frame->height = static_cast<uint32_t>(cfg.height);
+                frame->fx     = focal_px;
+                frame->fy     = focal_px;
+                frame->cx     = centre_x_px;
+                frame->cy     = centre_y_px;
+                frame->rgb    = flipped;
+                emit(frame);
+            }
 
             next_frame += std::chrono::duration_cast<std::chrono::steady_clock::duration>(frame_period);
             const auto now = std::chrono::steady_clock::now();

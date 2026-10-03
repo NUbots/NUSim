@@ -1,0 +1,20 @@
+// sensor_msgs::msg::dds_::Image_ — see PROTOCOL.md.
+// Field layout verified against include/booster/idl/sensor_msgs/Image.h.
+
+#include "Header.idl"
+
+module sensor_msgs {
+    module msg {
+        module dds_ {
+            struct Image_ {
+                std_msgs::msg::dds_::Header_ header;
+                unsigned long height;
+                unsigned long width;
+                string encoding;
+                octet is_bigendian;
+                unsigned long step;
+                sequence<octet> data;
+            };
+        };
+    };
+};

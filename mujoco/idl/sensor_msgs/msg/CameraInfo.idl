@@ -1,0 +1,25 @@
+// sensor_msgs::msg::dds_::CameraInfo_ — see PROTOCOL.md.
+// Field layout verified against include/booster/idl/sensor_msgs/CameraInfo.h.
+
+#include "Header.idl"
+#include "RegionOfInterest.idl"
+
+module sensor_msgs {
+    module msg {
+        module dds_ {
+            struct CameraInfo_ {
+                std_msgs::msg::dds_::Header_ header;
+                unsigned long height;
+                unsigned long width;
+                string distortion_model;
+                sequence<double> d;
+                double k[9];
+                double r[9];
+                double p[12];
+                unsigned long binning_x;
+                unsigned long binning_y;
+                sensor_msgs::msg::dds_::RegionOfInterest_ roi;
+            };
+        };
+    };
+};

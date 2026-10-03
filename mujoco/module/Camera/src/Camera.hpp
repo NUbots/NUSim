@@ -10,11 +10,12 @@
 
 namespace k1sim::module {
 
-    // Renders the K1's head camera offscreen (MuJoCo mjv/mjr) and publishes rgb8
-    // frames into a Boost.Interprocess shared-memory segment matching NUbots'
-    // K1Camera SharedImageHeader byte-for-byte, so the unchanged input::K1Camera
-    // reads them -> ImageCompressor -> NetworkForwarder -> NUsight. No NUbots-side
-    // changes.
+    // Renders the K1's head camera offscreen (MuJoCo mjv/mjr) as rgb8 frames and hands
+    // each one to module::SdkBridge (message::CameraFrame), which publishes it as
+    // sensor_msgs Image + CameraInfo over DDS -- what the real robot's camera driver
+    // publishes and NUbots' unchanged input::K1Camera subscribes to. Optionally also
+    // writes the legacy Boost.Interprocess shared-memory segment NUbots'
+    // input::NUSimCamera reads (config/camera.yaml `segment:`).
     //
     // Threading: all MuJoCo GL calls must happen on the one thread that holds the
     // GL context current. module::Viewer already owns NUClear's MainThread for its

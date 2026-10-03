@@ -3,9 +3,11 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <mujoco/mujoco.h>
 #include <mutex>
+#include <vector>
 
 #include "shared/k1/JointIndex.hpp"
 
@@ -55,6 +57,22 @@ namespace k1sim::message {
         int fall_state      = 0;  // booster::FallState value
         bool getting_up     = false;
         double measured_rtf = 0.0;
+    };
+
+    // One rendered head-camera frame, emitted by module::Camera's render thread for
+    // module::SdkBridge to publish as sensor_msgs Image + CameraInfo.
+    struct CameraFrame {
+        // Wall-clock time the scene was captured, as the robot's camera driver stamps it:
+        // NUbots' K1Camera compares it with its own clock and matches it against Hcw.
+        std::chrono::system_clock::time_point stamp{};
+        uint32_t width  = 0;
+        uint32_t height = 0;
+        // Pinhole intrinsics in pixels (MuJoCo renders an ideal, distortion-free pinhole)
+        double fx = 0.0;
+        double fy = 0.0;
+        double cx = 0.0;
+        double cy = 0.0;
+        std::vector<uint8_t> rgb;  // rgb8, top-down rows, width * height * 3 bytes
     };
 
     // Emitted once by module::Simulation after the model is loaded. The mutex guards

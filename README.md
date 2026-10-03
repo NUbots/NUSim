@@ -9,7 +9,7 @@ it **unchanged**.
 ```
 sim/soccer  (native macOS / Linux docker container, NUClear)
    MuJoCo physics + servo/mode machine + head camera + GLFW viewer + GameController supervisor
-        │  Booster SDK over FastDDS (domain 0)            │  camera frames → shared memory
+        │  Booster SDK over FastDDS (domain 0)            │  camera: sensor_msgs Image over the same DDS
         ▼                                                 ▼
  NUbots_K1  (K1WalkPolicy / K1GetUpPolicy, behaviour)   input::K1Camera → ImageCompressor → NUsight
         ▲
@@ -19,8 +19,9 @@ sim/soccer  (native macOS / Linux docker container, NUClear)
 - **One process** simulates the K1 body — physics, servos, mode machine and fall detection — while the
   locomotion policies run on the NUbots side and drive it through CUSTOM mode + `rt/joint_ctrl`, exactly as
   they drive the real robot. No Booster downloads, no separate motion runner.
-- **Vision** is rendered by MuJoCo and handed to NUbots' *unchanged* `input::K1Camera` over shared memory,
-  so `CompressedImage` reaches **NUsight** exactly as on the real robot.
+- **Vision** is rendered by MuJoCo and published as `sensor_msgs` `Image` + `CameraInfo` on
+  `rt/boostercamera/head/rgb`, the topics the robot's camera driver publishes, so NUbots' *unchanged*
+  `input::K1Camera` reads it and `CompressedImage` reaches **NUsight** exactly as on the real robot.
 - **GameController** is heard directly by NUbots over the network; the sim additionally runs a supervisor
   that places the ball/robots per game phase.
 
@@ -65,8 +66,8 @@ create its DDS participant (`Failed to create participant`). `./b run` now defau
 `FASTRTPS_DEFAULT_PROFILES_FILE` to the repo's copy, so no flag is needed — see
 [Networking](#networking) for the caveat if you pass `--environment` yourself.
 
-The full autonomous stack works too — `./b run nusim/behaviour` has the robot find the ball by vision and
-dribble it goalward. See [docs/K1_MUJOCO_SETUP.md](docs/K1_MUJOCO_SETUP.md) for the end-to-end walkthrough
+The full autonomous stack works too — `./b run nusim/behaviour` (on `jmontano/nusim-local` and the branches
+built on it) has the robot find the ball by vision and dribble it goalward. See [docs/K1_MUJOCO_SETUP.md](docs/K1_MUJOCO_SETUP.md) for the end-to-end walkthrough
 and the NUbots_K1-side requirements (`skill::K1WalkPolicy` + `skill::K1GetUpPolicy` in the role,
 `VisualMesh.yaml` camera entry).
 
@@ -162,12 +163,16 @@ no build flag, no shim and no code change — the same code path they use agains
   `FASTRTPS_DEFAULT_PROFILES_FILE` points at an XML containing a participant profile named `booster_dds`
   (`Failed to create participant`). `./b run` sets it for you. If you pass `--environment` yourself, note it
   takes ONE comma-separated argument and **replaces** the default — re-include the FastDDS var or all DDS dies.
-- **Vision is not DDS.** Head-camera frames are rendered offscreen and written to a Boost.Interprocess
-  shared-memory segment (`_boostercamera_head_rgb`, rgb8 640×480 @ 30 Hz) whose header matches NUbots'
-  `input::K1Camera` byte-for-byte; head pose goes to a second segment (`_head_pose`, `K1Sensors` "NBPO"
-  layout) and is the only path torso tilt takes into NUbots, i.e. what makes fall detection and the get-up
-  chain work. Segment names must match `K1Camera.yaml` / `K1Sensors.yaml` on the NUbots side. Only the left
-  camera is rendered — `K1Camera` warn-retries harmlessly on the right one; stereo is future work.
+- **Vision** is DDS too. Head-camera frames are rendered offscreen and published as a `sensor_msgs`
+  `Image` (rgb8 640×480 @ 30 Hz) on `rt/boostercamera/head/rgb`, with a `CameraInfo` per frame on
+  `rt/boostercamera/head/rgb/camera_info` — what NUbots' `input::K1Camera` subscribes to on the robot
+  (`topic` in [`mujoco/config/camera.yaml`](mujoco/config/camera.yaml) must match `K1Camera.yaml`). Head pose
+  is `rt/head_pose`. Each frame is ~0.9 MB, ~221 Mbit/s: free over shared memory, but across machines it
+  needs a fast wired link. Only the left camera is rendered; stereo is future work.
+- **Legacy shared memory.** Each frame is also written to the Boost.Interprocess segment
+  `_boostercamera_head_rgb` (and head pose to `_head_pose`) that NUbots' `input::NUSimCamera` reads — the
+  `roles/nusim/*` roles on `jmontano/nusim-local` and the branches built on it. Set `segment: ""` in
+  `camera.yaml` to turn it off once nothing uses it.
 
 ## GameController
 

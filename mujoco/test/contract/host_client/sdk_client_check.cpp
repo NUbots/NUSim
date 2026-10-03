@@ -22,6 +22,11 @@
 //     the pinned 324946e7 does, the older local checkout (7fb7287) doesn't even
 //     compile the type into its .a; guarded with __has_include, SKIP printed
 //     otherwise. Point BOOSTER_SDK_ROOT at a pinned-SDK extract to enable it.
+//   - rt/boostercamera/head/rgb (sensor_msgs Image) received at >= 20 frames/s as whole
+//     rgb8 frames stamped within 1 s of our clock (K1Camera's MAX_CLOCK_SKEW), and its
+//     /camera_info with a usable intrinsic matrix -- the pair NUbots' K1Camera subscribes
+//     to. Only when the SDK ships booster/idl/sensor_msgs/Image.h; SKIP printed otherwise,
+//     or with --no-camera (the synthetic sim renders no camera).
 //   - B1LocoClient::ChangeMode(kPrepare)/Move/RotateHead/GetUp each return 0
 //     within 1000 ms (the SDK's own client-side timeout)
 //   - B1LocoClient::GetMode returns 0 and reports kPrepare after the
@@ -34,6 +39,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <functional>
 #include <string>
 #include <thread>
@@ -55,6 +61,11 @@
 #if __has_include(<booster/idl/nav_msgs/Odometry.h>)
     #include <booster/idl/nav_msgs/Odometry.h>
     #define K1SIM_CHECK_ROS_ODOMETRY 1
+#endif
+#if __has_include(<booster/idl/sensor_msgs/Image.h>)
+    #include <booster/idl/sensor_msgs/CameraInfo.h>
+    #include <booster/idl/sensor_msgs/Image.h>
+    #define K1SIM_CHECK_CAMERA 1
 #endif
 #include <booster/idl/b1/LowState.h>
 #include <booster/idl/b1/Odometer.h>
@@ -140,31 +151,40 @@ namespace {
     }
 #endif
 
-#ifdef K1SIM_CHECK_ROS_ODOMETRY
-    std::atomic<uint64_t> g_ros_odom_count{0};
-    std::atomic<bool> g_ros_odom_finite{true};
-    std::string g_ros_odom_frames;  // written once, before the count is first incremented
-    void RosOdometryHandler(const void* msg) {
-        const auto* odom  = static_cast<const nav_msgs::msg::Odometry*>(msg);
-        const auto& p     = odom->pose().pose().position();
-        const auto& twist = odom->twist().twist();
-        if (g_ros_odom_count.load() == 0) {
-            g_ros_odom_frames = "'" + odom->header().frame_id() + "' -> '" + odom->child_frame_id() + "'";
+#ifdef K1SIM_CHECK_CAMERA
+    std::atomic<uint64_t> g_image_count{0};
+    std::atomic<bool> g_image_whole{true};
+    std::atomic<double> g_image_max_skew_s{0.0};
+    std::atomic<bool> g_image_described{false};
+    std::string g_image_desc;  // written once, by the first frame
+    void ImageHandler(const void* msg) {
+        const auto* image = static_cast<const sensor_msgs::msg::Image*>(msg);
+        if (image->encoding() != "rgb8" || image->step() != image->width() * 3
+            || image->data().size() != std::size_t(image->step()) * image->height() || image->width() == 0) {
+            g_image_whole.store(false, std::memory_order_relaxed);
         }
-        for (double v : {p.x(),
-                         p.y(),
-                         p.z(),
-                         twist.linear().x(),
-                         twist.linear().y(),
-                         twist.linear().z(),
-                         twist.angular().x(),
-                         twist.angular().y(),
-                         twist.angular().z()}) {
-            if (!std::isfinite(v)) {
-                g_ros_odom_finite.store(false, std::memory_order_relaxed);
-            }
+        const auto now     = std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
+        const double stamp = image->header().stamp().sec() + image->header().stamp().nanosec() * 1e-9;
+        if (std::fabs(now - stamp) > g_image_max_skew_s.load()) {
+            g_image_max_skew_s.store(std::fabs(now - stamp), std::memory_order_relaxed);
         }
-        g_ros_odom_count.fetch_add(1, std::memory_order_relaxed);
+        if (!g_image_described.exchange(true)) {
+            g_image_desc = std::to_string(image->width()) + "x" + std::to_string(image->height()) + " "
+                           + image->encoding() + ", frame '" + image->header().frame_id() + "'";
+        }
+        g_image_count.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    std::atomic<uint64_t> g_camera_info_count{0};
+    std::atomic<double> g_camera_info_fx{0.0};
+    std::atomic<bool> g_camera_info_matches_image{true};
+    void CameraInfoHandler(const void* msg) {
+        const auto* info = static_cast<const sensor_msgs::msg::CameraInfo*>(msg);
+        g_camera_info_fx.store(info->k()[0], std::memory_order_relaxed);
+        if (info->width() == 0 || info->height() == 0 || info->k()[8] != 1.0) {
+            g_camera_info_matches_image.store(false, std::memory_order_relaxed);
+        }
+        g_camera_info_count.fetch_add(1, std::memory_order_relaxed);
     }
 #endif
 
@@ -199,8 +219,9 @@ namespace {
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
     std::printf("=== k1sim SdkBridge contract test (host SDK client) ===\n");
+    const bool check_camera = !(argc > 1 && std::strcmp(argv[1], "--no-camera") == 0);
 
 #ifdef K1SIM_SDK_PINNED
     ChannelFactory::Instance()->InitDefault(0);
@@ -224,6 +245,15 @@ int main() {
     ChannelSubscriber<BatteryState> battery_sub("rt/battery_state", BatteryHandler);
     battery_sub.InitChannel();
 #endif
+#ifdef K1SIM_CHECK_CAMERA
+    ChannelSubscriber<sensor_msgs::msg::Image> image_sub("rt/boostercamera/head/rgb", ImageHandler);
+    ChannelSubscriber<sensor_msgs::msg::CameraInfo> camera_info_sub("rt/boostercamera/head/rgb/camera_info",
+                                                                    CameraInfoHandler);
+    if (check_camera) {
+        image_sub.InitChannel();
+        camera_info_sub.InitChannel();
+    }
+#endif
 
     // Let DDS discovery settle before measuring rate.
     std::this_thread::sleep_for(std::chrono::milliseconds(1500));
@@ -232,6 +262,9 @@ int main() {
     g_odom_count.store(0);
 #ifdef K1SIM_CHECK_BATTERY
     g_battery_count.store(0);
+#endif
+#ifdef K1SIM_CHECK_CAMERA
+    g_image_count.store(0);
 #endif
     const auto rate_start = std::chrono::steady_clock::now();
     std::this_thread::sleep_for(std::chrono::seconds(5));
@@ -277,6 +310,29 @@ int main() {
     std::printf(
         "[SKIP] rt/battery_state checks (SDK build lacks booster/idl/b1/BatteryState.h — "
         "set BOOSTER_SDK_ROOT to a pinned-SDK (324946e7) extract to enable)\n");
+#endif
+
+#ifdef K1SIM_CHECK_CAMERA
+    if (check_camera) {
+        const double fps = static_cast<double>(g_image_count.load()) / elapsed_s;
+        std::printf("camera: %.2f frames/s (%s), max stamp skew %.3f s; camera_info: %llu samples, fx=%.1f\n",
+                    fps,
+                    g_image_desc.c_str(),
+                    g_image_max_skew_s.load(),
+                    static_cast<unsigned long long>(g_camera_info_count.load()),
+                    g_camera_info_fx.load());
+        check(fps >= 20.0, "rt/boostercamera/head/rgb received at >= 20 frames/s");
+        check(g_image_whole.load(), "rt/boostercamera/head/rgb frames are whole rgb8 images");
+        check(g_image_max_skew_s.load() < 1.0, "rt/boostercamera/head/rgb stamps within 1 s of our clock");
+        check(g_camera_info_count.load() > 0, "rt/boostercamera/head/rgb/camera_info received at least once");
+        check(g_camera_info_fx.load() > 0.0 && g_camera_info_matches_image.load(),
+              "rt/boostercamera/head/rgb/camera_info has a usable intrinsic matrix");
+    }
+    else {
+        std::printf("[SKIP] camera checks (--no-camera)\n");
+    }
+#else
+    std::printf("[SKIP] camera checks (SDK build lacks booster/idl/sensor_msgs/Image.h)\n");
 #endif
 
     booster::robot::b1::B1LocoClient client;

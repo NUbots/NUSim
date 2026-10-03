@@ -51,6 +51,10 @@ namespace k1sim::module::sdkbridge {
         return qos;
     }
 
+    DataWriterQos DdsParticipant::image_writer_qos() {
+        return state_writer_qos(1);
+    }
+
     DataReaderQos DdsParticipant::rpc_request_reader_qos(int depth) {
         DataReaderQos qos      = DATAREADER_QOS_DEFAULT;
         qos.reliability().kind = RELIABLE_RELIABILITY_QOS;
