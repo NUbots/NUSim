@@ -39,8 +39,11 @@ namespace k1sim {
             std::string initial_keyframe = "ready";  // keyframe to spawn (and reset) into
             double rtf                   = 1.0;      // real-time factor; 0 = free-run (no pacing sleep)
             int robots                   = 1;        // total K1s; extras are attached copies PD-held at "ready"
-            int state_publish_divisor    = 20;       // physics steps per SimStateUpdate
-            double resync_threshold      = 0.05;     // seconds behind schedule before the deadline resyncs
+            // Per-robot spawn (x, y, yaw), main robot first, from a --game; robots must equal its
+            // size. Empty = the main robot spawns at its keyframe and extras on a default grid.
+            std::vector<std::array<double, 3>> spawns;
+            int state_publish_divisor = 20;    // physics steps per SimStateUpdate
+            double resync_threshold   = 0.05;  // seconds behind schedule before the deadline resyncs
 
             // Ground-contact override, applied to the geom named "floor" after the model loads.
             //
@@ -143,9 +146,12 @@ namespace k1sim {
         // Appends one row to Config::foot_log_path. No-op when logging is off. Requires the
         // caller to hold mutex_ (it reads d_->contact).
         void log_foot_state();
-        // Puts the extra --robots copies at their spawn slots in the ready pose; must run
-        // after every keyframe reset (whose zero-padding would pile them at the origin).
-        void place_extras();
+        // Puts the extra robot copies at their spawn slots in the ready pose, and the main robot
+        // at its game spawn when there is one; must run after every keyframe reset (whose
+        // zero-padding would pile the extras at the origin).
+        void place_robots();
+        // Spawn (x, y, z, yaw) of robot k (0 = main): Config::spawns, else the default grid.
+        std::array<double, 4> spawn_pose(int k) const;
         // Requires the caller to hold mutex_. Reads d_/map_/controller state into a fresh message.
         std::unique_ptr<message::SimStateUpdate> make_snapshot(uint64_t steps) const;
 

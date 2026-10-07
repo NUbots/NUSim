@@ -1,12 +1,34 @@
 # Physics / stepping configuration (module::Simulation)
 
 # Field to play on, overridable with --field <name>. Each field is an MJCF scene, relative to
-# mujoco/; --model <path> loads any scene instead. The default is the field of the Middle
-# Division the K1 plays in.
+# mujoco/. The default is the field of the Middle Division the K1 plays in.
 field: middle
 fields:
   middle: models/k1/k1_scene_robocup_middle.xml # RoboCup 2026 HSL M-Field, 14 x 9 m
   kidsize: models/k1/k1_scene_robocup.xml # RoboCup KidSize (pre-2026 rules), 9 x 6 m
+  no-field: models/k1/k1_scene_flat.xml # bare flat floor, no field or ball
+
+# Matches for --game <n> (n robots a side, 1-11), instead of --field/--robots. Positions are one
+# team's (x, y) in metres, in its own -x half; the other team is the point-mirror (-x, -y),
+# turned to face the other way. The first robot is the main robot -- the one NUbots controls --
+# the rest are PD-held at the ready pose. The dimensions are the field's (HSL M-Field).
+game:
+  field: middle
+  length: 14.0
+  width: 9.0
+  centre_circle_radius: 1.5
+  penalty_mark_distance: 2.0 # from the goal line
+  # With --on-field-positions, kickoff positions facing +x, taken in this order as n grows:
+  # the attacker (1v1), goalkeeper (2v2), left wing (3v3), right wing (4v4). Robots 5 to 11 are
+  # spread evenly through the rest of the half, outside the centre circle.
+  attacker: [-2.0, 0.0] # just outside the centre circle
+  goalkeeper: [-6.5, 0.0]
+  wings: [[-3.0, 2.5], [-3.0, -2.5]]
+  # Otherwise the team lines up `sideline_offset` m outside the touchlines facing into the field,
+  # two at a time on alternate sides (-y first). Each side starts level with the penalty mark and
+  # fills towards the halfway line every `sideline_spacing` m.
+  sideline_offset: 0.3
+  sideline_spacing: 0.8
 
 real_time_factor: 1.0 # 0 = free-run (tests/training)
 state_publish_divisor: 20 # physics steps per SimStateUpdate (1 kHz / 20 = 50 Hz LowState)

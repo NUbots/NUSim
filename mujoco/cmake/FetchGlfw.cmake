@@ -23,10 +23,12 @@ set(GLFW_BUILD_WAYLAND
     OFF
     CACHE BOOL "" FORCE
 )
-set(GLFW_BUILD_X11
-    ON
-    CACHE BOOL "" FORCE
-)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  set(GLFW_BUILD_X11
+      ON
+      CACHE BOOL "" FORCE
+  )
+endif()
 
 FetchContent_Declare(glfw URL https://github.com/glfw/glfw/archive/refs/tags/3.4.tar.gz)
 FetchContent_MakeAvailable(glfw)
