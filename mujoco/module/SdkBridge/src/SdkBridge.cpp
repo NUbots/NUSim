@@ -26,11 +26,12 @@ namespace k1sim::module {
             const double battery_soc         = cfg["battery_soc"].as<double>(100.0);
             const int64_t unknown_api_status = cfg["unknown_api_status"].as<int64_t>(0);
 
-            dds_             = std::make_unique<sdkbridge::DdsParticipant>(domain, udp_only);
-            state_publisher_ = std::make_unique<sdkbridge::StatePublisher>(*dds_, battery_soc);
-            rpc_server_      = std::make_unique<sdkbridge::RpcServer>(*dds_, *this, unknown_api_status);
-            ground_truth_        = std::make_unique<sdkbridge::GroundTruthPublisher>(*dds_);
-            ball_command_reader_ = std::make_unique<sdkbridge::BallCommandReader>(*dds_, *this);
+            dds_                  = std::make_unique<sdkbridge::DdsParticipant>(domain, udp_only);
+            state_publisher_      = std::make_unique<sdkbridge::StatePublisher>(*dds_, battery_soc);
+            rpc_server_           = std::make_unique<sdkbridge::RpcServer>(*dds_, *this, unknown_api_status);
+            ground_truth_         = std::make_unique<sdkbridge::GroundTruthPublisher>(*dds_);
+            ball_command_reader_  = std::make_unique<sdkbridge::BallCommandReader>(*dds_, *this);
+            target_marker_reader_ = std::make_unique<sdkbridge::TargetMarkerReader>(*dds_, *this);
 
             log<NUClear::LogLevel::INFO>("SdkBridge ready (DDS domain", domain, udp_only ? "UDP-only" : "UDP+SHM", ")");
         });
@@ -57,6 +58,7 @@ namespace k1sim::module {
         on<Shutdown>().then([this] {
             log<NUClear::LogLevel::INFO>("SdkBridge shutting down");
             // Destroy in reverse-dependency order: readers/writers before the participant.
+            target_marker_reader_.reset();
             ball_command_reader_.reset();
             ground_truth_.reset();
             rpc_server_.reset();

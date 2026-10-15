@@ -76,11 +76,12 @@ and the NUbots_K1-side requirements (`skill::K1WalkPolicy` + `skill::K1GetUpPoli
 > `libopenvino_intel_cpu_plugin.so`, and inference prefers TensorRT on the GPU anyway. No overlay,
 > no `--volume`, no `LD_LIBRARY_PATH`.
 
-## Ground truth and ball commands (testing)
+## Ground truth, ball commands and the target marker (testing)
 
-NUSim publishes the ball's and robot's ground truth on `rt/nusim/gt/ball` and `rt/nusim/gt/robot`, and accepts
-`rt/nusim/ball_command` to place or roll the ball (all `nav_msgs/Odometry`). NUbots-side tools use them to
-validate estimators and to run repeatable shot scenarios. The wire contract is in
+NUSim publishes the ball's and robot's ground truth on `rt/nusim/gt/ball` and `rt/nusim/gt/robot`, accepts
+`rt/nusim/ball_command` to place or roll the ball, and draws a target pose sent on `rt/nusim/target_marker` in the viewer
+(all `nav_msgs/Odometry`). NUbots-side tools use them to validate estimators, to run repeatable shot scenarios and to
+show where a walk planner is heading. The wire contract is in
 [module/SdkBridge/PROTOCOL.md §6](mujoco/module/SdkBridge/PROTOCOL.md).
 
 ## Command reference

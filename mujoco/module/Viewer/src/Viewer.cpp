@@ -2,6 +2,7 @@
 
 #include <GLFW/glfw3.h>
 #include <atomic>
+#include <cmath>
 #include <cstdio>
 #include <functional>
 #include <mujoco/mujoco.h>
@@ -11,6 +12,7 @@
 #include "shared/k1/BoosterApi.hpp"
 #include "shared/message/Commands.hpp"
 #include "shared/message/SimMessages.hpp"
+#include "shared/sim/PlanarPose.hpp"
 
 namespace k1sim::module {
 
@@ -43,6 +45,51 @@ namespace k1sim::module {
         // anything physics-critical, so plain atomics without the sim mutex are fine.
         std::atomic<double> g_sim_time{0.0};
         std::atomic<int> g_mode{-1};
+
+        // The target marker (rt/nusim/target_marker), fixed in the world, and the base pose a robot-frame marker is
+        // placed from (cached from SimStateUpdate). Guarded by marker_mutex, not the sim mutex: neither touches mjData.
+        std::mutex marker_mutex;
+        bool marker_visible = false;
+        PlanarPose marker_pose;
+        PlanarPose base_pose;
+
+        // The marker as drawn: a flat disc on the floor with an arrow along its heading
+        constexpr double MARKER_RADIUS       = 0.2;  // m
+        constexpr double MARKER_ARROW_LENGTH = 0.5;  // m, from the centre
+        constexpr double MARKER_ARROW_WIDTH  = 0.04;
+        constexpr float MARKER_DISC_RGBA[4]  = {1.0f, 0.45f, 0.05f, 0.45f};
+        constexpr float MARKER_ARROW_RGBA[4] = {1.0f, 0.45f, 0.05f, 0.95f};
+
+        // Appends the target marker to the scene after mjv_updateScene, as decoration: only this window draws it, so
+        // the robot's camera (module::Camera, its own scene) never sees it
+        void add_target_marker(mjvScene* scene) {
+            PlanarPose pose;
+            {
+                std::lock_guard<std::mutex> lock(marker_mutex);
+                if (!marker_visible) {
+                    return;
+                }
+                pose = marker_pose;
+            }
+            if (scene->ngeom + 2 > scene->maxgeom) {
+                return;
+            }
+
+            mjvGeom* disc             = scene->geoms + scene->ngeom++;
+            const mjtNum disc_size[3] = {MARKER_RADIUS, MARKER_RADIUS, 0.002};
+            const mjtNum disc_pos[3]  = {pose.x, pose.y, 0.003};
+            mjv_initGeom(disc, mjGEOM_CYLINDER, disc_size, disc_pos, nullptr, MARKER_DISC_RGBA);
+            disc->category = mjCAT_DECOR;
+
+            mjvGeom* arrow       = scene->geoms + scene->ngeom++;
+            const mjtNum from[3] = {pose.x, pose.y, 0.02};
+            const mjtNum to[3]   = {pose.x + MARKER_ARROW_LENGTH * std::cos(pose.yaw),
+                                    pose.y + MARKER_ARROW_LENGTH * std::sin(pose.yaw),
+                                    0.02};
+            mjv_initGeom(arrow, mjGEOM_ARROW, nullptr, nullptr, nullptr, MARKER_ARROW_RGBA);
+            mjv_connector(arrow, mjGEOM_ARROW, MARKER_ARROW_WIDTH, from, to);
+            arrow->category = mjCAT_DECOR;
+        }
 
         // Set by the Viewer constructor; lets the plain-C GLFW key callback emit a
         // NUClear message (SimResetRequest) without holding a Reactor pointer here.
@@ -302,6 +349,19 @@ namespace k1sim::module {
         on<Trigger<message::SimStateUpdate>>().then([](const message::SimStateUpdate& state) {
             g_sim_time.store(state.sim_time, std::memory_order_relaxed);
             g_mode.store(state.mode, std::memory_order_relaxed);
+            std::lock_guard<std::mutex> lock(marker_mutex);
+            base_pose = {state.base.x, state.base.y, yaw_of(state.base.quat)};
+        });
+
+        // A robot-frame target is placed from the base pose when it arrives, so it stays put as the robot walks to it
+        on<Trigger<message::TargetMarker>>().then([](const message::TargetMarker& marker) {
+            std::lock_guard<std::mutex> lock(marker_mutex);
+            marker_visible = marker.visible;
+            if (!marker.visible) {
+                return;
+            }
+            const PlanarPose pose{marker.x, marker.y, marker.yaw};
+            marker_pose = marker.frame == message::TargetMarker::Frame::ROBOT ? robot_to_world(pose, base_pose) : pose;
         });
 
         on<Every<16, std::chrono::milliseconds>, MainThread>().then([this] {
@@ -331,6 +391,7 @@ namespace k1sim::module {
                     }
                 }
                 mjv_updateScene(g_model, g_data, &opt, &pert, &cam, mjCAT_ALL, &scn);
+                add_target_marker(&scn);
             }
 
             int width  = 0;

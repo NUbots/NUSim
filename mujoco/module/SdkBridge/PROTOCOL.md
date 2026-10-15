@@ -398,20 +398,21 @@ changed flag or a swapped generator no longer shows up as a reviewable diff of
 `*PubSubTypes.cxx`, it shows up as a robot that silently stops decoding our samples.
 Re-read this section and §2 before touching the invocation.
 
-## 6. NUSim-only topics: ground truth and ball commands
+## 6. NUSim-only topics: ground truth, ball commands and the target marker
 
 These are **not** part of the Booster SDK surface. A real robot never publishes or listens on
 them. They exist so NUbots-side tools can validate estimators against the simulator and drive
-repeatable ball scenarios without a GameController. All three use `nav_msgs::msg::dds_::Odometry_`,
+repeatable ball scenarios without a GameController, and show a planner's target in the viewer. All four use `nav_msgs::msg::dds_::Odometry_`,
 which both NUSim and NUbots_K1 already generate, so neither side needs new IDL. Topic names are
-in `shared/k1/NUSimApi.hpp`. QoS: the writers use `state_writer_qos()` and the command reader
-uses `rpc_request_reader_qos(5)` (§4).
+in `shared/k1/NUSimApi.hpp`. QoS: the writers use `state_writer_qos()` and the ball-command and
+target-marker readers use `rpc_request_reader_qos(5)` (§4).
 
 | Topic | Direction | Rate |
 |---|---|---|
 | `rt/nusim/gt/ball` | sim → client | 50 Hz (every `SimStateUpdate`), only while the scene has a free `ball` body with a `ball` geom |
 | `rt/nusim/gt/robot` | sim → client | 50 Hz |
 | `rt/nusim/ball_command` | client → sim | on demand |
+| `rt/nusim/target_marker` | client → sim | on demand |
 
 **Ground truth (`gt/ball`, `gt/robot`)**
 - `header.stamp` is the **wall clock** (system clock, UTC epoch) when the physics snapshot was taken, so a client on the same host can time-align it with its own estimates.
@@ -432,4 +433,11 @@ uses `rpc_request_reader_qos(5)` (§4).
 - `twist.linear` is the centre velocity to set.
 - `twist.angular` is the spin to set, unless `child_frame_id == "rolling"`. In that case the spin for rolling without slipping is derived from the velocity, so the ball does not skid (and shed speed) on its first contact.
 - `module::Supervisor` applies the command under the sim mutex between physics steps, whether or not GameController placement is enabled.
+
+**Target marker (`target_marker`)**
+- `module::Viewer` draws it in the viewer window as a translucent orange disc on the floor, with an arrow along the target heading. It is added to the viewer's scene only, so the robot's camera never renders it.
+- `header.frame_id` selects the frame of the pose, `"world"` or `"robot"`, as for `ball_command`. Anything else is logged and ignored. A robot-frame target is fixed in the world at the robot's pose when it arrives, so it stays put as the robot walks to it.
+- `pose.position.x/y` is the target's position; `z` is ignored. `pose.orientation` is its heading: only the yaw is used.
+- `child_frame_id == "hidden"` removes the marker. Otherwise it stays until the next one replaces it.
+- The twist is ignored.
 

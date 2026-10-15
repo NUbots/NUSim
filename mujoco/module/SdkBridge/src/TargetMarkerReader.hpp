@@ -1,0 +1,28 @@
+#ifndef K1SIM_MODULE_SDKBRIDGE_TARGETMARKERREADER_HPP
+#define K1SIM_MODULE_SDKBRIDGE_TARGETMARKERREADER_HPP
+
+#include <fastdds/dds/subscriber/DataReader.hpp>
+#include <fastdds/dds/subscriber/DataReaderListener.hpp>
+#include <nuclear>
+
+#include "module/SdkBridge/src/DdsParticipant.hpp"
+
+// Reads rt/nusim/target_marker (NUSim test display, see shared/k1/NUSimApi.hpp and PROTOCOL.md §6) and emits it as
+// message::TargetMarker for module::Viewer to draw. Used by NUbots to show a walk planner's target.
+
+namespace k1sim::module::sdkbridge {
+
+    class TargetMarkerReader : public eprosima::fastdds::dds::DataReaderListener {
+    public:
+        TargetMarkerReader(DdsParticipant& dds, NUClear::Reactor& reactor);
+
+        void on_data_available(eprosima::fastdds::dds::DataReader* reader) override;
+
+    private:
+        NUClear::Reactor& reactor_;
+        eprosima::fastdds::dds::DataReader* reader_ = nullptr;
+    };
+
+}  // namespace k1sim::module::sdkbridge
+
+#endif  // K1SIM_MODULE_SDKBRIDGE_TARGETMARKERREADER_HPP

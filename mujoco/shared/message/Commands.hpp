@@ -59,6 +59,17 @@ namespace k1sim::message {
         bool rolling = false;                      // derive spin for rolling without slipping
     };
 
+    // rt/nusim/target_marker (NUSim test display, see shared/k1/NUSimApi.hpp): a target pose for module::Viewer to
+    // draw. Never rendered by the robot's camera.
+    struct TargetMarker {
+        enum class Frame { WORLD, ROBOT };
+        Frame frame  = Frame::WORLD;
+        double x     = 0.0;   // m
+        double y     = 0.0;   // m
+        double yaw   = 0.0;   // rad, the target heading
+        bool visible = true;  // false removes the marker
+    };
+
     // Emitted once by module::Locomotion at startup; consumed by module::Simulation,
     // whose physics thread drives controller->step() (see StepController).
     struct ControllerHandle {
