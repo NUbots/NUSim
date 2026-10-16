@@ -150,6 +150,8 @@ namespace k1sim {
         // at its game spawn when there is one; must run after every keyframe reset (whose
         // zero-padding would pile the extras at the origin).
         void place_robots();
+        // Rests the ball on the field's centre mark for a game. No-op no balls are present in the scene.
+        void place_ball_on_centre_mark();
         // Spawn (x, y, z, yaw) of robot k (0 = main): Config::spawns, else the default grid.
         std::array<double, 4> spawn_pose(int k) const;
         // Requires the caller to hold mutex_. Reads d_/map_/controller state into a fresh message.

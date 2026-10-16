@@ -453,6 +453,7 @@ namespace k1sim {
             root[4] = cw * q[1] - sw * q[2];
             root[5] = cw * q[2] + sw * q[1];
             root[6] = cw * q[3] + sw * q[0];
+            place_ball_on_centre_mark();
         }
 
         for (std::size_t j = 0; j < extra_maps_.size(); ++j) {
@@ -473,6 +474,17 @@ namespace k1sim {
                 d_->qvel[em.dof_adr[i]]  = 0.0;
             }
         }
+    }
+
+    void SimCore::place_ball_on_centre_mark() {
+        // Find the ball, if the scene has one
+        const int joint = mj_name2id(m_, mjOBJ_JOINT, "ball_free");
+        const int geom  = mj_name2id(m_, mjOBJ_GEOM, "ball");
+        if (joint < 0 || geom < 0) {
+            return;
+        }
+        // Move the ball back by its x offset so it sits on the centre mark
+        d_->qpos[m_->jnt_qposadr[joint]] = -m_->geom_pos[3 * geom];
     }
 
     void SimCore::reset() {
