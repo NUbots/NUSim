@@ -11,7 +11,7 @@
 #include <vector>
 
 #include "module/Camera/src/CameraConfig.hpp"
-#include "module/Camera/src/EglContext.hpp"
+#include "module/Camera/src/OffscreenContext.hpp"
 #include "module/Camera/src/SharedImageWriter.hpp"
 #include "module/Camera/src/SharedPoseWriter.hpp"
 #include "shared/sim/HeadPose.hpp"
@@ -69,7 +69,7 @@ namespace k1sim::module {
     }
 
     void Camera::render_loop(camera::CameraConfig cfg) {
-        // Everything below (GLFW window, mjvScene/mjrContext, the shared-memory
+        // Everything below (GL context, mjvScene/mjrContext, the shared-memory
         // writer) is local to this function/thread on purpose -- see the
         // class-level comment in Camera.hpp for the threading rationale.
 
@@ -84,15 +84,15 @@ namespace k1sim::module {
             return;
         }
 
-        // Offscreen OpenGL via EGL (not GLFW): no shared GLFW/Xlib global state with
+        // Offscreen OpenGL via CGL (macOS) or EGL: no shared GLFW/Xlib global state with
         // module::Viewer's on-screen window, so the two render threads don't corrupt
         // each other's heap; also works with no display (headless). RAII — tears the
         // context down on any return below.
-        camera::EglContext egl(cfg.width, cfg.height);
-        if (!egl.valid()) {
+        camera::OffscreenContext context(cfg.width, cfg.height);
+        if (!context.valid()) {
             log<NUClear::LogLevel::ERROR>(
-                "Camera: EGL offscreen context creation failed -- no camera frames "
-                "will be published (need libEGL + a GPU/mesa device)");
+                "Camera: offscreen OpenGL context creation failed -- no camera frames "
+                "will be published (need native macOS OpenGL or EGL + a GPU/mesa device)");
             return;
         }
 
@@ -275,7 +275,7 @@ namespace k1sim::module {
         mjv_freeScene(&scn);
         mjr_freeContext(&con);
         writer.reset();  // destructor removes the shm segment
-        // EGL context torn down by egl's destructor (RAII), independent of Viewer's GLFW.
+        // Offscreen context torn down by its destructor (RAII), independent of Viewer's GLFW.
     }
 
 }  // namespace k1sim::module

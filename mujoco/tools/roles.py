@@ -7,6 +7,8 @@ CMakeCache. Toggle with `./b configure --set-role/--unset-role`, or `-i` for ccm
 import glob
 import os
 
+from _util import build_dir
+
 import b
 
 
@@ -16,7 +18,7 @@ def register(command):
 
 def run(**kwargs):
     roles_dir = os.path.join(b.mujoco_dir, "roles")
-    cache = os.path.join(b.mujoco_dir, os.environ.get("K1SIM_BUILD_DIR", "build-docker"), "CMakeCache.txt")
+    cache = os.path.join(b.mujoco_dir, build_dir(), "CMakeCache.txt")
 
     state = {}
     if os.path.isfile(cache):
