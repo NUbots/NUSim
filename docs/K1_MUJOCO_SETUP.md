@@ -206,7 +206,7 @@ The full vision→localisation→behaviour stack runs against the sim too (verif
 by vision and dribbles it goalward autonomously):
 
 ```bash
-# terminal 1 — the sim (confirm "Camera: rendering 640 x 480" appears)
+# terminal 1 — the sim (confirm "Camera: rendering 544 x 448" appears)
 cd ~/NUSim && ./b run sim/soccer
 # terminal 2 — the Tester purpose (find_ball / walk_to_ball / align_ball_to_goal)
 cd ~/NUbots_K1
