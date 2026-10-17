@@ -26,12 +26,14 @@ segment: _boostercamera_head_rgb
 # that still read `head_pose: - segment:`. Empty string disables.
 pose_segment: _head_pose
 
-# rgb8, so the segment carries width*height*3 pixel bytes after the header --
-# 640x480 (921600 bytes) stays well under K1Camera's 2 MiB MAX_IMAGE_BYTES and
-# matches the MuJoCo default offscreen buffer size (models/k1/K1_22dof.xml and
-# the scene files don't override <visual><global offwidth/offheight/>).
-width: 640
-height: 480
+# rgb8, so the segment carries width*height*3 pixel bytes after the header.
+# 544x448 is the real K1 head camera ("Left Camera": rectilinear, normalised focal
+# length 0.3725, i.e. 106.6 deg horizontal x 95.7 deg vertical field of view); the
+# MJCF camera's fovy (models/k1/K1_22dof.xml) is set to match. 730,368 bytes stays
+# well under K1Camera's 2 MiB MAX_IMAGE_BYTES and inside the MuJoCo default 640x480
+# offscreen buffer (the models don't override <visual><global offwidth/offheight/>).
+width: 544
+height: 448
 fps: 30
 
 # Name of the <camera> element the model attaches to the head (see
