@@ -17,10 +17,9 @@ namespace k1sim::module {
         explicit Simulation(std::unique_ptr<NUClear::Environment> environment);
 
     private:
-        // Constructed in the Reactor constructor (not inside on<Startup>) so that its atomic
-        // controller_ member always exists before any reaction can run — on<Startup> handlers
-        // across reactors are not guaranteed to be ordered/serialized by NUClear, so
-        // on<Trigger<ControllerHandle>> could otherwise race the construction of sim_.
+        // Constructed in the Reactor constructor, not on<Startup>, so it exists before any reaction
+        // runs: NUClear doesn't order on<Startup> across reactors, so on<Trigger<ControllerHandle>>
+        // could otherwise race its construction.
         std::unique_ptr<SimCore> sim_;
         double next_pose_log_ = 0.0;  // sim-time (s) of the next base-pose heartbeat log
     };

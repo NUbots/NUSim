@@ -1,32 +1,20 @@
-// Contract-test client: uses the Booster SDK strictly AS A CLIENT (never linked
-// into k1_mujoco_sim) to prove module::SdkBridge is byte-compatible with the real
-// wire protocol. Built on the HOST (see build.sh) against the older-but-wire-
-// identical local checkout at /home/nubots/Workspace/booster/booster_robotics_sdk
-// (commit 7fb7287) — see module/SdkBridge/PROTOCOL.md for why that's equivalent to
-// the pinned 324946e7 for every type/api_id this test touches.
+// Contract-test client: drives module::SdkBridge through the real Booster SDK client (never linked
+// into the sim) to check wire compatibility. Built on the host (see build.sh); see
+// module/SdkBridge/PROTOCOL.md for which SDK commits are wire-equivalent.
 //
-// Checks (see module/SdkBridge/PROTOCOL.md and the M4/M5 acceptance criteria):
-//   - rt/low_state received at >= 45 msgs/s over a 5s window
-//   - each sample's motor_state_serial has exactly 22 entries with finite,
-//     plausible-magnitude values
-//   - rt/odometer_state received at least once
-//   - rt/head_pose received at least once with a finite, standing-height pose (the
-//     topic NUbots' K1Sensors places the camera and torso from). Only when the SDK
-//     ships booster/idl/geometry_msgs/Pose.h; SKIP printed otherwise.
-//   - rt/odom (nav_msgs Odometry, the source of NUbots' Sensors.vTw) received at
-//     least once with finite pose and twist, reporting its frames. Only when the SDK
-//     ships booster/idl/nav_msgs/Odometry.h (1.7.0 firmware); SKIP printed otherwise.
-//   - rt/battery_state received at least once during the 5s window (published at
-//     1 Hz via NUClear on<Every<1, std::chrono::seconds>>) with soc in (0, 100].
-//     Only when the SDK being built against ships booster/idl/b1/BatteryState.h —
-//     the pinned 324946e7 does, the older local checkout (7fb7287) doesn't even
-//     compile the type into its .a; guarded with __has_include, SKIP printed
-//     otherwise. Point BOOSTER_SDK_ROOT at a pinned-SDK extract to enable it.
-//   - B1LocoClient::ChangeMode(kPrepare)/Move/RotateHead/GetUp each return 0
-//     within 1000 ms (the SDK's own client-side timeout)
-//   - B1LocoClient::GetMode returns 0 and reports kPrepare after the
-//     ChangeMode(kPrepare) settles — exercises the RPC *response body* path
-//     ({"mode": N}), not just the status echo
+// Checks:
+//   - rt/low_state at >= 45 msgs/s over 5 s, each sample with 22 finite, plausible
+//     motor_state_serial entries
+//   - rt/odometer_state received
+//   - rt/head_pose received with a finite, standing-height pose (SKIP if the SDK lacks
+//     booster/idl/geometry_msgs/Pose.h)
+//   - rt/odom received with finite pose and twist, reporting its frames (SKIP if the SDK lacks
+//     booster/idl/nav_msgs/Odometry.h, i.e. before the 1.7.0 firmware)
+//   - rt/battery_state received with soc in (0, 100] (SKIP if the SDK lacks
+//     booster/idl/b1/BatteryState.h; point BOOSTER_SDK_ROOT at a pinned-SDK extract to enable)
+//   - B1LocoClient ChangeMode(kPrepare)/Move/RotateHead/GetUp each return 0 within the SDK's
+//     1000 ms timeout
+//   - GetMode returns 0 and reports kPrepare, exercising the RPC response body
 //
 // Prints one PASS/FAIL line per check plus a summary; exit code 0 iff all passed.
 #include <atomic>
@@ -38,11 +26,9 @@
 #include <string>
 #include <thread>
 
-// booster/idl/b1/BatteryState.h shipping is a pinned-SDK (324946e7) marker: that
-// version also ships BatteryState_ in its .a AND requires ChannelFactory::
-// InitDefault(domain) instead of Init(domain) (whose empty-interface overload
-// tries to load a FASTRTPS_DEFAULT_PROFILES_FILE XML and fails without one).
-// The older local checkout (7fb7287) has neither.
+// booster/idl/b1/BatteryState.h marks the pinned SDK (324946e7), which also ships BatteryState_ and
+// needs ChannelFactory::InitDefault(domain): its Init(domain) tries to load a
+// FASTRTPS_DEFAULT_PROFILES_FILE and fails without one. The older 7fb7287 checkout has neither.
 #if __has_include(<booster/idl/b1/BatteryState.h>)
     #include <booster/idl/b1/BatteryState.h>
     #define K1SIM_CHECK_BATTERY 1

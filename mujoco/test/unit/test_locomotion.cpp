@@ -1,24 +1,11 @@
-// Headless, free-run unit tests for module::Locomotion's reduced mode state
-// machine (LocomotionController: Damping / Prepare / Custom). No NUClear/
-// PowerPlant involved: LocomotionController is deliberately framework-free
-// (see its header), so this test loads the model directly and drives
-// controller.step() + mj_step() itself, exactly as module::Simulation's
-// physics thread will in the real binary (StepController contract: step()
-// runs every physics tick, immediately before mj_step()).
+// Headless, free-run tests for LocomotionController (Damping / Prepare / Custom), without NUClear:
+// the test drives controller.step() + mj_step() itself, as module::Simulation's physics thread
+// does. Covers the Prepare blend/hold, head tracking, CUSTOM LowCmd tracking, fall detection, and
+// the mapping of WALKING/SOCCER requests onto PREPARE.
 //
-// Locomotion *policies* (walking, get-up, kick) live in NUbots_K1 and reach
-// the sim as LowCmd servo targets in CUSTOM mode, so the tests here cover the
-// servo-listener surface only: the Prepare blend/hold, CUSTOM LowCmd
-// tracking, fall detection, and the wire-compat mapping of WALKING/SOCCER
-// mode requests onto PREPARE.
-//
-// The model under test is the real vendored models/k1/K1_22dof.xml, NOT a
-// copy -- a floor plane is added programmatically via MuJoCo's mjSpec
-// model-editing API (mj_parseXML -> mjs_addGeom -> mj_compile) rather than an
-// XML <include>, because MuJoCo resolves an included file's own
-// <compiler meshdir="..."/> against the *outermost* file's directory, not
-// the included file's (verified empirically while building this test) --
-// mjSpec editing sidesteps that entirely and needs no companion XML fixture.
+// Uses the vendored models/k1/K1_22dof.xml with a floor added through mjSpec rather than an XML
+// <include>, because MuJoCo resolves an included file's <compiler meshdir/> against the outermost
+// file's directory.
 #include <array>
 #include <cmath>
 #include <cstdio>
@@ -207,9 +194,8 @@ namespace {
             mj_step(m, d);
         }
 
-        // Tolerances allow for PD steady-state error under gravity: the servo listener
-        // applies no gravity feed-forward (that used to be the locomotion backends' job;
-        // a NUbots_K1 policy compensates through its LowCmd tau/kp instead).
+        // Tolerances allow for PD steady-state error under gravity: there is no gravity
+        // feed-forward (a NUbots_K1 policy compensates through its LowCmd tau/kp).
         const double head_pitch = d->qpos[map.qpos_adr[JointIndexK1::HeadPitch]];
         const double head_yaw   = d->qpos[map.qpos_adr[JointIndexK1::HeadYaw]];
         check(std::abs(head_pitch - 0.3) < 0.12,
@@ -221,8 +207,7 @@ namespace {
     }
 
     // ---------------------------------------------------------------------
-    // Test 3: CUSTOM mode PD-tracks LowCmd servo targets (the path every
-    // NUbots_K1 locomotion policy now uses).
+    // Test 3: CUSTOM mode PD-tracks LowCmd servo targets.
     // ---------------------------------------------------------------------
     void test_custom_low_cmd() {
         std::printf("test_custom_low_cmd:\n");
@@ -240,9 +225,8 @@ namespace {
 
         const ModelMap map = ModelMap::build(m);
 
-        // Entering CUSTOM clears any stale LowCmd and PD-holds the entry pose until the
-        // first command of the session arrives (dead-client protection), so let the mode
-        // change land before streaming — like a real 50 Hz client.
+        // Entering CUSTOM PD-holds the entry pose until the session's first command, so let the
+        // mode change land before streaming, like a real 50 Hz client.
         for (int i = 0; i < 100; ++i) {
             controller.step(m, d);
             mj_step(m, d);
@@ -313,8 +297,7 @@ namespace {
     }
 
     // ---------------------------------------------------------------------
-    // Test 5: WALKING/SOCCER mode requests are wire-compatible but map to
-    // PREPARE (the walk policy lives in NUbots_K1 now).
+    // Test 5: WALKING/SOCCER mode requests map to PREPARE.
     // ---------------------------------------------------------------------
     void test_walking_maps_to_prepare() {
         std::printf("test_walking_maps_to_prepare:\n");

@@ -1,8 +1,7 @@
 # Generates the Fast-DDS type support from mujoco/idl/**/*.idl at build time.
 #
-# The generated code is a build artifact (${CMAKE_BINARY_DIR}/idl_gen), never committed — the same arrangement NUbots
-# uses for protobuf (nuclear/message/Neutron.cmake runs protoc over shared/message/**.proto into the build dir).
-# mujoco/idl/**/*.idl is the source of truth; see module/SdkBridge/PROTOCOL.md for where those layouts came from.
+# The generated code is a build artifact (${CMAKE_BINARY_DIR}/idl_gen), never committed, as NUbots does for protobuf.
+# The .idl files are the source of truth; see module/SdkBridge/PROTOCOL.md for their provenance.
 #
 # Include this from the directory that defines the k1sim_idl target, so the GENERATED source properties and the target
 # share a directory scope.
@@ -36,9 +35,7 @@ if(NOT k1sim_idl_files)
   message(FATAL_ERROR "No .idl files found under ${K1SIM_IDL_DIR}/*/msg/")
 endif()
 
-# fastddsgen emits exactly these six files per type, into idl_gen/<package>/. idl/regenerate.sh asserts that invariant
-# after every run (a type outside its own package directory, or any file at the output root, is a hard error there) —
-# which is what makes this list safe to predict.
+# fastddsgen emits these six files per type into idl_gen/<package>/; idl/regenerate.sh fails if that stops holding.
 set(k1sim_idl_outputs "")
 set(k1sim_idl_packages "")
 foreach(idl ${k1sim_idl_files})
@@ -53,18 +50,14 @@ foreach(idl ${k1sim_idl_files})
 endforeach()
 list(REMOVE_DUPLICATES k1sim_idl_packages)
 
-# A manifest of the .idl set, rewritten at configure time only when that set changes. Depending the generator on it
-# makes a REMOVED or renamed message re-run generation (which wipes OUT_DIR first); without it, ninja sees every
-# remaining output still present and up to date, and the deleted type's headers linger in the build tree on the include
-# path.
+# A manifest of the .idl set, rewritten at configure time only when the set changes. Depending on it makes removing or
+# renaming a message re-run generation (which wipes OUT_DIR); otherwise the old headers linger on the include path.
 list(SORT k1sim_idl_files)
 string(REPLACE ";" "\n" k1sim_idl_manifest "${k1sim_idl_files}")
 file(CONFIGURE OUTPUT ${CMAKE_BINARY_DIR}/idl_manifest.txt CONTENT "${k1sim_idl_manifest}\n")
 
-# One invocation for every .idl, not one per file: fastddsgen also generates the code for every type an .idl #includes
-# (Odometry.idl pulls in Header, Time, PoseWithCovariance, ...), so per-file commands would have two rules claiming the
-# same output file, which cmake rejects. That also means every .idl is a dependency of the single command — coarse, but
-# a rebuild is one JVM start, and it needs no dependency scraping to stay correct.
+# One invocation for all .idl files: fastddsgen also generates every #included type, so per-file commands would claim
+# the same outputs, which cmake rejects.
 add_custom_command(
   OUTPUT ${k1sim_idl_outputs}
   COMMAND ${CMAKE_COMMAND} -E env FASTDDSGEN=${FASTDDSGEN_EXECUTABLE} OUT_DIR=${K1SIM_IDL_OUT} bash

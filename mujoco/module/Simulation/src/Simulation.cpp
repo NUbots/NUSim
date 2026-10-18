@@ -85,9 +85,8 @@ namespace k1sim::module {
                                          ") — starting physics thread (PD-to-ready fallback until a "
                                          "controller attaches)");
 
-            // Start immediately with the PD fallback engaged; if Locomotion's ControllerHandle
-            // arrives it is swapped in atomically by the Trigger reaction below — race-free, no
-            // need to wait for it (Locomotion may not even be installed, e.g. in unit tests).
+            // Start with the PD fallback engaged. Locomotion's ControllerHandle, if it arrives, is
+            // swapped in atomically below (Locomotion may not be installed, e.g. in unit tests).
             sim_->start();
         });
 

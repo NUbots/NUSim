@@ -44,9 +44,9 @@ namespace k1sim::module {
         on<Trigger<LowCmdMessage>>().then(
             [this](const LowCmdMessage& cmd) { controller_->set_low_cmd(cmd.cmd_type, cmd.motors); });
 
-        // Locomotion policies (walk, get-up, lie-down, kick) moved to the NUbots_K1 side;
-        // they arrive as LowCmd servo targets in CUSTOM mode. The old high-level RPCs stay
-        // on the wire for SDK compatibility but are ignored with a warning.
+        // Locomotion policies (walk, get-up, lie-down, kick) run on the NUbots_K1 side and arrive as
+        // LowCmd targets in CUSTOM mode. These RPCs stay on the wire for SDK compatibility but are
+        // ignored with a warning.
         on<Trigger<WalkCommand>>().then([this](const WalkCommand&) { warn_once(walk_warned_, "Move"); });
         on<Trigger<GetUpRequest>>().then([this](const GetUpRequest&) { warn_once(getup_warned_, "GetUp"); });
         on<Trigger<LieDownRequest>>().then([this](const LieDownRequest&) { warn_once(liedown_warned_, "LieDown"); });

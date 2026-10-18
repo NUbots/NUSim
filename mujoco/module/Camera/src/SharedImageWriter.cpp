@@ -21,24 +21,21 @@ namespace k1sim::module::camera {
         const auto data_size  = static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 3;
         const auto total_size = sizeof(SharedImageHeader) + data_size;
 
-        // Discard any stale segment (e.g. left behind by a crashed previous run) so we
-        // never in-place-construct a mutex/condition over memory a stuck waiter might
-        // still reference, and so size always matches width/height. remove() is a
-        // no-op (returns false, doesn't throw) if nothing was there.
+        // Remove any stale segment (e.g. from a crashed run) so the header is never constructed over
+        // memory a reader may still reference, and the size always matches. No-op if none exists.
         bip::shared_memory_object::remove(segment_name_.c_str());
 
         shm_ = bip::shared_memory_object(bip::create_only, segment_name_.c_str(), bip::read_write);
         shm_.truncate(static_cast<bip::offset_t>(total_size));
         region_ = bip::mapped_region(shm_, bip::read_write);
 
-        // Placement-new the header on the freshly-mapped memory so its members (incl.
-        // the seqlock atomic) are initialised exactly once (seqlock = 0 = "no frame yet").
+        // Construct the header in place so its members, including seqlock (0 = no frame yet), are
+        // initialised once.
         header_            = new (region_.get_address()) SharedImageHeader();
         header_->width     = static_cast<uint32_t>(width);
         header_->height    = static_cast<uint32_t>(height);
         header_->data_size = static_cast<uint32_t>(data_size);
-        // encoding[] is already zero-filled by SharedImageHeader's default member
-        // initializer; just copy the (shorter, NUL-terminated-by-the-zero-fill) tag in.
+        // encoding[] is zero-filled by its initialiser, so the shorter tag stays NUL-terminated.
         std::memcpy(header_->encoding, kEncoding, std::strlen(kEncoding));
 
         pixels_ = reinterpret_cast<uint8_t*>(header_ + 1);

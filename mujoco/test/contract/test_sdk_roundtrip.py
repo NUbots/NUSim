@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""M4/M5 contract test: proves module::SdkBridge is byte-compatible with the real
-Booster SDK wire protocol (registered type names + CDR encoding + RPC JSON), by
-running the sim in docker and driving it with a client built against the actual
-Booster SDK (client only — never linked into the sim). See README.md here.
+"""Contract test: checks module::SdkBridge is wire-compatible with the real Booster SDK
+(registered type names, CDR encoding, RPC JSON) by running the sim in docker and
+driving it with a client built against the SDK, never linked into the sim. See
+README.md here.
 
 Usage:
     ./test_sdk_roundtrip.py [--synthetic] [--build-dir NAME] [--keep-sim]
 
     --synthetic   run the sdkbridge_synthetic_sim test binary instead of the real
-                  k1_mujoco_sim (for when module::Simulation is stubbed/broken)
+                  k1_mujoco_sim (tests SdkBridge without the physics)
     --build-dir   docker build dir under mujoco/ containing the binaries
                   (default: $K1SIM_BUILD_DIR, else auto-detect)
     --keep-sim    leave the sim container running after the test (debugging)
@@ -79,9 +79,9 @@ def start_sim(build_dir: str, synthetic: bool) -> None:
             "host",
             "--ipc",
             "host",
-            # CRITICAL: run as the invoking user. A root-run sim leaves root-owned
-            # Fast-DDS SHM segments in the shared /dev/shm that the host client
-            # can't write to -> host->sim RPC silently times out. See PROTOCOL.md §4.
+            # Run as the invoking user: a root-run sim leaves root-owned Fast-DDS SHM
+            # segments in /dev/shm that the host client can't write to, so host->sim RPCs
+            # time out. See PROTOCOL.md §4.
             "--user",
             f"{os.getuid()}:{os.getgid()}",
             "-v",

@@ -10,23 +10,13 @@
 
 namespace k1sim::module {
 
-    // Renders the K1's head camera offscreen (MuJoCo mjv/mjr) and publishes rgb8
-    // frames into a Boost.Interprocess shared-memory segment matching NUbots'
-    // K1Camera SharedImageHeader byte-for-byte, so the unchanged input::K1Camera
-    // reads them -> ImageCompressor -> NetworkForwarder -> NUsight. No NUbots-side
-    // changes.
+    // Renders the K1 head camera offscreen and publishes rgb8 frames into a shared-memory segment
+    // laid out like NUbots' K1Camera SharedImageHeader, so the unchanged input::K1Camera reads them.
     //
-    // Threading: all MuJoCo GL calls must happen on the one thread that holds the
-    // GL context current. module::Viewer already owns NUClear's MainThread for its
-    // own (window) GLFW context, and is disabled under --headless -- but Camera
-    // must keep rendering under --headless too (it feeds NUsight, not a local
-    // window), so it cannot piggyback on Viewer's MainThread reactions, and it must
-    // not gate on cli().headless the way Viewer does. Instead render_loop() runs on
-    // its own dedicated std::thread with its own CGL (macOS) or EGL context, paced
-    // by its own sleep_until loop rather than on<Every<>> (a NUClear thread-pool
-    // reaction is not guaranteed to run on the same OS thread twice, which would
-    // violate the one-thread-owns-the-context rule). See Camera.cpp for the full
-    // rationale. It never shares GLFW state with the viewer.
+    // Threading: MuJoCo GL calls must stay on the thread that holds the context. Viewer owns
+    // MainThread and is off under --headless, but Camera must render headless too, so render_loop()
+    // runs on its own std::thread with its own CGL (macOS) or EGL context, paced by sleep_until.
+    // on<Every<>> won't do: pool reactions aren't guaranteed to run on the same OS thread.
     class Camera : public NUClear::Reactor {
     public:
         explicit Camera(std::unique_ptr<NUClear::Environment> environment);
@@ -37,11 +27,8 @@ namespace k1sim::module {
         std::atomic<bool> running_{false};
         std::thread render_thread_;
 
-        // Written once by the Trigger<SimHandles> reaction (any NUClear pool
-        // thread); read by render_thread_ only after it observes handles_ready_ ==
-        // true (release/acquire), which happens-before publishes the plain
-        // pointer/mutex writes in handles_ across threads -- module::Simulation
-        // only ever emits SimHandles once and never touches it again afterwards.
+        // Written once by the Trigger<SimHandles> reaction; render_thread_ reads it only after
+        // seeing handles_ready_ (release/acquire). SimHandles is emitted only once.
         std::atomic<bool> handles_ready_{false};
         message::SimHandles handles_{};
     };

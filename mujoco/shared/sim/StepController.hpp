@@ -8,7 +8,7 @@ namespace k1sim {
     // The seam between the physics loop (module::Simulation) and the control logic
     // (module::Locomotion). The physics thread calls step() every physics step with
     // the sim mutex held, immediately before mj_step(); the implementation writes
-    // d->ctrl (and, for the kinematic backend, the root free-joint qvel).
+    // d->ctrl.
     // The state accessors are called from other threads and must be lock-free
     // (atomics) — they feed GetMode replies and the rt/fall_down publisher.
     class StepController {

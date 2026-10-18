@@ -1,37 +1,23 @@
-# Head camera offscreen render -> shared-memory bridge (module::Camera)
+# Head camera -> shared-memory bridge (module::Camera)
 #
-# Renders the MJCF "head" camera (models/k1/K1_22dof.xml, mounted on the
-# Head_2 body) offscreen at width x height @ fps and publishes rgb8 frames
-# into a Boost.Interprocess shared-memory segment matching NUbots'
-# input::K1Camera SharedImageHeader byte-for-byte. `segment` must match the
-# corresponding entry's `segment:` in NUbots_K1's
-# module/input/K1Camera/data/config/K1Camera.yaml (default below matches that
-# file's "Left Camera" entry: _boostercamera_head_rgb — NUbridge dropped the
-# "raw" from the topic name during RoboCup 2026. The right camera is not
-# rendered yet — K1Camera warn-retries on it harmlessly; stereo is future work).
+# Renders the MJCF "head" camera offscreen and publishes rgb8 frames into a shared-memory segment
+# laid out like NUbots' input::K1Camera SharedImageHeader. `segment` must match the `segment:` of
+# the "Left Camera" entry in NUbots_K1's module/input/K1Camera/data/config/K1Camera.yaml. The right
+# camera isn't rendered; K1Camera retries it harmlessly.
 #
-# Lens intrinsics (focal_length/fov/centre/k1/k2) are NOT configured here --
-# they're derived at runtime from the MJCF camera's fovy + width/height below
-# (MuJoCo is an ideal pinhole: the principal point is always the image centre
-# and there is no distortion model, so centre_x/centre_y/k1/k2 are always 0).
-# See module/Camera/src/Camera.cpp.
+# Intrinsics aren't configured here: they come from the MJCF camera's fovy and width/height. MuJoCo
+# is an ideal pinhole, so the principal point is the image centre and k1/k2 are 0.
 
 segment: _boostercamera_head_rgb
 
-# Head-pose shared-memory segment (the NUbridge-era K1Sensors "NBPO" layout).
-# Head frame (0.08 m above Head_pitch, as the robot reports it; see
-# shared/sim/HeadPose.hpp) in the yaw-only base footprint frame. Current NUbots_K1
-# reads this pose over DDS instead (rt/head_pose, published by module::SdkBridge
-# from the same computation); this segment only serves older K1Sensors builds
-# that still read `head_pose: - segment:`. Empty string disables.
+# Head-pose segment (K1Sensors' "NBPO" layout): the head frame in the yaw-only base footprint frame
+# (see shared/sim/HeadPose.hpp). Current NUbots_K1 reads this pose over DDS (rt/head_pose); the
+# segment only serves older K1Sensors builds. Empty disables.
 pose_segment: _head_pose
 
-# rgb8, so the segment carries width*height*3 pixel bytes after the header.
-# 544x448 is the real K1 head camera ("Left Camera": rectilinear, normalised focal
-# length 0.3725, i.e. 106.6 deg horizontal x 95.7 deg vertical field of view); the
-# MJCF camera's fovy (models/k1/K1_22dof.xml) is set to match. 730,368 bytes stays
-# well under K1Camera's 2 MiB MAX_IMAGE_BYTES and inside the MuJoCo default 640x480
-# offscreen buffer (the models don't override <visual><global offwidth/offheight/>).
+# The real K1 head camera ("Left Camera": rectilinear, normalised focal length 0.3725, 106.6 x 95.7
+# deg field of view); the MJCF camera's fovy matches. A frame is width*height*3 bytes (rgb8) and must
+# fit K1Camera's 2 MiB MAX_IMAGE_BYTES and MuJoCo's default 640x480 offscreen buffer.
 width: 544
 height: 448
 fps: 30

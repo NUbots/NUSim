@@ -4,11 +4,8 @@
 # k1sim_idl_packages. Adding a message means adding one .idl; nothing in this file changes.
 include(${PROJECT_SOURCE_DIR}/cmake/IdlGen.cmake)
 
-# Each <Type>CdrAux.ipp holds explicit fastcdr template specializations
-# (calculate_serialized_size/serialize/deserialize/serialize_key for that exact type) that <Type>PubSubTypes.cxx calls
-# but neither declares nor includes the definition of — fastddsgen expects them compiled as their own translation unit.
-# CMake doesn't recognise ".ipp" as a C++ source extension by default, so mark it explicitly (each file's include guard
-# + one entry per type in k1sim_idl_outputs keeps this to exactly one definition per type across the whole link).
+# Each <Type>CdrAux.ipp defines fastcdr specialisations that <Type>PubSubTypes.cxx calls but doesn't include, so
+# fastddsgen expects it compiled as its own translation unit. CMake doesn't treat .ipp as C++ by default.
 foreach(generated ${k1sim_idl_outputs})
   if(generated MATCHES "\\.ipp$")
     set_source_files_properties(${generated} PROPERTIES LANGUAGE CXX)

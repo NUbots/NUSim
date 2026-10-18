@@ -23,12 +23,7 @@ namespace k1sim::module {
 
     Supervisor::Supervisor(std::unique_ptr<NUClear::Environment> environment) : Reactor(std::move(environment)) {
 
-        // Loaded eagerly (constructor body, not Startup) so the port number is
-        // known before the on<UDP> reaction below is installed — mirrors
-        // module::Simulation's build_sim_config(), the established pattern in
-        // this tree for config that has to be ready before reactions bind
-        // (this port isn't hot-reloadable; NUClear's on<Configuration> extension
-        // isn't used anywhere in this MuJoCo port, see shared/util/Config.hpp).
+        // Loaded in the constructor, not on<Startup>, so the port is known before on<UDP> binds.
         SupervisorConfig cfg = build_config();
         const bool enabled   = cfg.enabled;
         const int gc_port    = cfg.gc_port;
@@ -47,27 +42,16 @@ namespace k1sim::module {
             return;
         }
 
-        // Plain on<UDP> (unicast-style bind to any local address) rather than
-        // on<UDP::Broadcast>: the latter only accepts datagrams whose
-        // *destination* address is itself a broadcast address (255.255.255.255,
-        // or an interface's configured broadcast address) — real GameController
-        // traffic qualifies, but a directly-addressed test packet to
-        // 127.0.0.1:gc_port (the loopback interface has no broadcast address at
-        // all on Linux) would silently never arrive, which would make this
-        // module untestable/unverifiable without a real LAN. Binding to
-        // INADDR_ANY still receives genuine LAN broadcasts addressed to this
-        // host, so real GameController traffic works identically either way.
-        // Binding can throw if the port is already taken (another sim instance, or a
-        // real GameController listener on this host). That must not crash the whole
-        // sim — degrade to "no supervisor" and log, matching the no-GC idle contract.
+        // Plain on<UDP> bound to any address, not on<UDP::Broadcast>: that only accepts datagrams
+        // sent to a broadcast address, so a test packet to 127.0.0.1 would never arrive. INADDR_ANY
+        // still receives real LAN broadcasts.
+        // Binding throws if the port is taken (another sim, or a GameController listener on this
+        // host); log and run without a supervisor rather than crash.
         try {
             on<UDP, Single>(gc_port).then([this](const UDP::Packet& packet) {
                 gc::GameControllerPacket parsed{};
                 if (!gc::try_parse(packet.payload.data(), packet.payload.size(), parsed)) {
-                    // Not a (recognised-version) GameController packet — could be
-                    // unrelated traffic on this port, or a header/version mismatch.
-                    // Silently ignored, per "no GC on the network" being a normal,
-                    // error-free idle state, not a fault.
+                    // Not a recognised GameController packet; unrelated traffic is normal.
                     return;
                 }
 

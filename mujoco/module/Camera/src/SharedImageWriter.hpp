@@ -12,25 +12,17 @@ namespace k1sim::module::camera {
 
     namespace bip = boost::interprocess;
 
-    // Byte-for-byte identical to the reader-side copy in NUbots_K1's
-    // module/input/K1Camera/src/K1Camera.cpp. That struct lives in a different
-    // repo/build -- there is no shared header to #include, so this copy *is* the
-    // contract. If you change one, change the other; field order/types must match
-    // exactly (header first, so `this + 1` is the first pixel byte).
+    // Must match the reader's copy in NUbots_K1's module/input/K1Camera/src/K1Camera.cpp byte for
+    // byte. There is no shared header, so change both together. The header comes first, so
+    // `this + 1` is the first pixel byte.
     //
-    // Lock-free seqlock (VERSION 2): the old layout used a boost interprocess_mutex
-    // + condition that both writer and reader locked. That mutex is not robust, so a
-    // consumer (K1Camera) killed while holding it left the lock stuck in the segment,
-    // blocking the next reader AND this writer -- the "one frame then stall on
-    // behaviour restart" bug. `seqlock` replaces them: the writer bumps it odd before
-    // writing a frame and even after (frame number = seqlock/2); a reader snapshots it
-    // before and after copying and retries if it changed or was odd. Nothing is ever
-    // locked, so killing either side leaves the segment usable -- behaviour can restart
-    // without restarting the sim.
+    // Lock-free seqlock (VERSION 2): the writer bumps seqlock odd before writing a frame and even
+    // after (frame number = seqlock / 2); a reader snapshots it before and after copying and retries
+    // if it changed or was odd. Nothing is locked, so killing either side (e.g. restarting behaviour)
+    // leaves the segment usable.
     struct SharedImageHeader {
-        // magic/version lead the struct so a mismatched build is detected instead of
-        // misread. They sit at the same offset as the old layout, so a v2 reader can
-        // still read them off a stale v1 segment and reject it.
+        // magic/version come first so a mismatched build is rejected, not misread. They're at the v1
+        // offsets, so a v2 reader also rejects a stale v1 segment.
         static constexpr uint32_t MAGIC   = 0x4E42494D;  // "NBIM"
         static constexpr uint32_t VERSION = 2;
         uint32_t magic{MAGIC};
@@ -49,17 +41,11 @@ namespace k1sim::module::camera {
         float k2{0.0f};
     };
 
-    // Owns the POSIX shared-memory segment NUbots' input::K1Camera reads. On
-    // construction, (re)creates the segment sized for width x height rgb8 -- any
-    // stale segment from a previous run is removed first, so the seqlock always
-    // starts at 0 and the size always matches the current config. The segment (and
-    // the in-place-constructed header) exists as soon as this constructor returns,
-    // independent of whether the MuJoCo model has loaded yet -- K1Camera retries
-    // opening it every 500 ms until it appears, so creation order with NUbots
-    // doesn't matter.
+    // Owns the POSIX shared-memory segment input::K1Camera reads. The constructor recreates it for
+    // width x height rgb8, removing any stale segment so seqlock starts at 0 and the size matches.
+    // K1Camera retries opening it every 500 ms, so start order doesn't matter.
     //
-    // Not thread-safe against concurrent publish() calls; Camera only ever calls
-    // it from its one dedicated render thread.
+    // publish() is single-writer: Camera calls it only from its render thread.
     class SharedImageWriter {
     public:
         // Throws std::runtime_error (width/height <= 0) or
@@ -70,12 +56,8 @@ namespace k1sim::module::camera {
         SharedImageWriter(const SharedImageWriter&)            = delete;
         SharedImageWriter& operator=(const SharedImageWriter&) = delete;
 
-        // `rgb` must be exactly width*height*3 bytes (rgb8), top-down row order (row 0
-        // = top of image) -- matches ros_encoding_to_fourcc("rgb8") on the reader
-        // side. Bumps `seqlock` odd (write in progress), copies the pixels + intrinsics
-        // fields, then bumps it even (frame published) -- no locks. No-op (defensive
-        // only -- rgb_size is always frame_bytes by construction on the one call site)
-        // if rgb_size doesn't match the segment's data_size.
+        // `rgb` is width*height*3 bytes of top-down rgb8. Publishes under the seqlock (see
+        // SharedImageHeader). No-op if rgb_size doesn't match the segment's data_size.
         void publish(const uint8_t* rgb,
                      std::size_t rgb_size,
                      float focal_length,

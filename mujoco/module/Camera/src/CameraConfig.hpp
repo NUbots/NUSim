@@ -4,10 +4,7 @@
 #include <string>
 #include <yaml-cpp/yaml.h>
 
-// config/camera.yaml schema, parsed independently of NUClear -- mirrors
-// module::Supervisor's SupervisorConfig.hpp / module::Simulation's
-// build_sim_config() (this port doesn't use NUClear's on<Configuration>
-// hot-reload extension anywhere; config is read once at Startup).
+// config/camera.yaml schema, parsed without NUClear.
 namespace k1sim::module::camera {
 
     struct CameraConfig {
@@ -19,12 +16,9 @@ namespace k1sim::module::camera {
         // Head-pose segment K1Sensors reads (K1Sensors.yaml `segment:`). Empty disables.
         std::string pose_segment = "_head_pose";
 
-        // Render resolution. rgb8, so the segment carries width*height*3 pixel bytes
-        // after the header -- keep this under K1Camera's MAX_IMAGE_BYTES (2 MiB); the
-        // 640x480 default (921600 bytes) leaves plenty of margin. Must also not exceed
-        // the compiled model's <visual><global offwidth/offheight/> (MuJoCo default
-        // 640x480, unmodified by any scene in this repo) -- Camera checks this at
-        // Startup and refuses to render rather than silently truncating.
+        // Render resolution. A frame is width*height*3 bytes (rgb8) and must fit K1Camera's
+        // MAX_IMAGE_BYTES (2 MiB). It must also fit the model's <visual><global offwidth/offheight/>
+        // (MuJoCo default 640x480); Camera checks this at Startup and refuses to render otherwise.
         int width  = 640;
         int height = 480;
 

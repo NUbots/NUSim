@@ -1,7 +1,5 @@
-# Reduced mode machine (module::Locomotion): Damping / Prepare / Custom.
-# Locomotion policies (walk, get-up, kick) live in NUbots_K1 and drive the sim
-# through CUSTOM mode + rt/joint_ctrl (LowCmd servo targets). The sim only
-# simulates servos, detects falls and publishes state.
+# Reduced mode machine (module::Locomotion): Damping / Prepare / Custom. Policies (walk, get-up,
+# kick) run in NUbots_K1 and drive the sim through rt/joint_ctrl in CUSTOM mode.
 initial_mode: prepare # prepare (hold ready pose until first ChangeMode) | damping (real-robot boot behaviour)
 
 prepare_blend_time: 1.0 # seconds, cubic blend into the ready pose on ChangeMode(PREPARE)
@@ -11,5 +9,4 @@ fall:
   fallen_tilt: 1.0 # rad — tilt beyond this => HAS_FALLEN
   falling_gyro: 1.0 # rad/s — |gyro| threshold paired with falling_tilt for IS_FALLING
   fallen_height: 0.35 # m — base below this => HAS_FALLEN even if the trunk is upright
-  # (collapsed/kneeling poses read IS_READY on tilt alone, which starves the
-  # NUbots get-up retry loop; standing ~0.55, walking crouch >= 0.45)
+  # (collapsed/kneeling poses read IS_READY on tilt alone; standing ~0.55, walking crouch >= 0.45)

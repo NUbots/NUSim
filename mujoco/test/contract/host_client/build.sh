@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
-# Builds sdk_client_check ON THE HOST (not in the k1sim docker image — the SDK's
-# bundled Fast-DDS/fastcdr third_party libs + g++ 11 are what the host has, and
-# this client is deliberately never linked into the sim). See
-# test/contract/README.md for the full rationale.
+# Builds sdk_client_check on the host against the Booster SDK's bundled Fast-DDS libs, not in the
+# k1sim image; it is never linked into the sim. See test/contract/README.md.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

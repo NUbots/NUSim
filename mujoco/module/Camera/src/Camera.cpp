@@ -21,13 +21,10 @@ namespace k1sim::module {
 
     namespace {
 
-        // Mirrors K1Camera.cpp's MAX_IMAGE_BYTES exactly -- the reader drops (logs WARN
-        // and skips) any frame whose data_size exceeds this, so it's not enough to just
-        // fit in the segment; we must fit in what the reader will accept.
+        // Matches K1Camera.cpp's MAX_IMAGE_BYTES: the reader drops any larger frame.
         constexpr std::size_t kMaxImageBytes = 2 * 1024 * 1024;
 
-        // Avoid M_PI: not reliably available under this project's -std=c++17 build (see
-        // test/unit/test_supervisor.cpp's identical workaround/comment).
+        // M_PI isn't standard C++.
         constexpr double kPi = 3.14159265358979323846;
 
     }  // namespace
@@ -51,9 +48,8 @@ namespace k1sim::module {
             render_thread_ = std::thread(&Camera::render_loop, this, cfg);
         });
 
-        // Deliberately NOT MainThread: this reaction only stores plain pointers (no
-        // GL work), so it can run on any NUClear pool thread. render_thread_ is the
-        // only thread that ever touches GL/mjv/mjr state or handles_ after startup.
+        // Not MainThread: this only stores pointers (no GL work). render_thread_ is the only thread
+        // that touches GL/mjv/mjr state or handles_ after startup.
         on<Trigger<message::SimHandles>>().then([this](const message::SimHandles& h) {
             handles_ = h;
             handles_ready_.store(true, std::memory_order_release);
@@ -69,9 +65,8 @@ namespace k1sim::module {
     }
 
     void Camera::render_loop(camera::CameraConfig cfg) {
-        // Everything below (GL context, mjvScene/mjrContext, the shared-memory
-        // writer) is local to this function/thread on purpose -- see the
-        // class-level comment in Camera.hpp for the threading rationale.
+        // The GL context, mjvScene/mjrContext and shared-memory writer are local to this thread
+        // (see Camera.hpp).
 
         const auto frame_bytes = static_cast<std::size_t>(cfg.width) * static_cast<std::size_t>(cfg.height) * 3;
         if (frame_bytes > kMaxImageBytes) {
@@ -84,10 +79,8 @@ namespace k1sim::module {
             return;
         }
 
-        // Offscreen OpenGL via CGL (macOS) or EGL: no shared GLFW/Xlib global state with
-        // module::Viewer's on-screen window, so the two render threads don't corrupt
-        // each other's heap; also works with no display (headless). RAII — tears the
-        // context down on any return below.
+        // Offscreen OpenGL via CGL (macOS) or EGL: shares no GLFW/Xlib state with module::Viewer's
+        // window, and works headless. Torn down on any return below.
         camera::OffscreenContext context(cfg.width, cfg.height);
         if (!context.valid()) {
             log<NUClear::LogLevel::ERROR>(
@@ -96,9 +89,8 @@ namespace k1sim::module {
             return;
         }
 
-        // Created from config alone (doesn't need the model), so the segment exists
-        // whether the sim or NUbots' K1Camera process starts first -- K1Camera
-        // retries opening it every 500 ms until it appears.
+        // Created from config alone, so the segment exists whichever of the sim and K1Camera starts
+        // first; K1Camera retries every 500 ms.
         std::unique_ptr<camera::SharedImageWriter> writer;
         try {
             writer = std::make_unique<camera::SharedImageWriter>(cfg.segment, cfg.width, cfg.height);
@@ -122,9 +114,8 @@ namespace k1sim::module {
         mjData* data          = handles_.data;
         std::mutex* sim_mutex = handles_.mutex;
 
-        // Head-pose segment for K1Sensors (the "NBPO" pose NUbridge publishes on the
-        // real robot). Torso tilt reaches NUbots only through this pose, so it is
-        // what makes fall detection / GetUp work in sim.
+        // Head-pose segment for K1Sensors (the "NBPO" pose NUbridge publishes on the real robot).
+        // It's NUbots' only source of torso tilt, so fall detection and GetUp depend on it.
         std::unique_ptr<camera::SharedPoseWriter> pose_writer;
         if (!cfg.pose_segment.empty()) {
             try {
@@ -187,14 +178,9 @@ namespace k1sim::module {
         std::vector<unsigned char> raw(frame_bytes);      // mjr_readPixels output: bottom-up (OpenGL convention)
         std::vector<unsigned char> flipped(frame_bytes);  // top-down, matches what K1Camera/NUsight expect
 
-        // Pinhole intrinsics derived from the MJCF camera's fovy + configured
-        // resolution (MuJoCo has no lens-distortion model, so k1/k2 published via
-        // SharedImageWriter::publish are always 0). `fov` follows the same
-        // "diagonal angle from the optical axis to the farthest image corner"
-        // convention module/platform/Webots.cpp used for its own simulated camera on
-        // the NUbots side (see utility::vision::projection's RECTILINEAR model and
-        // Webots.cpp's "auto fov" branch): unproject the far image corner and take
-        // twice that half-angle.
+        // Pinhole intrinsics from the MJCF camera's fovy and the resolution. MuJoCo has no lens
+        // distortion, so k1/k2 are 0. `fov` is twice the angle from the optical axis to the farthest
+        // image corner, the convention of NUbots' RECTILINEAR projection.
         const double fovy_rad          = model->cam_fovy[cam_id] * kPi / 180.0;
         const double focal_px          = (static_cast<double>(cfg.height) * 0.5) / std::tan(fovy_rad * 0.5);
         const double focal_length_norm = focal_px / static_cast<double>(cfg.width);
@@ -245,9 +231,7 @@ namespace k1sim::module {
             mjr_render(viewport, &scn, &con);
             mjr_readPixels(raw.data(), nullptr, viewport, &con);
 
-            // mjr_readPixels is bottom-up (OpenGL convention); K1Camera/NUsight
-            // expect top-down rgb8 like any normal image buffer, so flip row order
-            // once here rather than downstream.
+            // mjr_readPixels is bottom-up; K1Camera/NUsight expect top-down rgb8.
             for (int row = 0; row < cfg.height; ++row) {
                 const unsigned char* src =
                     raw.data()

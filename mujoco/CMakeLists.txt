@@ -12,8 +12,7 @@ if(POLICY CMP0167)
   cmake_policy(SET CMP0167 NEW)
 endif()
 
-# Self-contained MuJoCo replacement for the Webots+mck K1 simulation. Prerequisite: tools/install_deps.sh (installs
-# MuJoCo + Fast-DDS into .deps/install).
+# MuJoCo simulation of the Booster K1. Native builds need tools/install_deps.sh (MuJoCo + Fast-DDS into .deps/install).
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -90,8 +89,7 @@ foreach(role_file ${role_files})
   endif()
 endforeach()
 
-# Legacy single-binary entry (kept during the roles transition; exercised by the contract test). Equivalent to the
-# sim/soccer role minus Camera/Supervisor.
+# Legacy single-binary entry, used by the contract test: the sim/soccer role minus Camera/Supervisor.
 add_executable(k1_mujoco_sim src/main.cpp)
 target_link_libraries(
   k1_mujoco_sim PRIVATE k1sim_module_consolelog k1sim_module_simulation k1sim_module_sdkbridge k1sim_module_locomotion

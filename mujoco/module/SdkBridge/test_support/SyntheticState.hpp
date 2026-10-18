@@ -4,17 +4,10 @@
 #include <mutex>
 #include <nuclear>
 
-// Test-only reactor that stands in for module::Simulation + module::Locomotion so
-// the M4/M5 contract test (test/contract/test_sdk_roundtrip.py) can exercise
-// module::SdkBridge's full DDS surface without depending on those workstreams'
-// completion timing. Emits a plausible k1sim::message::SimStateUpdate at 50 Hz and
-// reacts to the NUClear messages module::SdkBridge's RpcServer emits (mode changes,
-// walk/head commands, get up/lie down/kick requests) closely enough to make the
-// contract test meaningful: mode tracks ChangeMode, odometer integrates Move
-// velocities, head joints track RotateHead. Not a physics simulator — no dynamics,
-// no PD control, no gait. Only linked into the `sdkbridge_synthetic_sim` test
-// binary (module/SdkBridge/test_support/CMakeLists.txt); never linked into
-// k1_mujoco_sim.
+// Test-only stand-in for module::Simulation + module::Locomotion, for the contract test
+// (test/contract/test_sdk_roundtrip.py). Emits a plausible SimStateUpdate at 50 Hz and reacts to
+// RpcServer's messages: mode tracks ChangeMode, odometry integrates Move, head joints track
+// RotateHead. No physics. Linked only into sdkbridge_synthetic_sim.
 
 namespace k1sim::module::sdkbridge::test_support {
 

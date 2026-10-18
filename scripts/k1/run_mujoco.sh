@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 #
-# Thin wrapper over mujoco/docker/k1sim.sh: brings up the self-contained
-# MuJoCo K1 sim (GLFW viewer + FastDDS on domain 0). This replaces BOTH
-# Booster's Webots build AND the `mck` runner in one step — no gated
-# downloads, no separate runner process. See docs/K1_MUJOCO_SETUP.md.
+# Wrapper over mujoco/docker/k1sim.sh that brings up the MuJoCo K1 sim (GLFW viewer + FastDDS
+# on domain 0). See docs/K1_MUJOCO_SETUP.md.
 #
 #   scripts/k1/run_mujoco.sh                    # viewer window, default field + RTF
 #   K1_HEADLESS=1 scripts/k1/run_mujoco.sh       # no viewer window (--headless)
@@ -12,8 +10,7 @@
 #   scripts/k1/run_mujoco.sh --config-dir path   # extra args forwarded as-is
 #
 # K1SIM_IMAGE overrides the docker image tag (default k1sim:latest).
-# k1sim.sh's own `run` subcommand builds the image/binary automatically the
-# first time (or whenever the binary is missing) — nothing to build by hand.
+# k1sim.sh's `run` builds the image and binary if they are missing.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

@@ -49,10 +49,8 @@ namespace k1sim::module {
         pd_.kp      = load_array(gains_cfg["kp"]);
         pd_.kd      = load_array(gains_cfg["kd"]);
 
-        // The real robot boots into DAMPING (limp until an operator sends Prepare), but a
-        // sim robot spawns standing at the ready pose -- idling in DAMPING just collapses
-        // it before any client connects. Default to holding PREPARE until the first
-        // ChangeMode arrives.
+        // The real robot boots limp in DAMPING, but the sim robot spawns standing, so DAMPING would
+        // collapse it before a client connects. Hold PREPARE until the first ChangeMode.
         const std::string initial_mode = locomotion_cfg["initial_mode"].as<std::string>("prepare");
         if (initial_mode == "prepare") {
             request_mode_change(booster::PREPARE);
@@ -135,8 +133,8 @@ namespace k1sim::module {
             case booster::CUSTOM: break;
             case booster::WALKING:
             case booster::SOCCER:
-                // Wire-compatible, but the walking policy lives on the NUbots_K1 side now
-                // (rt/joint_ctrl in CUSTOM mode). Hold the ready pose instead.
+                // Accepted for wire compatibility; walking runs on the NUbots_K1 side
+                // (rt/joint_ctrl in CUSTOM mode). Hold the ready pose.
                 std::fprintf(stderr,
                              "LocomotionController: ChangeMode(%d) requested, but locomotion policies "
                              "live in NUbots_K1 now; holding PREPARE (use CUSTOM + rt/joint_ctrl)\n",
@@ -159,10 +157,9 @@ namespace k1sim::module {
             case booster::CUSTOM:
                 state_                  = State::Custom;
                 custom_parallel_warned_ = false;
-                // PD-hold the pose we entered CUSTOM in until the first LowCmd arrives;
-                // freezing raw torques instead lets the robot slump if the client dies
-                // (or never manages to stream) after switching modes. Drop any LowCmd left
-                // over from a previous CUSTOM session for the same reason.
+                // PD-hold the entry pose until the first LowCmd, so a client that dies or never
+                // streams doesn't leave the robot slumping on frozen torques. Drop any LowCmd left
+                // from a previous CUSTOM session.
                 custom_entry_pose_   = current_q(d);
                 custom_low_cmd_seen_ = false;
                 custom_entry_step_   = true;
@@ -194,9 +191,8 @@ namespace k1sim::module {
     }
 
     void LocomotionController::step_custom(const mjModel* m, mjData* d, const CommandSnapshot& snap) {
-        // Until the first LowCmd of this CUSTOM session arrives, PD-hold the entry pose
-        // (a dead or struggling client must not leave the robot on frozen torques). The
-        // entry step's snapshot predates the mailbox clear, so it is skipped explicitly.
+        // PD-hold the entry pose until this session's first LowCmd. The entry step's snapshot
+        // predates the mailbox clear, so skip it.
         if (custom_entry_step_) {
             custom_entry_step_ = false;
             pd_.apply(m, d, *map_, custom_entry_pose_);
@@ -247,9 +243,8 @@ namespace k1sim::module {
             gyro_mag        = std::sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]);
         }
 
-        // Height criterion catches collapsed-but-trunk-upright poses (kneeling crumples
-        // after a failed get-up) that tilt alone reads as IS_READY -- which starves the
-        // NUbots GetUp retry loop forever.
+        // The height check catches collapsed poses with an upright trunk (e.g. kneeling after a
+        // failed get-up), which tilt alone reads as IS_READY and would stall NUbots' GetUp retries.
         const double base_z = d->qpos[map_->root_qpos_adr + 2];
 
         int computed = booster::IS_READY;

@@ -33,9 +33,8 @@ namespace k1sim::module::sdkbridge {
             dds.create_writer<booster_msgs::msg::dds_::RpcRespMsg_PubSubType>(k1sim::booster::TOPIC_RPC_RESPONSE,
                                                                               DdsParticipant::state_writer_qos());
 
-        // rt/joint_ctrl (LowCmd_) — optional passthrough, only honoured by Locomotion in
-        // RobotMode::CUSTOM. Reuse the RPC reader's RELIABLE/KEEP_LAST QoS; this topic
-        // isn't latency-critical enough to warrant its own tuned profile.
+        // rt/joint_ctrl (LowCmd_): optional passthrough, honoured by Locomotion only in
+        // RobotMode::CUSTOM. Reuses the RPC reader's QoS.
         joint_ctrl_reader_ = dds.create_reader<booster_interface::msg::dds_::LowCmd_PubSubType>(
             k1sim::booster::TOPIC_JOINT_CTRL,
             DdsParticipant::rpc_request_reader_qos(5),
@@ -94,8 +93,8 @@ namespace k1sim::module::sdkbridge {
                 default: break;
             }
 
-            // Reply IMMEDIATELY, synchronously, in this DDS callback — B1LocoClient
-            // blocks up to 1000 ms per call (PROTOCOL.md §3).
+            // Reply synchronously in this callback: B1LocoClient blocks up to 1000 ms per call
+            // (PROTOCOL.md §3).
             booster_msgs::msg::dds_::RpcRespMsg_ resp;
             resp.uuid(req.uuid());
             resp.header(nlohmann::json{{"status", outcome.status}}.dump());

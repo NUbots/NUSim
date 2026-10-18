@@ -11,9 +11,8 @@ namespace k1sim::module::sdkbridge {
 
         using nlohmann::json;
 
-        // RpcReqMsg_.body is sometimes a genuinely empty string (LIE_DOWN, GET_UP, GET_MODE
-        // requests carry no parameters) — nlohmann::json::parse("") throws, so treat blank
-        // (or whitespace-only) bodies as an empty object rather than a parse error.
+        // Parameterless requests (LIE_DOWN, GET_UP, GET_MODE) send an empty body and
+        // json::parse("") throws, so treat blank bodies as {}.
         json parse_or_empty(const std::string& text) {
             auto trimmed_empty = [&] {
                 for (char c : text) {

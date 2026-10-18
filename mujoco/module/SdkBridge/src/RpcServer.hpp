@@ -10,15 +10,11 @@
 
 #include "module/SdkBridge/src/DdsParticipant.hpp"
 
-// The DDS-facing half of the LocoApi RPC surface: a DataReaderListener on
-// rt/LocoApiTopicReq that hands each request's header/body JSON to the pure
-// dispatch core (RpcDispatch.hpp/.cpp), emits the resulting NUClear message (if
-// any), and replies IMMEDIATELY on rt/LocoApiTopicResp — synchronously inside the
-// DDS callback thread, per module/SdkBridge/PROTOCOL.md §3 (B1LocoClient blocks up
-// to 1000 ms per call).
+// DDS side of the LocoApi RPC surface: reads rt/LocoApiTopicReq, passes each request to
+// dispatch_rpc(), emits the resulting message, and replies on rt/LocoApiTopicResp synchronously in
+// the DDS callback, since B1LocoClient blocks up to 1000 ms per call (PROTOCOL.md §3).
 //
-// Also owns the optional rt/joint_ctrl (LowCmd_) reader: a straightforward
-// passthrough that emits LowCmdMessage.
+// Also owns the optional rt/joint_ctrl (LowCmd_) reader, which emits LowCmdMessage.
 
 namespace k1sim::module::sdkbridge {
 

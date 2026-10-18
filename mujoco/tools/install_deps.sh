@@ -4,25 +4,20 @@
 #   - Fast-CDR / foonathan_memory_vendor / Fast-DDS (built from source)
 #   - Fast-DDS-Gen (fastddsgen), the IDL code generator
 #
-# fastddsgen is part of the standard set, not an extra: CMake now runs it at
-# build time to generate the Fast-DDS types into the build dir, so they are no
-# longer committed to the repo. A Java 11+ runtime is therefore a hard
-# requirement of this script and of the sim build, not an optional add-on.
+# CMake runs fastddsgen at build time to generate the Fast-DDS types, so the sim build needs a
+# Java 11+ runtime.
 #
-# This is normally run INSIDE the docker image build (docker/Dockerfile) with
-# PREFIX=/opt/k1sim-deps — see docker/k1sim.sh for the supported workflow.
-# Running it directly on a host is a fallback for native development only.
+# Normally run inside the docker image build (docker/Dockerfile) with PREFIX=/opt/k1sim-deps;
+# running it on a host is for native builds.
 #
 # Usage:
-#   tools/install_deps.sh                  # installs everything, fastddsgen included
-#   tools/install_deps.sh --with-fastddsgen  # accepted for backwards compatibility; does nothing
+#   tools/install_deps.sh
 #
-# (Unknown arguments are ignored rather than fatal, so older callers such as
-# docker/Dockerfile that still pass --with-fastddsgen keep working unchanged.)
+# Unknown arguments are ignored, including the obsolete --with-fastddsgen.
 #
 # Version pins (rationale in docs/K1_MUJOCO_SETUP.md):
-#   Fast-DDS v2.13.6 matches the minor version bundled with Booster's SDK (2.13.1),
-#   eliminating DDS interop drift against NUbots_K1's B1LocoClient.
+#   Fast-DDS v2.13.6 matches the minor version in Booster's SDK (2.13.1), for DDS interop with
+#   NUbots_K1's B1LocoClient.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" # mujoco/

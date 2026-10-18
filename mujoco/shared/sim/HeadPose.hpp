@@ -15,10 +15,9 @@ namespace k1sim {
         std::array<double, 4> quat{1, 0, 0, 0};  // w,x,y,z
     };
 
-    // The real robot's head frame sits this far above the Head_pitch joint (the Head_2 body
-    // origin) along the head's z-axis, near the head's centre of mass (Head_2 inertial z 0.0805).
-    // NUbots' K1Sensors removes it again with Hhp (translation [0, 0, -0.08], tuned on the robot),
-    // so publishing the bare Head_2 origin would put NUbots' torso this much too low.
+    // The real robot's head frame is this far above the Head_pitch joint (the Head_2 body origin)
+    // along the head z-axis, near its centre of mass. NUbots' K1Sensors subtracts it again (Hhp), so
+    // publishing the bare Head_2 origin would put NUbots' torso this much too low.
     inline constexpr double HEAD_FRAME_ABOVE_PITCH = 0.08;
 
     // Hrh = (translate(base_x, base_y, 0) * rotz(base_yaw))^-1 * Hwh * translate(0, 0, HEAD_FRAME_ABOVE_PITCH),

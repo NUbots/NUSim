@@ -1,7 +1,5 @@
-// Standalone binary for the M4/M5 contract test: ConsoleLog + the real
-// module::SdkBridge + a synthetic SimStateUpdate source (SyntheticState), with no
-// dependency on module::Simulation/Locomotion/Viewer. See SyntheticState.hpp for
-// rationale. Not part of k1_mujoco_sim.
+// Contract-test binary: ConsoleLog + the real module::SdkBridge + a synthetic SimStateUpdate source
+// (SyntheticState), without Simulation/Locomotion/Viewer. Not part of k1_mujoco_sim.
 #include <csignal>
 #include <nuclear>
 
@@ -22,12 +20,8 @@ int main() {
     config.default_pool_concurrency = 2;
     NUClear::PowerPlant plant(config);
 
-    // NUClear's PowerPlant does not auto-install its built-in extensions — ChronoController
-    // is what actually drives on<Every<...>> (SyntheticState's 50 Hz tick, SdkBridge's 1 Hz
-    // battery publish); without it those reactions are bound but never scheduled (empirically
-    // verified: silently inert, no error/log). k1_mujoco_sim's own src/main.cpp (frozen, not
-    // owned by this workstream) needs the same install — flagged to the lead, see workstream
-    // C's final report.
+    // PowerPlant doesn't install ChronoController by default, and without it on<Every<...>>
+    // reactions (SyntheticState's 50 Hz tick, SdkBridge's 1 Hz battery) silently never run.
     plant.install<NUClear::extension::ChronoController>();
 
     plant.install<k1sim::module::ConsoleLog>();

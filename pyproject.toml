@@ -4,10 +4,9 @@ version = "0.1.0"
 description = "Host-side tooling (the ./b dispatcher + formatters) for the NUSim K1 MuJoCo simulator."
 readme = "README.md"
 requires-python = ">=3.11"
-# Formatter versions are pinned to the ones NUbots uses, so the same file formats
-# identically in both repos. clang-format is the PyPI wheel of the same LLVM release
-# NUbots builds into its docker image (llvmorg-14.0.6) — clang-format output changes
-# between major versions, so this pin is what keeps ./b format reproducible.
+# Formatter versions match NUbots so files format identically in both repos. clang-format
+# output changes between major versions, so it is pinned to NUbots' LLVM release
+# (llvmorg-14.0.6).
 dependencies = [
     "clang-format==14.0.6",
     "cmakelang==0.6.13",

@@ -5,11 +5,8 @@
 #include <vector>
 #include <yaml-cpp/yaml.h>
 
-// config/supervisor.yaml schema, parsed independently of NUClear so
-// test_supervisor.cpp can build a SupervisorConfig without touching the
-// Reactor — mirrors how module::Simulation's build_sim_config() reads
-// simulation.yaml/gains.yaml synchronously at construction time (this port
-// doesn't use NUClear's on<Configuration> hot-reload extension anywhere).
+// config/supervisor.yaml schema. Parsed without NUClear so test_supervisor.cpp can build one
+// directly.
 namespace k1sim::module::supervisor {
 
     // A flat-ground standing pose: world (x, y, z) plus yaw about +Z (radians).
@@ -26,18 +23,13 @@ namespace k1sim::module::supervisor {
         std::string geom = "ball";
         double x         = 0.0;
         double y         = 0.0;
-        // z < 0 means "rest the ball on the floor at its own geom radius";
-        // only set this explicitly to override that.
+        // z < 0 rests the ball on the floor at its geom radius.
         double z = -1.0;
     };
 
-    // One managed robot body. team_id/team_index resolve which of the packet's
-    // two Team entries governs this robot: if team_id >= 0 it is matched against
-    // GameControllerPacket::Team::team_id (like NUbots' own GameController
-    // resolves "our" team); otherwise team_index (0 or 1) just picks a packet
-    // slot positionally, which is all local/single-robot testing needs before a
-    // real competition team_id is configured. player_id is 1-based, indexing
-    // that team's players[] array (RoboCup convention: player 1..N).
+    // One managed robot body. If team_id >= 0 it selects the packet Team with that team_id;
+    // otherwise team_index (0 or 1) picks a packet slot directly, for local testing. player_id is
+    // 1-based into that team's players[].
     struct RobotConfig {
         std::string body;
         int team_id    = -1;
