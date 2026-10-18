@@ -16,10 +16,15 @@ namespace k1sim::module::sdkbridge {
     class BallCommandReader : public eprosima::fastdds::dds::DataReaderListener {
     public:
         BallCommandReader(DdsParticipant& dds, NUClear::Reactor& reactor);
+        ~BallCommandReader() override;
+
+        BallCommandReader(const BallCommandReader&)            = delete;
+        BallCommandReader& operator=(const BallCommandReader&) = delete;
 
         void on_data_available(eprosima::fastdds::dds::DataReader* reader) override;
 
     private:
+        DdsParticipant& dds_;
         NUClear::Reactor& reactor_;
         eprosima::fastdds::dds::DataReader* reader_ = nullptr;
     };

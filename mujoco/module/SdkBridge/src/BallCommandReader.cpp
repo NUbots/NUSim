@@ -14,20 +14,28 @@ namespace k1sim::module::sdkbridge {
     using eprosima::fastdds::dds::SampleInfo;
     using eprosima::fastrtps::types::ReturnCode_t;
 
-    BallCommandReader::BallCommandReader(DdsParticipant& dds, NUClear::Reactor& reactor) : reactor_(reactor) {
+    BallCommandReader::BallCommandReader(DdsParticipant& dds, NUClear::Reactor& reactor)
+        : dds_(dds), reactor_(reactor) {
         // RELIABLE + KEEP_LAST like the RPC reader: a dropped command would silently skip a shot
         reader_ = dds.create_reader<nav_msgs::msg::dds_::Odometry_PubSubType>(k1sim::nusim::TOPIC_BALL_COMMAND,
                                                                               DdsParticipant::rpc_request_reader_qos(5),
                                                                               this);
     }
 
-    void BallCommandReader::on_data_available(DataReader* reader) {
-        if (reader != reader_) {
-            return;
+    BallCommandReader::~BallCommandReader() {
+        // The DataReader holds `this` as its listener until the participant is torn down, which
+        // happens after us. Delete it now so a late command can't call into a destroyed listener.
+        if (reader_ != nullptr) {
+            dds_.delete_reader(reader_);
         }
+    }
+
+    void BallCommandReader::on_data_available(DataReader* reader) {
+        // Use the reader we're given, not reader_: this listener is registered inside
+        // create_datareader, so a command can arrive before reader_ has been assigned.
         nav_msgs::msg::dds_::Odometry_ msg;
         SampleInfo info;
-        while (reader_->take_next_sample(&msg, &info) == ReturnCode_t::RETCODE_OK) {
+        while (reader->take_next_sample(&msg, &info) == ReturnCode_t::RETCODE_OK) {
             if (!info.valid_data) {
                 continue;
             }
