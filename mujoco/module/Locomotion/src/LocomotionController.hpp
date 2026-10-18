@@ -14,6 +14,7 @@
 #include "shared/message/Commands.hpp"
 #include "shared/sim/ModelMap.hpp"
 #include "shared/sim/PdController.hpp"
+#include "module/Locomotion/src/WalkPolicy.hpp"
 #include "shared/sim/StepController.hpp"
 
 // LocomotionController is deliberately NUClear-free: it is exercised directly
@@ -31,8 +32,10 @@ namespace k1sim::module {
     // rt/joint_ctrl LowCmd servo targets). All locomotion *policies* (walking,
     // get-up, kick, ...) live on the NUbots_K1 side and arrive here as LowCmd
     // joint commands -- the sim only simulates servos and publishes state.
-    // WALKING/SOCCER mode requests are accepted for SDK wire compatibility but
-    // mapped to PREPARE with a warning.
+    // WALKING runs the built-in velocity-tracking MLP (WalkPolicy) driven by the Move
+    // RPC; if no policy could be loaded (config/locomotion.yaml `walk`) it is mapped
+    // to PREPARE with a warning. SOCCER is always mapped to PREPARE (NUbots_K1 owns
+    // the soccer gait and drives the robot through CUSTOM).
     //
     // Thread model: setters below are called from arbitrary NUClear reaction
     // threads (SdkBridge's RPC dispatch) and only ever write a mutex-guarded
@@ -62,6 +65,11 @@ namespace k1sim::module {
         void set_head_command(double pitch, double yaw);
         void request_mode_change(int mode);
         void set_low_cmd(int cmd_type, std::vector<message::MotorCmdData> motors);
+        void set_walk_command(double vx, double vy, double vyaw);
+
+        bool walk_policy_loaded() const {
+            return walk_policy_ != nullptr;
+        }
 
         // Test/introspection helper (harmless in production: read-only).
         bool is_initialized() const {
@@ -69,7 +77,7 @@ namespace k1sim::module {
         }
 
     private:
-        enum class State { Damping, Prepare, Custom };
+        enum class State { Damping, Prepare, Custom, Walking };
 
         // Mailbox written by the setters above, read once per step() via a copy
         // taken under lock. `mode_seq` is an edge-trigger: step() remembers the
@@ -80,6 +88,7 @@ namespace k1sim::module {
             int requested_mode = booster::DAMPING;
             int low_cmd_type   = 1;
             std::vector<message::MotorCmdData> low_cmd_motors;
+            std::array<double, 3> walk_cmd{};
         };
 
         CommandSnapshot snapshot_command() const;
@@ -93,6 +102,8 @@ namespace k1sim::module {
         void step_prepare(const mjModel* m, mjData* d, const CommandSnapshot& snap);
         void step_custom(const mjModel* m, mjData* d, const CommandSnapshot& snap);
 
+        void step_walking(const mjModel* m, mjData* d, const CommandSnapshot& snap);
+
         void update_fall_detection(const mjModel* m, mjData* d);
 
         // -- config (parsed once at construction; no model needed) --
@@ -101,6 +112,13 @@ namespace k1sim::module {
 
         std::array<double, JOINT_COUNT> ready_pose_{};
         PdController pd_;
+
+        // -- walk policy (null if `walk.policy` is unset or failed to load) --
+        std::unique_ptr<WalkPolicy> walk_policy_;
+        PdController walk_pd_;  // the policy's own training gains
+        double walk_blend_time_ = 1.5;
+        double walk_period_     = 0.02;
+        std::array<double, 3> walk_cmd_limit_{1.0, 0.5, 1.0};
 
         // -- lazily built on first step() (needs the mjModel) --
         bool initialized_ = false;
@@ -111,6 +129,11 @@ namespace k1sim::module {
 
         std::array<double, JOINT_COUNT> prepare_start_pose_{};
         double prepare_start_time_ = 0.0;
+
+        std::array<double, JOINT_COUNT> walk_start_pose_{}, walk_q_ref_{};
+        double walk_start_time_ = 0.0, walk_next_tick_ = 0.0;
+        bool walk_running_      = false;  // false while blending to the policy's default pose
+        std::array<double, JOINT_COUNT> q_lo_{}, q_hi_{};  // joint limits (+-inf if unlimited)
 
         bool custom_parallel_warned_ = false;
         // PD-hold target for a CUSTOM session that has not received a LowCmd yet
@@ -127,6 +150,7 @@ namespace k1sim::module {
         int requested_mode_ = booster::DAMPING;
         int low_cmd_type_   = 1;
         std::vector<message::MotorCmdData> low_cmd_motors_;
+        std::array<double, 3> walk_cmd_{};
 
         // -- cross-thread-visible state --
         std::atomic<int> mode_{booster::DAMPING};

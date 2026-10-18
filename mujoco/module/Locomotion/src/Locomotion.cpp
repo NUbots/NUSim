@@ -30,7 +30,7 @@ namespace k1sim::module {
             }
 
             emit(std::make_unique<ControllerHandle>(ControllerHandle{controller_.get()}));
-            log<NUClear::LogLevel::INFO>("Locomotion ready (servo-command listener; policies live in NUbots_K1)");
+            log<NUClear::LogLevel::INFO>("Locomotion ready (mode machine + built-in walk policy:", controller_->walk_policy_loaded() ? "loaded" : "not loaded", ")");
         });
 
         on<Trigger<HeadCommand>>().then(
@@ -44,10 +44,11 @@ namespace k1sim::module {
         on<Trigger<LowCmdMessage>>().then(
             [this](const LowCmdMessage& cmd) { controller_->set_low_cmd(cmd.cmd_type, cmd.motors); });
 
-        // Locomotion policies (walk, get-up, lie-down, kick) moved to the NUbots_K1 side;
-        // they arrive as LowCmd servo targets in CUSTOM mode. The old high-level RPCs stay
+        // Move drives the built-in walk policy (WALKING mode). Get-up, lie-down and kick moved to the NUbots_K1 side;
+        // they arrive as LowCmd servo targets in CUSTOM mode. Those high-level RPCs stay
         // on the wire for SDK compatibility but are ignored with a warning.
-        on<Trigger<WalkCommand>>().then([this](const WalkCommand&) { warn_once(walk_warned_, "Move"); });
+        on<Trigger<WalkCommand>>().then(
+            [this](const WalkCommand& cmd) { controller_->set_walk_command(cmd.vx, cmd.vy, cmd.vyaw); });
         on<Trigger<GetUpRequest>>().then([this](const GetUpRequest&) { warn_once(getup_warned_, "GetUp"); });
         on<Trigger<LieDownRequest>>().then([this](const LieDownRequest&) { warn_once(liedown_warned_, "LieDown"); });
         on<Trigger<VisualKickRequest>>().then(

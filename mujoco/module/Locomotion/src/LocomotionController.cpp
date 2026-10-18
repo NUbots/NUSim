@@ -3,9 +3,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <stdexcept>
 
 #include "module/Locomotion/src/LocoMath.hpp"
+#include "shared/util/Config.hpp"
 
 namespace k1sim::module {
 
@@ -49,6 +51,27 @@ namespace k1sim::module {
         pd_.kp      = load_array(gains_cfg["kp"]);
         pd_.kd      = load_array(gains_cfg["kd"]);
 
+        const auto walk_node = locomotion_cfg["walk"];
+        if (walk_node && walk_node["policy"] && !walk_node["policy"].as<std::string>().empty()) {
+            walk_blend_time_ = walk_node["blend_time"].as<double>(1.5);
+            walk_period_     = 1.0 / walk_node["rate_hz"].as<double>(50.0);
+            if (walk_node["cmd_limit"]) {
+                const auto lim = walk_node["cmd_limit"].as<std::vector<double>>();
+                for (std::size_t i = 0; i < 3 && i < lim.size(); ++i) {
+                    walk_cmd_limit_[i] = lim[i];
+                }
+            }
+            const auto path = config::resolve_path(walk_node["policy"].as<std::string>()).string();
+            try {
+                walk_policy_ = WalkPolicy::load(path);
+                walk_pd_.kp  = walk_policy_->kp();
+                walk_pd_.kd  = walk_policy_->kd();
+            }
+            catch (const std::exception& e) {
+                std::fprintf(stderr, "LocomotionController: walk policy disabled: %s\n", e.what());
+            }
+        }
+
         // The real robot boots into DAMPING (limp until an operator sends Prepare), but a
         // sim robot spawns standing at the ready pose -- idling in DAMPING just collapses
         // it before any client connects. Default to holding PREPARE until the first
@@ -67,7 +90,13 @@ namespace k1sim::module {
         if (initialized_) {
             return;
         }
-        map_         = std::make_unique<ModelMap>(ModelMap::build(m));
+        map_ = std::make_unique<ModelMap>(ModelMap::build(m));
+        for (std::size_t i = 0; i < JOINT_COUNT; ++i) {
+            const int jnt = mj_name2id(m, mjOBJ_JOINT, JOINT_NAMES[i]);
+            const bool lim = m->jnt_limited[jnt] != 0;
+            q_lo_[i]       = lim ? m->jnt_range[2 * jnt] : -std::numeric_limits<double>::infinity();
+            q_hi_[i]       = lim ? m->jnt_range[2 * jnt + 1] : std::numeric_limits<double>::infinity();
+        }
         initialized_ = true;
     }
 
@@ -88,6 +117,7 @@ namespace k1sim::module {
         snap.requested_mode = requested_mode_;
         snap.low_cmd_type   = low_cmd_type_;
         snap.low_cmd_motors = low_cmd_motors_;
+        snap.walk_cmd       = walk_cmd_;
         return snap;
     }
 
@@ -95,6 +125,13 @@ namespace k1sim::module {
         std::lock_guard<std::mutex> lock(cmd_mutex_);
         head_pitch_ = pitch;
         head_yaw_   = yaw;
+    }
+
+    void LocomotionController::set_walk_command(double vx, double vy, double vyaw) {
+        std::lock_guard<std::mutex> lock(cmd_mutex_);
+        walk_cmd_ = {std::clamp(vx, -walk_cmd_limit_[0], walk_cmd_limit_[0]),
+                     std::clamp(vy, -walk_cmd_limit_[1], walk_cmd_limit_[1]),
+                     std::clamp(vyaw, -walk_cmd_limit_[2], walk_cmd_limit_[2])};
     }
 
     void LocomotionController::request_mode_change(int mode) {
@@ -124,6 +161,7 @@ namespace k1sim::module {
             case State::Damping: step_damping(d); break;
             case State::Prepare: step_prepare(m, d, snap); break;
             case State::Custom: step_custom(m, d, snap); break;
+            case State::Walking: step_walking(m, d, snap); break;
         }
     }
 
@@ -134,8 +172,16 @@ namespace k1sim::module {
             case booster::PREPARE:
             case booster::CUSTOM: break;
             case booster::WALKING:
+                if (walk_policy_) {
+                    break;
+                }
+                std::fprintf(stderr,
+                             "LocomotionController: ChangeMode(WALKING) requested, but no walk policy is "
+                             "loaded (config/locomotion.yaml `walk.policy`); holding PREPARE\n");
+                effective = booster::PREPARE;
+                break;
             case booster::SOCCER:
-                // Wire-compatible, but the walking policy lives on the NUbots_K1 side now
+                // Wire-compatible, but the soccer gait lives on the NUbots_K1 side now
                 // (rt/joint_ctrl in CUSTOM mode). Hold the ready pose instead.
                 std::fprintf(stderr,
                              "LocomotionController: ChangeMode(%d) requested, but locomotion policies "
@@ -148,7 +194,11 @@ namespace k1sim::module {
                 return;
         }
 
-        mode_.store(effective, std::memory_order_relaxed);
+        // WALKING is only reported once the blend into the walk pose is done (like the real
+        // robot, where ChangeMode(WALKING) completes when it is ready to take Move commands).
+        if (effective != booster::WALKING) {
+            mode_.store(effective, std::memory_order_relaxed);
+        }
         switch (effective) {
             case booster::DAMPING: state_ = State::Damping; break;
             case booster::PREPARE:
@@ -171,8 +221,69 @@ namespace k1sim::module {
                     low_cmd_motors_.clear();
                 }
                 break;
+            case booster::WALKING:
+                state_            = State::Walking;
+                walk_start_pose_  = current_q(d);
+                walk_start_time_  = d->time;
+                walk_running_     = false;
+                {
+                    std::lock_guard<std::mutex> lock(cmd_mutex_);
+                    walk_cmd_ = {};  // a stale Move from a previous session must not launch the robot
+                }
+                break;
             default: break;  // unreachable
         }
+    }
+
+    void LocomotionController::step_walking(const mjModel* m, mjData* d, const CommandSnapshot& snap) {
+        if (!walk_running_) {
+            // Blend from wherever we entered to the policy's default pose under the stable
+            // gains.yaml PD, so the policy starts from the pose it was trained to start from.
+            const double frac = std::clamp((d->time - walk_start_time_) / walk_blend_time_, 0.0, 1.0);
+            std::array<double, JOINT_COUNT> q_ref{};
+            for (std::size_t i = 0; i < JOINT_COUNT; ++i) {
+                q_ref[i] = lerp(walk_start_pose_[i], walk_policy_->default_pose()[i], smoothstep(frac));
+            }
+            pd_.apply(m, d, *map_, q_ref);
+            if (frac >= 1.0) {
+                walk_running_   = true;
+                mode_.store(booster::WALKING, std::memory_order_relaxed);
+                walk_next_tick_ = d->time;
+                walk_policy_->reset();
+                walk_q_ref_ = walk_policy_->default_pose();
+            }
+            return;
+        }
+
+        if (d->time >= walk_next_tick_) {
+            walk_next_tick_ += walk_period_;
+            if (walk_next_tick_ <= d->time) {
+                walk_next_tick_ = d->time + walk_period_;  // fell behind (e.g. after a sim reset)
+            }
+            std::array<double, 3> gyro{};
+            if (map_->sens_gyro >= 0) {
+                for (int k = 0; k < 3; ++k) {
+                    gyro[k] = d->sensordata[map_->sens_gyro + k];
+                }
+            }
+            // projected gravity: world (0,0,-1) expressed in the body frame
+            double inv_quat[4];
+            mju_negQuat(inv_quat, &d->qpos[map_->root_qpos_adr + 3]);
+            const double g_world[3] = {0.0, 0.0, -1.0};
+            double g_body[3];
+            mju_rotVecQuat(g_body, g_world, inv_quat);
+
+            std::array<double, JOINT_COUNT> q{}, dq{};
+            for (std::size_t i = 0; i < JOINT_COUNT; ++i) {
+                q[i]  = d->qpos[map_->qpos_adr[i]];
+                dq[i] = d->qvel[map_->dof_adr[i]];
+            }
+            walk_q_ref_ = walk_policy_->infer(gyro, {g_body[0], g_body[1], g_body[2]}, q, dq, snap.walk_cmd);
+            for (std::size_t i = 0; i < JOINT_COUNT; ++i) {
+                walk_q_ref_[i] = std::clamp(walk_q_ref_[i], q_lo_[i], q_hi_[i]);
+            }
+        }
+        walk_pd_.apply(m, d, *map_, walk_q_ref_);
     }
 
     void LocomotionController::step_damping(mjData* d) {

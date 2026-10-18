@@ -33,6 +33,7 @@ namespace k1sim::booster {
         LIE_DOWN                   = 2007,  // empty body
         GET_UP                     = 2008,  // empty body
         GET_MODE                   = 2017,  // response body {"mode": <int>}
+        GET_ROBOT_INFO             = 2022,  // response body {"name","nickname","version","model","serial_number","edition","region"}
         GET_UP_WITH_MODE           = 2025,  // body {"mode": <int>} — what NUbots' BoosterGetUp uses
         VISUAL_KICK                = 2038,  // what NUbots' BoosterVisualKick uses
     };

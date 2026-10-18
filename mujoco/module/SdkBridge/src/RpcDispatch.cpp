@@ -107,6 +107,18 @@ namespace k1sim::module::sdkbridge {
                 outcome.response_body = json{{"mode", current_mode}}.dump();
                 break;
             }
+            case booster::GET_ROBOT_INFO: {
+                outcome.action.kind   = RpcActionKind::NONE;
+                outcome.response_body = json{{"name", "NUSim"},
+                                             {"nickname", "NUSim"},
+                                             {"version", "nusim"},
+                                             {"model", "K1"},
+                                             {"serial_number", "NUSIM-K1-0001"},
+                                             {"edition", "nusim"},
+                                             {"region", "global"}}
+                                            .dump();
+                break;
+            }
             default: {
                 outcome.unknown_api_id = true;
                 outcome.status         = unknown_api_status;

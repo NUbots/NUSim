@@ -13,3 +13,12 @@ fall:
   fallen_height: 0.35 # m — base below this => HAS_FALLEN even if the trunk is upright
   # (collapsed/kneeling poses read IS_READY on tilt alone, which starves the
   # NUbots get-up retry loop; standing ~0.55, walking crouch >= 0.45)
+
+# Built-in velocity-tracking walk policy (WALKING mode, driven by the Move RPC). An MLP exported
+# from an mjlab/AMP K1 ONNX by scripts/export_walk_policy.py; obs/action layout in
+# module/Locomotion/src/WalkPolicy.hpp. Leave `policy` empty to disable (WALKING -> PREPARE).
+walk:
+  policy: models/policies/amp_walk.json # relative to mujoco/
+  rate_hz: 50 # policy inference rate; PD runs every physics step
+  blend_time: 1.5 # s, blend from the entry pose to the policy's default pose before it takes over
+  cmd_limit: [1.0, 0.5, 1.0] # |vx|, |vy|, |vyaw| clamp applied to Move commands (m/s, m/s, rad/s)

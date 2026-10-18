@@ -9,8 +9,8 @@
 // Locomotion *policies* (walking, get-up, kick) live in NUbots_K1 and reach
 // the sim as LowCmd servo targets in CUSTOM mode, so the tests here cover the
 // servo-listener surface only: the Prepare blend/hold, CUSTOM LowCmd
-// tracking, fall detection, and the wire-compat mapping of WALKING/SOCCER
-// mode requests onto PREPARE.
+// tracking, fall detection, and the wire-compat mapping of SOCCER
+// mode requests onto PREPARE, and the built-in WALKING policy.
 //
 // The model under test is the real vendored models/k1/K1_22dof.xml, NOT a
 // copy -- a floor plane is added programmatically via MuJoCo's mjSpec
@@ -313,8 +313,8 @@ namespace {
     }
 
     // ---------------------------------------------------------------------
-    // Test 5: WALKING/SOCCER mode requests are wire-compatible but map to
-    // PREPARE (the walk policy lives in NUbots_K1 now).
+    // Test 5: SOCCER mode requests are wire-compatible but map to PREPARE (the
+    // soccer gait lives in NUbots_K1 now).
     // ---------------------------------------------------------------------
     void test_walking_maps_to_prepare() {
         std::printf("test_walking_maps_to_prepare:\n");
@@ -340,6 +340,46 @@ namespace {
         mj_deleteModel(m);
     }
 
+    // ---------------------------------------------------------------------
+    // Test 6: WALKING runs the built-in policy: stands on zero command, then
+    // walks forward on a Move command without falling.
+    // ---------------------------------------------------------------------
+    void test_walking_policy() {
+        std::printf("test_walking_policy:\n");
+        mjModel* m = load_test_model();
+        mjData* d  = mj_makeData(m);
+        reset_to_keyframe(m, d, "ready");
+
+        LocomotionController controller(locomotion_cfg(), gains_cfg());
+        check(controller.walk_policy_loaded(), "walk policy loads from config/locomotion.yaml");
+        controller.request_mode_change(booster::WALKING);
+
+        const ModelMap map = ModelMap::build(m);
+        for (int i = 0; i < 5000; ++i) {  // 1.5 s blend + stand, zero command
+            controller.step(m, d);
+            mj_step(m, d);
+        }
+        check(controller.mode() == booster::WALKING, "ChangeMode(WALKING) reports WALKING");
+        BaseState s = read_base_state(d, map);
+        check(s.z > 0.4 && s.tilt_rad < 0.3,
+              "stands on zero command (z=" + std::to_string(s.z) + ", tilt=" + std::to_string(s.tilt_rad) + ")");
+        const double x0 = s.x;
+
+        controller.set_walk_command(0.3, 0.0, 0.0);
+        for (int i = 0; i < 8000; ++i) {  // 8 s
+            controller.step(m, d);
+            mj_step(m, d);
+        }
+        s = read_base_state(d, map);
+        check(s.z > 0.4 && s.tilt_rad < 0.4,
+              "still upright after walking (z=" + std::to_string(s.z) + ", tilt=" + std::to_string(s.tilt_rad) + ")");
+        check(s.x - x0 > 1.0, "walked forward (dx=" + std::to_string(s.x - x0) + " m in 8 s at 0.3 m/s)");
+        check(all_finite(d, m->nq), "qpos stays finite throughout");
+
+        mj_deleteData(d);
+        mj_deleteModel(m);
+    }
+
 }  // namespace
 
 int main() {
@@ -348,6 +388,7 @@ int main() {
     test_custom_low_cmd();
     test_fall_detection();
     test_walking_maps_to_prepare();
+    test_walking_policy();
 
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

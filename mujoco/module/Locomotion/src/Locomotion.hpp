@@ -24,7 +24,6 @@ namespace k1sim::module {
         void warn_once(bool& flag, const char* rpc);
 
         std::unique_ptr<LocomotionController> controller_;
-        bool walk_warned_    = false;
         bool getup_warned_   = false;
         bool liedown_warned_ = false;
         bool kick_warned_    = false;
