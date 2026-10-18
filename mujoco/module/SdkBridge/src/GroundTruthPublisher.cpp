@@ -43,19 +43,16 @@ namespace k1sim::module::sdkbridge {
 
     GroundTruthPublisher::GroundTruthPublisher(DdsParticipant& dds) {
         using nav_msgs::msg::dds_::Odometry_PubSubType;
-        ball_writer_  = dds.create_writer<Odometry_PubSubType>(k1sim::nusim::TOPIC_GT_BALL,
-                                                              DdsParticipant::state_writer_qos());
-        robot_writer_ = dds.create_writer<Odometry_PubSubType>(k1sim::nusim::TOPIC_GT_ROBOT,
-                                                               DdsParticipant::state_writer_qos());
+        ball_writer_ =
+            dds.create_writer<Odometry_PubSubType>(k1sim::nusim::TOPIC_GT_BALL, DdsParticipant::state_writer_qos());
+        robot_writer_ =
+            dds.create_writer<Odometry_PubSubType>(k1sim::nusim::TOPIC_GT_ROBOT, DdsParticipant::state_writer_qos());
     }
 
     void GroundTruthPublisher::publish(const k1sim::message::SimStateUpdate& update) {
         const auto& base = update.base;
-        auto robot       = make_odometry(update.wall_time_ns,
-                                   {base.x, base.y, base.z},
-                                   base.quat,
-                                   base.lin_vel,
-                                   base.ang_vel);
+        auto robot =
+            make_odometry(update.wall_time_ns, {base.x, base.y, base.z}, base.quat, base.lin_vel, base.ang_vel);
         robot_writer_->write(&robot);
 
         if (update.ball.valid) {

@@ -26,13 +26,21 @@ namespace k1sim::module {
             const double battery_soc         = cfg["battery_soc"].as<double>(100.0);
             const int64_t unknown_api_status = cfg["unknown_api_status"].as<int64_t>(0);
 
-            dds_             = std::make_unique<sdkbridge::DdsParticipant>(domain, udp_only);
-            state_publisher_ = std::make_unique<sdkbridge::StatePublisher>(*dds_, battery_soc);
-            rpc_server_      = std::make_unique<sdkbridge::RpcServer>(*dds_, *this, unknown_api_status);
+            const auto odometry = sdkbridge::OdometryModel::load_config(config::load("odometry.yaml"));
+
+            dds_                 = std::make_unique<sdkbridge::DdsParticipant>(domain, udp_only);
+            state_publisher_     = std::make_unique<sdkbridge::StatePublisher>(*dds_, battery_soc, odometry);
+            rpc_server_          = std::make_unique<sdkbridge::RpcServer>(*dds_, *this, unknown_api_status);
             ground_truth_        = std::make_unique<sdkbridge::GroundTruthPublisher>(*dds_);
             ball_command_reader_ = std::make_unique<sdkbridge::BallCommandReader>(*dds_, *this);
 
-            log<NUClear::LogLevel::INFO>("SdkBridge ready (DDS domain", domain, udp_only ? "UDP-only" : "UDP+SHM", ")");
+            log<NUClear::LogLevel::INFO>(
+                "SdkBridge ready (DDS domain",
+                domain,
+                udp_only ? "UDP-only" : "UDP+SHM",
+                ", odometry",
+                odometry.enabled ? "with the config/odometry.yaml error model" : "ground truth",
+                ")");
         });
 
         // 50 Hz (matches SimCore's state_publish_divisor) — write low_state/odometer_state

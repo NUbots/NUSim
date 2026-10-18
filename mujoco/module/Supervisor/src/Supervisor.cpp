@@ -32,12 +32,12 @@ namespace k1sim::module {
         // this tree for config that has to be ready before reactions bind
         // (this port isn't hot-reloadable; NUClear's on<Configuration> extension
         // isn't used anywhere in this MuJoCo port, see shared/util/Config.hpp).
-        SupervisorConfig cfg = build_config();
-        const bool enabled   = cfg.enabled;
-        const int gc_port    = cfg.gc_port;
+        SupervisorConfig cfg             = build_config();
+        const bool enabled               = cfg.enabled;
+        const int gc_port                = cfg.gc_port;
         const std::string ball_body_name = cfg.ball.body;
         const std::string ball_geom_name = cfg.ball.geom;
-        logic_               = std::make_unique<SupervisorLogic>(std::move(cfg));
+        logic_                           = std::make_unique<SupervisorLogic>(std::move(cfg));
 
         on<Trigger<message::SimHandles>>().then([this](const message::SimHandles& handles) {
             model_.store(handles.model, std::memory_order_release);

@@ -324,6 +324,7 @@ runs show whether the robot is actually moving.
 | `gains.yaml` | Per-joint PD stiffness/damping + ready pose (seeded from Booster's official K1 deploy config) |
 | `locomotion.yaml` | `module::Locomotion` — initial mode, prepare blend time, fall thresholds |
 | `dds.yaml` | `module::SdkBridge` — DDS domain, UDP-only fallback, battery SOC, unknown-RPC status |
+| `odometry.yaml` | `module::SdkBridge` — odometry error model (scale, white noise, bias drift) on `rt/odometer_state` / `rt/odom`; off = ground truth |
 
 All are read at startup (`--config-dir` or `$K1SIM_CONFIG_DIR` to point elsewhere); `--field`/`--rtf` on the
 command line override the corresponding YAML value for one-off runs (this is what `K1_FIELD`/`K1_RTF` above
@@ -361,7 +362,7 @@ So the sim impersonates NUbridge: the **unchanged** NUbots `robocup`/`behaviour`
 Config: `mujoco/config/camera.yaml` (segment name, resolution, fps, intrinsics). Renders offscreen via
 **EGL on Linux** or **CGL on macOS**, so it works **headless** too. Linux needs a render device
 (`./b run` passes `/dev/dri` + GPU). No device ⇒ logs and disables, no crash — but then vision receives **zero** frames
-(`VisualMesh Stats: Receiving 0/s`): confirm the sim log shows `Camera: rendering 640 x 480 ...` before
+(`VisualMesh Stats: Receiving 0/s`): confirm the sim log shows `Camera: rendering 544 x 448 ...` before
 blaming the NUbots side. The right-camera segment (`_boostercamera_head_raw_right_rgb`) is not rendered
 yet; K1Camera warn-retries on it harmlessly (stereo is future work).
 

@@ -39,9 +39,9 @@ namespace k1sim::module::sdkbridge {
                 continue;
             }
 
-            auto cmd   = std::make_unique<k1sim::message::BallCommand>();
-            cmd->frame = frame == "robot" ? k1sim::message::BallCommand::Frame::ROBOT
-                                          : k1sim::message::BallCommand::Frame::WORLD;
+            auto cmd              = std::make_unique<k1sim::message::BallCommand>();
+            cmd->frame            = frame == "robot" ? k1sim::message::BallCommand::Frame::ROBOT
+                                                     : k1sim::message::BallCommand::Frame::WORLD;
             const auto& p         = msg.pose().pose().position();
             const auto& v         = msg.twist().twist().linear();
             const auto& w         = msg.twist().twist().angular();

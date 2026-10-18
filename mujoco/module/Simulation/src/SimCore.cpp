@@ -460,6 +460,7 @@ namespace k1sim {
             root[4] = cw * q[1] - sw * q[2];
             root[5] = cw * q[2] + sw * q[1];
             root[6] = cw * q[3] + sw * q[0];
+            place_ball_on_centre_mark();
         }
 
         for (std::size_t j = 0; j < extra_maps_.size(); ++j) {
@@ -480,6 +481,17 @@ namespace k1sim {
                 d_->qvel[em.dof_adr[i]]  = 0.0;
             }
         }
+    }
+
+    void SimCore::place_ball_on_centre_mark() {
+        // Find the ball, if the scene has one
+        const int joint = mj_name2id(m_, mjOBJ_JOINT, "ball_free");
+        const int geom  = mj_name2id(m_, mjOBJ_GEOM, "ball");
+        if (joint < 0 || geom < 0) {
+            return;
+        }
+        // Move the ball back by its x offset so it sits on the centre mark
+        d_->qpos[m_->jnt_qposadr[joint]] = -m_->geom_pos[3 * geom];
     }
 
     void SimCore::reset() {
@@ -527,8 +539,8 @@ namespace k1sim {
     }
 
     std::unique_ptr<message::SimStateUpdate> SimCore::make_snapshot(uint64_t steps) const {
-        auto s        = std::make_unique<message::SimStateUpdate>();
-        s->sim_time   = d_->time;
+        auto s      = std::make_unique<message::SimStateUpdate>();
+        s->sim_time = d_->time;
         s->wall_time_ns =
             std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch())
                 .count();
@@ -620,11 +632,11 @@ namespace k1sim {
         }
 
         if (ball_body_id_ >= 0) {
-            const auto ball    = freebody::geom_centre_state(m_, d_, ball_body_id_, ball_geom_id_);
-            s->ball.valid      = true;
-            s->ball.position   = ball.position;
-            s->ball.lin_vel    = ball.lin_vel;
-            s->ball.ang_vel    = ball.ang_vel;
+            const auto ball  = freebody::geom_centre_state(m_, d_, ball_body_id_, ball_geom_id_);
+            s->ball.valid    = true;
+            s->ball.position = ball.position;
+            s->ball.lin_vel  = ball.lin_vel;
+            s->ball.ang_vel  = ball.ang_vel;
         }
 
         StepController* ctrl = controller_.load(std::memory_order_acquire);

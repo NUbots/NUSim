@@ -79,9 +79,9 @@ namespace k1sim::freebody {
         const int qadr = m->jnt_qposadr[jnt];
         const int vadr = m->jnt_dofadr[jnt];
 
-        const auto offset  = geom_offset_world(m, d, body_id, geom_id);
-        const mjtNum w[3]  = {ang_vel[0], ang_vel[1], ang_vel[2]};
-        const mjtNum r[3]  = {offset[0], offset[1], offset[2]};
+        const auto offset = geom_offset_world(m, d, body_id, geom_id);
+        const mjtNum w[3] = {ang_vel[0], ang_vel[1], ang_vel[2]};
+        const mjtNum r[3] = {offset[0], offset[1], offset[2]};
         mjtNum w_cross_r[3];
         mju_cross(w_cross_r, w, r);
 
@@ -184,11 +184,11 @@ namespace k1sim::freebody {
             || (offset[0] == 0.0 && offset[1] == 0.0 && offset[2] == 0.0)) {
             return;
         }
-        const int adr        = m->jnt_qposadr[m->body_jntadr[body_id]];
-        const mjtNum off[3]  = {offset[0], offset[1], offset[2]};
+        const int adr       = m->jnt_qposadr[m->body_jntadr[body_id]];
+        const mjtNum off[3] = {offset[0], offset[1], offset[2]};
         for (int key = 0; key < m->nkey; ++key) {
-            mjtNum* q        = m->key_qpos + key * m->nq + adr;
-            mjtNum quat[4]   = {q[3], q[4], q[5], q[6]};
+            mjtNum* q      = m->key_qpos + key * m->nq + adr;
+            mjtNum quat[4] = {q[3], q[4], q[5], q[6]};
             if (mju_normalize4(quat) < mjMINVAL) {
                 quat[0] = 1.0;  // an all-zero (padded) quaternion reads as identity
             }

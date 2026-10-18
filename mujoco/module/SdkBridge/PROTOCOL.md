@@ -86,7 +86,8 @@ fastddsgen maps to unsigned `octet`/`uint8_t` in the generated C++ — this is t
 | 2 | `y` | `float` |
 | 3 | `theta` | `float` |
 
-Topic `rt/odometer_state`. Planar ground-truth pose (m, m, rad).
+Topic `rt/odometer_state`. Planar pose (m, m, rad): the base's ground truth, or with
+`config/odometry.yaml` enabled, the odometry error model's drifting estimate of it.
 
 ### `geometry_msgs::msg::dds_::Pose_` (geometry_msgs/Pose.h)
 | # | field | type |
@@ -115,8 +116,11 @@ full ROS odometry: `rt/odometer_state` carries only its planar pose, this adds t
 which NUbots_K1's `platform::Booster::HardwareIO` subscribes to for `Sensors.vTw`. Booster
 does not document the frames; the sim follows the ROS nav_msgs convention: pose in
 `frame_id` "odom" (the world), twist in `child_frame_id` "base_link" (the root body's frame,
-rotated from MuJoCo's world-frame velocities), header stamped with wall-clock time,
-covariances zero (the sim's base state is ground truth). HardwareIO logs the frames of the
+rotated from MuJoCo's world-frame velocities), header stamped with wall-clock time. The
+planar parts (x, y, yaw and vx, vy, wz) carry `config/odometry.yaml`'s error model when it is
+enabled, the same estimate as `rt/odometer_state`, with the twist covariance's vx, vy and wz
+diagonal its per-sample white noise variance; otherwise everything is ground truth and the
+covariances are zero. HardwareIO logs the frames of the
 first message it receives, which shows which convention the real robot uses. Layouts and
 registered names verified against the SDK (`d5d8f7ae`) with `getName()`, as for `Pose_`.
 
