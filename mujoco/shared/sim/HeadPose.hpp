@@ -5,6 +5,8 @@
 #include <cmath>
 #include <mujoco/mujoco.h>
 
+#include "shared/sim/Quat.hpp"
+
 namespace k1sim {
 
     // Head pose in the yaw-only base footprint frame, the frame the real robot's rt/head_pose
@@ -27,8 +29,7 @@ namespace k1sim {
                                            const mjtNum head_q[4],
                                            const mjtNum base_xy[2],
                                            const mjtNum base_q[4]) {
-        const mjtNum yaw = std::atan2(2.0 * (base_q[0] * base_q[3] + base_q[1] * base_q[2]),
-                                      1.0 - 2.0 * (base_q[2] * base_q[2] + base_q[3] * base_q[3]));
+        const mjtNum yaw = quat_yaw(base_q);
         const mjtNum axis[3]{0, 0, 1};
         mjtNum neg_yaw_q[4];
         mju_axisAngle2Quat(neg_yaw_q, axis, -yaw);

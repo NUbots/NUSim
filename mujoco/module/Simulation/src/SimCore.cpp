@@ -8,6 +8,7 @@
 
 #include "shared/k1/BoosterApi.hpp"
 #include "shared/sim/HeadPose.hpp"
+#include "shared/sim/Quat.hpp"
 #include "shared/util/Config.hpp"
 
 namespace k1sim {
@@ -30,9 +31,7 @@ namespace k1sim {
             sinp        = std::clamp(sinp, -1.0, 1.0);
             rpy[1]      = std::asin(sinp);
 
-            const double siny_cosp = 2.0 * (w * z + x * y);
-            const double cosy_cosp = 1.0 - 2.0 * (y * y + z * z);
-            rpy[2]                 = std::atan2(siny_cosp, cosy_cosp);
+            rpy[2] = quat_yaw(q);
         }
 
         double to_seconds(const timespec& t) {

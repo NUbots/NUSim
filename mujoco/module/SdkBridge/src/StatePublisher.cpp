@@ -21,17 +21,11 @@
 #include "PosePubSubTypes.h"
 #include "shared/k1/BoosterApi.hpp"
 #include "shared/k1/JointIndex.hpp"
+#include "shared/sim/Quat.hpp"
 
 namespace k1sim::module::sdkbridge {
 
     namespace {
-
-        // BaseState::quat is {w, x, y, z} (see shared/message/SimMessages.hpp). Planar yaw
-        // extraction for the Odometer's theta field.
-        double yaw_from_quat(const std::array<double, 4>& q) {
-            const double w = q[0], x = q[1], y = q[2], z = q[3];
-            return std::atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z));
-        }
 
         // Hamilton product a * b of {w, x, y, z} quaternions
         std::array<double, 4> quat_mul(const std::array<double, 4>& a, const std::array<double, 4>& b) {
@@ -127,7 +121,7 @@ namespace k1sim::module::sdkbridge {
 
         // The controller's odometry: the base's planar pose and velocity as OdometryModel corrupts
         // them (the ground truth when it is disabled), published on both odometry topics below.
-        const double yaw_true              = yaw_from_quat(update.base.quat);
+        const double yaw_true              = quat_yaw(update.base.quat);
         const OdometryModel::Estimate& est = odometry_.update(update.sim_time,
                                                               update.base.x,
                                                               update.base.y,
