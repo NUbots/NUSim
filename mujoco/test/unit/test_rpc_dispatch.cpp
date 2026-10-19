@@ -1,7 +1,6 @@
-// Unit test for the pure RPC parse/dispatch core (module::sdkbridge::dispatch_rpc) —
-// no DDS participant, no network. Feeds synthetic RpcReqMsg_ header/body JSON for
-// every LocoApi id NUbots_K1 uses (plus an unknown id) and asserts the resulting
-// NUClear message field values + reply status, per module/SdkBridge/PROTOCOL.md §3.
+// dispatch_rpc, the RPC parse/dispatch core, without DDS. Feeds header/body JSON for every LocoApi
+// id NUbots_K1 uses, plus unknown ids, and checks the emitted message and reply status
+// (module/SdkBridge/PROTOCOL.md §3).
 #include <cstdio>
 #include <cstdlib>
 #include <string>

@@ -1,10 +1,6 @@
-// M2 acceptance: the scene MJCF resolves against the frozen JointIndexK1 contract.
+// The scene MJCF resolves against the JointIndexK1 contract.
 //
-// Model path resolution (highest priority first):
-//   1. $K1SIM_TEST_MODEL   — interim override while models/k1/k1_scene_robocup.xml
-//                            (workstream A, M1) is still landing; points at a scratch scene
-//                            during development.
-//   2. the scene of config/simulation.yaml's default `field` — the real acceptance path once A lands.
+// Model: $K1SIM_TEST_MODEL if set, else the scene of config/simulation.yaml's default `field`.
 //
 // Asserts: ModelMap::build succeeds (all 22 joints/actuators found), a free root joint is
 // present, and the physics timestep is 0.001s.

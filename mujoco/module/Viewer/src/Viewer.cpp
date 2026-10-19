@@ -16,12 +16,9 @@ namespace k1sim::module {
 
     namespace {
 
-        // GLFW callbacks must be plain C function pointers, and this Reactor is only
-        // ever installed once (PowerPlant::install<Viewer>() is called exactly once
-        // from main.cpp), so the GL/mjv/mjr state lives here as translation-unit
-        // globals rather than as Viewer members — that keeps GLFW/MuJoCo headers out
-        // of Viewer.hpp (main.cpp only needs the Reactor type, matching every other
-        // module in this tree).
+        // GLFW callbacks must be plain C function pointers and Viewer is installed once, so the
+        // GL/mjv/mjr state lives in translation-unit globals. This also keeps GLFW/MuJoCo headers out
+        // of Viewer.hpp.
 
         GLFWwindow* window = nullptr;
 
@@ -94,10 +91,8 @@ namespace k1sim::module {
                     g_data->qvel[dof + 4] += 6.0;  // pitch rate — guarantees a topple
                 }
             }
-            // SPACE (pause) is intentionally NOT wired here: pausing physics is
-            // module::Simulation's domain (it owns the 1 kHz stepping thread), and
-            // there's no pause switch exposed yet. Future work once Simulation grows
-            // one — see docs/K1_MUJOCO_SETUP.md known limitations.
+            // SPACE (pause) isn't wired: module::Simulation owns stepping and has no pause switch
+            // yet (see docs/K1_MUJOCO_SETUP.md known limitations).
         }
 
         void mouse_button_cb(GLFWwindow* w, int button, int act, int mods) {
@@ -247,21 +242,17 @@ namespace k1sim::module {
             }
 
             glfwMakeContextCurrent(window);
-            // No vsync: frame pacing is already owned by the Every<16ms> reaction
-            // below, and blocking glfwSwapBuffers() on a vblank the driver never
-            // delivers (headless/virtual displays, some remote X servers) would
-            // stall the NUClear MainThread pool — the same thread glfwPollEvents
-            // needs, so the whole viewer (and its window-close handling) hangs.
+            // No vsync: the Every<16ms> reaction paces frames, and blocking glfwSwapBuffers() on a
+            // vblank that never comes (headless/virtual displays, some remote X servers) would stall
+            // MainThread, which glfwPollEvents also needs.
             glfwSwapInterval(0);
 
             mjv_defaultCamera(&cam);
             mjv_defaultOption(&opt);
             mjv_defaultPerturb(&pert);
             mjr_defaultContext(&con);
-            // mjv_makeScene/mjr_makeContext need an mjModel, so they're deferred
-            // to the Trigger<SimHandles> reaction below (also MainThread — GL
-            // context creation is thread-bound to whichever thread called
-            // glfwMakeContextCurrent, i.e. this one).
+            // mjv_makeScene/mjr_makeContext need an mjModel, so they're deferred to the
+            // Trigger<SimHandles> reaction below (also MainThread, since the context is bound here).
 
             glfwSetMouseButtonCallback(window, mouse_button_cb);
             glfwSetCursorPosCallback(window, mouse_move_cb);
@@ -284,10 +275,8 @@ namespace k1sim::module {
             if (window != nullptr && !scene_ready && g_model != nullptr) {
                 mjv_makeScene(g_model, &scn, 2000);
                 mjr_makeContext(g_model, &con, mjFONTSCALE_150);
-                // mjv_defaultCamera (Startup) doesn't know the model's scale; now
-                // that it's loaded, frame the free camera on it (lookat/distance
-                // from the compiled model extent) so the scene isn't clipped or
-                // too distant to see on first frame.
+                // Frame the free camera on the loaded model's extent so the first frame isn't
+                // clipped or too far away.
                 mjv_defaultFreeCamera(g_model, &cam);
                 scene_ready = true;
                 log<NUClear::LogLevel::INFO>("Viewer scene ready (",
@@ -317,10 +306,8 @@ namespace k1sim::module {
             glfwPollEvents();
 
             if (scene_ready && g_data != nullptr && g_mutex != nullptr) {
-                // Lock only around the mjData touch points: applying the perturb
-                // force/clearing it, and mjv_updateScene's read of mjData. Both
-                // are sub-millisecond; the physics thread never blocks on us for
-                // longer than that.
+                // Lock only around mjData access (the perturb force and mjv_updateScene); both are
+                // sub-millisecond.
                 std::lock_guard<std::mutex> lock(*g_mutex);
                 if (pert.select > 0) {
                     if (pert.active != 0) {

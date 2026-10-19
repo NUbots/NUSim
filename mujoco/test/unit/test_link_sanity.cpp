@@ -1,5 +1,4 @@
-// M0 sanity: proves the MuJoCo and NUClear imports link and the frozen shared
-// contracts compile. Replaced by real model/PD tests in M1/M2.
+// Sanity check that MuJoCo and NUClear link and the shared contracts compile.
 #include <cstdio>
 #include <cstring>
 #include <mujoco/mujoco.h>

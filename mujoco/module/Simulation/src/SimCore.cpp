@@ -81,12 +81,10 @@ namespace k1sim {
         // Standing base height of the "ready" pose; game spawns and the extra_spawn grid use it.
         constexpr double STAND_Z = 0.555;
 
-        // Spawn slot for the k-th extra robot (k starts at 1): a 5x4 grid on the field,
-        // rows at y = +-1.2 / +-2.4 so nothing lands on the y=0 line the main robot and
-        // ball spawn on. z is the "ready" standing base height. The scene keyframes
-        // zero-pad the extra free joints (global coords — zeros mean "at the origin,
-        // inside the main robot"), so these slots are written into qpos explicitly
-        // after every keyframe reset rather than relying on the padding.
+        // Spawn slot for the k-th extra robot (k starts at 1): a 5x4 grid with rows at
+        // y = +-1.2 / +-2.4, clear of the y = 0 line the main robot and ball use. Keyframes zero-pad
+        // the extra free joints (the world origin), so these slots are written to qpos after every
+        // keyframe reset.
         std::array<double, 3> extra_spawn(int k) {
             const int col  = (k - 1) % 5;
             const int row  = (k - 1) / 5;
@@ -95,12 +93,9 @@ namespace k1sim {
             return {x, y, STAND_Z};
         }
 
-        // Build a scene with (robots - 1) extra K1 copies attached via mjSpec. Each copy's
-        // element names get a "subNN_" prefix, so the main robot's unprefixed names (and
-        // every existing name-based lookup) stay valid. Extra copies' keyframes are dropped;
-        // the parent scene's keyframes zero-pad the new free joints, landing each copy at
-        // its attachment frame.
-        // extras[k - 1] is the attachment position of copy k.
+        // Builds a scene with (robots - 1) extra K1 copies attached via mjSpec. Each copy's names get
+        // a "subNN_" prefix so the main robot's unprefixed names stay valid. extras[k - 1] is the
+        // attachment position of copy k.
         mjModel* load_multi_robot_model(const std::string& scene_path,
                                         const std::vector<std::array<double, 3>>& extras,
                                         char* error,
@@ -249,8 +244,8 @@ namespace k1sim {
             throw std::runtime_error("mj_makeData failed for '" + resolved + "'");
         }
 
-        // Spawn keyframe (configurable, e.g. lying_front for get-up testing); the PD
-        // fallback target always tracks the "ready" pose regardless of where we spawn.
+        // Spawn keyframe (e.g. lying_front for get-up testing). The PD fallback target is always
+        // the "ready" pose.
         int spawn_key = mj_name2id(m_, mjOBJ_KEY, config_.initial_keyframe.c_str());
         if (spawn_key < 0 && config_.initial_keyframe != "ready") {
             std::fprintf(stderr,
@@ -280,17 +275,10 @@ namespace k1sim {
         mj_forward(m_, d_);
     }
 
-    // Make the floor's declared contact parameters the ones the feet actually see.
-    //
-    // MuJoCo derives a contact's parameters from the two geoms: if their priorities are equal
-    // it takes the element-wise MAX of the friction vectors. The K1 foot box carries no
-    // explicit friction, so it gets the MuJoCo default of 1.0, and max(1.0, floor) means the
-    // floor's number has never mattered -- a "0.8 grass" scene has been simulating mu = 1.0.
-    // Raising the floor's priority makes it authoritative, which is what the mujoco_playground
-    // training scene does (its floor geom is declared priority="1").
-    //
-    // Explicit <pair> elements (the scene defines one for ball-vs-floor) are unaffected by
-    // priority, so tuned ball dynamics survive this.
+    // Raises the floor geom's priority so its friction and solref govern foot contacts. At equal
+    // priority MuJoCo takes the element-wise max friction, and the K1 foot box has the default 1.0,
+    // so the floor's value would be ignored. The mujoco_playground training floor is priority 1 too.
+    // Explicit <pair>s (ball-vs-floor) ignore priority, so the tuned ball dynamics are unaffected.
     void SimCore::apply_surface_override() {
         if (!config_.surface.enabled) {
             return;
@@ -323,14 +311,10 @@ namespace k1sim {
                      config_.surface.solref_dampratio);
     }
 
-    // One CSV row per published state: per foot the total contact normal force, the centre of
-    // pressure expressed in that foot's own frame, and the sole's pitch/roll.
-    //
-    // The centre of pressure is what makes tiptoe measurable rather than a description of a
-    // video. The sole box spans x in [-0.064, +0.116] of the foot frame, so a flat-footed
-    // stance sits near cop_x = 0.026 (the box centre) and a foot rolled onto its toe pushes
-    // cop_x towards +0.116 -- the front edge of the support polygon, where the available
-    // friction is spent on a shrinking contact patch. Caller holds mutex_.
+    // One CSV row per published state: per foot, the total contact normal force, the centre of
+    // pressure in the foot frame, and the sole's pitch/roll. The sole box spans x in
+    // [-0.064, +0.116], so cop_x sits near 0.026 flat-footed and moves towards +0.116 as the foot
+    // rolls onto its toe. Caller holds mutex_.
     void SimCore::log_foot_state() {
         if (foot_log_ == nullptr) {
             return;
@@ -582,10 +566,8 @@ namespace k1sim {
             }
         }
         else if (map_.root_body_id >= 0) {
-            // Fallback approximation: the reading a stationary accelerometer would show under
-            // gravity alone (R^T * (0,0,+g)); ignores true linear acceleration (no cacc bookkeeping
-            // without the real sensor). Good enough for a defensive path that isn't exercised by
-            // the vendored model, which always carries the real sensor.
+            // Fallback: what a stationary accelerometer reads under gravity alone (R^T * (0, 0, +g)),
+            // ignoring linear acceleration. Unused with the vendored model, which has the sensor.
             const mjtNum* rmat    = d_->xmat + 9 * map_.root_body_id;
             const mjtNum g        = -m_->opt.gravity[2];
             const mjtNum world[3] = {0, 0, g};

@@ -11,7 +11,7 @@ namespace k1sim {
 
     // Per-joint PD over the 22 actuated joints (JointIndexK1 order). Gains come from
     // config/gains.yaml. Torques are clamped to the model's actuator forcerange.
-    // Used by the Prepare stand, the GetUp script and both locomotion backends.
+    // Used by Locomotion's PREPARE/CUSTOM holds and SimCore's fallback and extra-robot holds.
     class PdController {
     public:
         std::array<double, JOINT_COUNT> kp{};

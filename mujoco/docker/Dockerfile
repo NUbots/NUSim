@@ -43,10 +43,9 @@ RUN DEPS=/tmp/k1sim-deps-src PREFIX=/opt/k1sim-deps SRC=/tmp/k1sim-deps-src/src 
     bash /tmp/install_deps.sh --with-fastddsgen \
     && rm -rf /tmp/k1sim-deps-src /tmp/install_deps.sh
 
-# The MuJoCo release tarball extracts its top dir as root-only (0700); the sim
-# builds as the invoking --user (non-root, see docker/k1sim.sh), which then can't
-# traverse it and cmake's find_library(mujoco) fails "not found". Make the deps
-# tree world-readable. Own layer so it doesn't bust the slow deps build above.
+# The MuJoCo tarball extracts root-only (0700) and the sim builds as a non-root --user, so
+# find_library(mujoco) can't traverse it. Make the deps tree world-readable, in its own layer so
+# the deps build above stays cached.
 RUN chmod -R a+rX /opt/k1sim-deps
 
 # Kept as a separate layer so changes here don't invalidate the deps build above.

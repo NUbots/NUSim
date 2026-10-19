@@ -13,11 +13,9 @@ namespace k1sim::module::camera {
     namespace bip = boost::interprocess;
 
     // Byte-for-byte match of NUbots' input::K1Sensors SharedPoseHeader ("NBPO",
-    // see module/input/K1Sensors/src/K1Sensors.cpp) — the head-pose segment
-    // NUbridge publishes on the real robot. K1Sensors folds this pose into
-    // Sensors.Htw, which is the only place torso tilt enters the NUbots side
-    // (odometry is yaw-only), so without this segment fall detection — and
-    // therefore the whole GetUp chain — never fires.
+    // module/input/K1Sensors/src/K1Sensors.cpp): the head-pose segment NUbridge publishes on the real
+    // robot. It's NUbots' only source of torso tilt (odometry is yaw-only), so fall detection and
+    // GetUp depend on it.
     struct SharedPoseHeader {
         static constexpr uint32_t MAGIC   = 0x4E42504F;  // "NBPO"
         static constexpr uint32_t VERSION = 1;

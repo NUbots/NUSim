@@ -8,14 +8,9 @@
 
 namespace k1sim::module {
 
-    // Reduced mode state machine (Damping/Prepare/Custom). Emits ControllerHandle;
-    // consumes HeadCommand/ModeChangeRequest/LowCmdMessage and forwards each into
-    // LocomotionController's thread-safe setters. Locomotion *policies* live in
-    // NUbots_K1 and reach the sim as LowCmd servo targets; the old high-level RPCs
-    // (Move/GetUp/LieDown/VisualKick) are accepted on the wire but ignored with a
-    // warning. The FSM logic itself lives in LocomotionController (deliberately
-    // NUClear-free, see that header); this reactor only wires it to NUClear and
-    // logs incoming requests.
+    // Wires LocomotionController (the Damping/Prepare/Custom FSM) to NUClear: emits
+    // ControllerHandle, forwards HeadCommand/ModeChangeRequest/LowCmdMessage to its setters, and logs
+    // requests. Move/GetUp/LieDown/VisualKick are accepted on the wire but ignored with a warning.
     class Locomotion : public NUClear::Reactor {
     public:
         explicit Locomotion(std::unique_ptr<NUClear::Environment> environment);

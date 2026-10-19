@@ -1,5 +1,4 @@
-# Every test_*.cpp here becomes a ctest target automatically — workstreams add test files without touching this
-# CMakeLists (avoids concurrent-edit conflicts).
+# Every test_*.cpp here becomes a ctest target automatically.
 file(GLOB test_sources CONFIGURE_DEPENDS "test_*.cpp")
 
 foreach(test_src ${test_sources})

@@ -1,42 +1,18 @@
 <mujoco model="k1_robocup_scene">
   <!--
-    RoboCup Humanoid League KidSize field scene for the vendored Booster K1
-    (see K1_22dof.xml / VENDORED.md). Field/goal dimensions ported from this
-    repo's Webots assets: worlds/k1_robocup.wbt (layout, spawn poses, contact
-    coefficients) and protos/robocup_field/RobocupSoccerField.proto +
-    RobocupGoal.proto (KidSize dimensions: field 9x6 m playing area + 1 m
-    border, goal 2.6 m wide x 1.2 m high, center circle radius 0.75 m, goal
-    area 1x3 m, penalty area 2x5 m, penalty mark 1.5 m from the goal line).
+    RoboCup Humanoid League KidSize field for the vendored Booster K1 (see K1_22dof.xml /
+    VENDORED.md): 9x6 m playing area + 1 m border, goal 2.6 m wide x 1.2 m high, centre circle
+    radius 0.75 m, goal area 1x3 m, penalty area 2x5 m, penalty mark 1.5 m from the goal line.
+    Layout, spawn poses and contact coefficients come from the Webots k1_robocup.wbt world. The
+    Webots field and ball textures aren't redistributable, so the pitch is a green checker with
+    painted line geoms.
 
-    The field texture and ball texture in protos/robocup_field/ are licensed
-    "Copyright Cyberbotics Ltd., for use only with Webots" (see e.g.
-    RobocupTexturedSoccerBall.proto header) or reference an external
-    cyberbotics/webots Grass.proto -- neither is redistributable here, so
-    the pitch is rendered procedurally instead: a green checker material
-    plus painted white line markings built from thin box geoms at the
-    standard KidSize line positions (approximate, per task brief).
+    Solver settings (timestep 0.001, Newton, impratio 10) come from K1_22dof.xml.
 
-    Solver settings (timestep 0.001, Newton, impratio 10) come from the
-    included K1_22dof.xml and are intentionally not overridden here.
-
-    Ball body layout note: the "ball" body is declared at pos="0 0 0" with
-    its sphere geom offset to pos="1.38 0 0.0785" (rather than putting that
-    offset on the body itself). This is deliberate: K1_22dof.xml's own
-    "ready"/"lying_front"/"lying_back" keyframes were authored with qpos
-    sized for the bare robot (nq=29); once this scene adds the ball's
-    freejoint (nq becomes 36), MuJoCo silently zero-pads the missing 7
-    ball qpos entries in those inherited keyframes to (0,0,0,1,0,0,0)
-    (verified: it pads with zero, not with the body's qpos0/pos attribute,
-    and MuJoCo rejects two <key> elements sharing a name, so the keyframes
-    cannot simply be redefined here). Zeroing the *body* frame and offsetting
-    the *geom* means that zero-padded default is exactly the intended rest
-    pose, so the ball lands at (1.38, 0, 0.0785) under all three inherited
-    keyframes with no scene-level keyframe override required.
-
-    A dedicated "kickoff" keyframe below places the robot at the match-start
-    spawn pose (mirrors the Webots world's red K1 at translation -2.71 0 0.53,
-    rotation 0 i.e. facing +x) using the same joint angles as "ready" (its
-    own base height retuned to 0.555, like "ready" -- see VENDORED.md).
+    The ball body sits at the origin with its geom offset to the rest position (1.38, 0, 0.0785).
+    K1_22dof.xml's keyframes only cover the robot (nq = 29), so MuJoCo zero-pads the ball's qpos in
+    them, and they can't be redefined here because duplicate <key> names are rejected. With the
+    offset on the geom, the zero-padded pose is the rest position.
   -->
   <include file="K1_22dof.xml"/>
 
@@ -143,13 +119,9 @@
     </body>
 
     <!--
-      Ball: body frame kept at the origin so it lands at the intended rest
-      point purely via the geom's local offset -- see the file header comment
-      for why (K1_22dof.xml's inherited keyframes zero-pad this body's qpos).
-      radius 0.0785 m, mass 0.29 kg per task brief; own friction 0.5 (grass);
-      the <pair> below overrides the ball/floor solref+friction (tuned so a
-      1 m drop's first-bounce apex ratio matches Webots' bounce=0.76 -> 0.76^2
-      ~= 0.578 of the drop height; see VENDORED.md for the tuning method).
+      Ball: radius 0.0785 m, mass 0.29 kg, friction 0.5 (grass). The body stays at the origin and
+      the geom carries the rest offset (see the header). The <pair> below tunes the ball/floor
+      contact so a 1 m drop's first bounce reaches 0.76^2 ~= 0.578 m (see VENDORED.md).
     -->
     <body name="ball" pos="0 0 0">
       <freejoint name="ball_free"/>
@@ -172,13 +144,9 @@
 
   <keyframe>
     <!--
-      Match-start layout: robot at the Webots world's red-K1 spawn
-      (translation -2.71 0 0.53, rotation 0 => facing +x, toward the ball
-      and the +x goal), base height retuned to 0.555 like "ready" (see
-      VENDORED.md) so it doesn't spawn interpenetrating the floor; same
-      joint angles as "ready". Only 29 values are given (robot only) --
-      the ball's qpos is left zero-padded by MuJoCo, which (per the body/geom
-      offset above) resolves to the ball's correct rest position automatically.
+      Match start: own half at (-2.71, 0), facing +x towards the ball and the +x goal, with the
+      ready pose's base height and joint angles. Only the robot's 29 values are given; the ball's
+      zero-padded qpos is its rest position.
     -->
     <key name="kickoff"
          qpos="-2.71 0 0.555 1 0 0 0

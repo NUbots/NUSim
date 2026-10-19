@@ -12,13 +12,9 @@
 #include "module/Supervisor/src/SupervisorConfig.hpp"
 #include "module/Supervisor/src/SupervisorPlacement.hpp"
 
-// The sim-side GameController supervisor's decision logic: given the previous
-// and current GC packet, decides which bodies need to move and does it.
-// Deliberately free of NUClear (no Reactor, no logging, no UDP) so it can be
-// driven directly from test_supervisor.cpp against a loaded mjModel/mjData —
-// Supervisor.cpp (the Reactor) just owns one of these, feeds it packets
-// parsed off the wire, holds the sim mutex around process(), and forwards the
-// returned Actions to its own log<>() calls.
+// GameController supervisor decision logic: diffs consecutive GC packets and moves bodies
+// accordingly. NUClear-free so test_supervisor.cpp can drive it against a loaded model;
+// Supervisor.cpp feeds it packets under the sim mutex and logs the returned Actions.
 namespace k1sim::module::supervisor {
 
     class SupervisorLogic {
@@ -30,17 +26,12 @@ namespace k1sim::module::supervisor {
             std::string message;
         };
 
-        // Diffs `pkt` against the last packet seen (or, on the very first call,
-        // against the same "nothing has happened yet" baseline NUbots'
-        // GameController::reset_state() bootstraps: an unknown/sentinel State so
-        // any real State counts as a transition, and UNPENALISED for every
-        // player), applies whatever body placements that diff implies directly to
-        // `d`, and returns a log of what happened (empty if nothing did).
+        // Diffs `pkt` against the last packet (on the first call, against an unknown State with every
+        // player UNPENALISED, as NUbots' GameController::reset_state() does), applies the resulting
+        // placements to `d`, and returns what happened (empty if nothing).
         //
-        // Caller must hold the sim mutex (message::SimHandles::mutex) for the
-        // duration of this call — it writes mjData qpos/qvel with no locking of
-        // its own, same contract as the SupervisorPlacement.hpp functions it
-        // calls.
+        // Caller must hold the sim mutex (message::SimHandles::mutex): this writes qpos/qvel
+        // without locking.
         std::vector<Action> process(const mjModel* m, mjData* d, const gc::GameControllerPacket& pkt) {
             std::vector<Action> actions;
 
@@ -53,27 +44,16 @@ namespace k1sim::module::supervisor {
             }
 
             if (!prev_ || prev_->kicking_team != pkt.kicking_team) {
-                // Logged only: which team has kickoff doesn't change where the
-                // ball goes (always centre), see the task brief this module was
-                // built against. Kept here because a future robot-positioning
-                // rule (kicking team must stay outside the centre circle, etc.)
-                // would need it, and it's what "parse enough to know kickoff
-                // team" (this module's spec) means in the meantime.
+                // Logged only: the ball always goes to the centre whichever team kicks off.
                 actions.push_back({Action::Level::INFO, "kickoff team id -> " + std::to_string(pkt.kicking_team)});
             }
 
-            // Core kickoff rule: ball -> centre the instant we enter READY
-            // (teams are now walking to kickoff positions with a known ball spot
-            // — this is also what real matches/Webots show) or PLAYING (SET->
-            // PLAYING is the literal kickoff whistle). Using "entered PLAYING"
-            // rather than requiring specifically SET->PLAYING also covers the
-            // bootstrap case where the first packet this process ever observes
-            // already reports PLAYING (old_state is the UNKNOWN_STATE sentinel,
-            // which never equals PLAYING, so this still fires).
+            // Ball to centre on entering READY (teams walk to kickoff positions) or PLAYING (the
+            // kickoff). "Entered PLAYING" rather than SET -> PLAYING also covers a first packet that
+            // already reports PLAYING, since the UNKNOWN_STATE sentinel never equals PLAYING.
             bool center_ball = state_changed && (new_state == gc::State::READY || new_state == gc::State::PLAYING);
 
-            // Optional extra resets (task brief: "On FINISHED/goal/half
-            // (optional): reset ball to centre").
+            // Optional extra resets: on FINISHED, a goal, or a half change.
             if (cfg_.reset_ball_on_finished && state_changed && new_state == gc::State::FINISHED) {
                 center_ball = true;
             }
@@ -100,8 +80,7 @@ namespace k1sim::module::supervisor {
             return actions;
         }
 
-        // Whether process() has seen a packet yet (idle vs live) — purely
-        // informational, e.g. for a Startup log line.
+        // Whether process() has seen a packet yet (idle vs live).
         [[nodiscard]] bool has_seen_packet() const {
             return prev_.has_value();
         }

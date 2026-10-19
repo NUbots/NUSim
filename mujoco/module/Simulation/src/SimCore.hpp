@@ -21,15 +21,12 @@
 
 namespace k1sim {
 
-    // SimCore owns the mjModel/mjData and the dedicated physics thread. It is deliberately
-    // decoupled from NUClear (no Reactor/Environment dependency) so it can be driven directly
-    // by unit tests; module::Simulation is a thin NUClear wrapper around it (config loading,
-    // SimHandles/SimStateUpdate wiring, Startup/Shutdown lifecycle).
+    // Owns the mjModel/mjData and the physics thread. Independent of NUClear so unit tests can drive
+    // it directly; module::Simulation is the NUClear wrapper.
     //
-    // Threading contract: mjData (d()) is only ever touched with mutex() held. The physics
-    // thread holds it for control+step+snapshot only; callers (e.g. the viewer) should acquire
-    // it briefly. set_controller()/controller() are lock-free (std::atomic<StepController*>)
-    // so a controller can be installed after start() without racing the physics thread.
+    // Threading: mjData (d()) is only touched with mutex() held. The physics thread holds it for
+    // control + step + snapshot; other callers (e.g. the viewer) should hold it briefly.
+    // set_controller()/controller() are lock-free, so a controller can be installed after start().
     class SimCore {
     public:
         using StateCallback = std::function<void(std::unique_ptr<message::SimStateUpdate>)>;
@@ -45,17 +42,10 @@ namespace k1sim {
             int state_publish_divisor = 20;    // physics steps per SimStateUpdate
             double resync_threshold   = 0.05;  // seconds behind schedule before the deadline resyncs
 
-            // Ground-contact override, applied to the geom named "floor" after the model loads.
-            //
-            // Without it the feet do NOT see the floor's declared friction: the foot box geom
-            // takes the MuJoCo default (1.0) while the robocup floor declares 0.8, and with equal
-            // geom priorities MuJoCo uses the element-wise MAX -- so every NUSim walk to date ran
-            // at mu = 1.0, grippier than the scene claims and grippier than anything the robot
-            // actually stands on. Enabling this sets the floor's priority to 1 so its numbers
-            // govern the contact, which is what the training scene does.
-            //
-            // This is the knob for the one confirmed hardware variable: the same policy and the
-            // same command hold up on carpet and progressively fall on synthetic grass.
+            // Ground-contact override for the geom named "floor". With equal geom priorities MuJoCo
+            // takes the element-wise max friction, so the feet (default mu 1.0) override the floor's
+            // declared value. Enabling this gives the floor priority 1 so these values govern the
+            // contact, as in the training scene.
             struct Surface {
                 bool enabled            = false;
                 double friction         = 0.8;   // sliding; mu = tan(slip angle)
@@ -63,11 +53,8 @@ namespace k1sim {
                 double solref_dampratio = 1.0;
             } surface;
 
-            // When non-empty, append one CSV row per published state to this path: per foot the
-            // total normal force, the centre of pressure in the foot's own frame, and the sole's
-            // pitch/roll. Centre of pressure is the tiptoe measurement -- a sole rolled onto its
-            // toe puts every contact at the front edge of the support polygon, which is exactly
-            // where the friction budget runs out. Off by default.
+            // If set, append one CSV row per published state: per foot, the total normal force,
+            // the centre of pressure in the foot frame, and the sole's pitch/roll.
             std::string foot_log_path;
 
             std::array<double, JOINT_COUNT> kp{};                   // PD fallback gains (gains.yaml)
@@ -113,11 +100,9 @@ namespace k1sim {
             return controller_.load(std::memory_order_acquire);
         }
 
-        // Resets mjData back to the state load_model() established (the "ready" keyframe, or
-        // zeros if the model has none) — robot pose, ball, velocities, controls. Thread-safe
-        // (takes the sim mutex); callable while the physics thread runs. Does NOT reset the
-        // attached StepController: it keeps its mode and last commands, mirroring a real robot
-        // being picked up and placed back on its start point mid-program.
+        // Resets mjData to the state load_model() set up: robot pose, ball, velocities, controls.
+        // Thread-safe; callable while the physics thread runs. The StepController keeps its mode
+        // and last commands, like a real robot picked up and put back mid-program.
         void reset();
 
         // Spawns the physics thread. Requires load_model() to have already succeeded. Idempotent:
@@ -150,7 +135,7 @@ namespace k1sim {
         // at its game spawn when there is one; must run after every keyframe reset (whose
         // zero-padding would pile the extras at the origin).
         void place_robots();
-        // Rests the ball on the field's centre mark for a game. No-op no balls are present in the scene.
+        // Rests the ball on the field's centre mark for a game. No-op if the scene has no ball.
         void place_ball_on_centre_mark();
         // Spawn (x, y, z, yaw) of robot k (0 = main): Config::spawns, else the default grid.
         std::array<double, 4> spawn_pose(int k) const;

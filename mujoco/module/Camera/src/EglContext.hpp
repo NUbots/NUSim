@@ -5,13 +5,10 @@
 
 namespace k1sim::module::camera {
 
-    // RAII offscreen OpenGL context via EGL (pbuffer). Camera uses this instead of a
-    // hidden GLFW window so it shares NO global GLFW/Xlib state with module::Viewer's
-    // on-screen GLFW window — the two ran on different threads and concurrent GLFW/
-    // Xlib calls corrupted the heap ("malloc(): invalid size"). EGL also works with
-    // no display at all, so the camera can render headless. MuJoCo's mjr renders into
-    // whatever GL context is current, so making this current before mjr_makeContext is
-    // all that's needed (the MUJOCO_GL=egl pattern from MuJoCo's own examples).
+    // RAII offscreen OpenGL context via EGL (pbuffer). Used instead of a hidden GLFW window because
+    // concurrent GLFW/Xlib calls from Camera's and module::Viewer's threads corrupt the heap. Also
+    // works with no display. mjr renders into the current context, so making this current before
+    // mjr_makeContext is enough.
     class EglContext {
     public:
         EglContext(int width, int height) {

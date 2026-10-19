@@ -8,10 +8,7 @@
 
 #include "shared/sim/ModelMap.hpp"
 
-// Small free functions for the Prepare blend and fall detection. (The larger
-// kinematic root-servo math that used to live in backends/KinematicMath.hpp
-// left with the locomotion backends -- locomotion policies now run on the
-// NUbots_K1 side and reach the sim as LowCmd servo targets.)
+// Small helpers for the Prepare blend and fall detection.
 
 namespace k1sim::module {
 

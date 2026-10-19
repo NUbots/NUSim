@@ -69,12 +69,10 @@
         <inertial pos="-0.00069503 -0.00038527 0.031688" quat="0.993827 -0.00957801 0.00894723 -0.110168" mass="0.3" diaginertia="0.000429546 0.000420659 0.000125795"/>
         <joint name="AAHead_yaw" pos="0 0 0" axis="0 0 1" range="-1 1" armature="0.002"/>
         <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.12 0.12 0.13 1" mesh="Head_1"/>
-        <!-- Head/arm ground contact uses the SAME primitives as the mujoco_playground
-             training model (k1_mjx_fullcollisions.xml) instead of mesh collisions:
-             the get-up policy's contact dynamics must match training or it fails
-             (verified: mesh collisions here = 0/10 recoveries offline, playground
-             primitives = 10/10). contype 2 / conaffinity 1 matches the training
-             masks: contacts the floor, never self-collides. -->
+        <!-- Head/arm ground contact uses the same primitives as the mujoco_playground training model
+             (k1_mjx_fullcollisions.xml), not mesh collisions: the get-up policy fails unless contact
+             dynamics match training. contype 2 / conaffinity 1 matches the training masks: contacts
+             the floor, never self-collides. -->
 
         <body name="Head_2" pos="0 0 0.033">
           <inertial pos="0.011042 -0.00092871 0.080698" quat="0.996402 -0.00118413 -0.0779414 -0.0332651" mass="0.7" diaginertia="0.00603249 0.00577511 0.0017024"/>
@@ -82,24 +80,10 @@
           <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.12 0.12 0.13 1" mesh="Head_2"/>
           <geom size="0.07" pos="0.01 0 0.09" type="sphere" contype="2" conaffinity="1" rgba="0.92 0.92 0.93 0.0"/>
           <!--
-            WS-Camera: head RGB camera for module::Camera's offscreen render ->
-            NUbots K1Camera shared-memory bridge (config/camera.yaml). Mounted
-            just in front of the Head_2 face mesh (front face vertices reach
-            x~=0.063 at this height; verified via the mesh's own STL bounds),
-            centred laterally (y=0) at the vertical mid-point of the front face
-            plate (z~=0.089, mesh z-range there is [0.049, 0.129]). xyaxes picks
-            the camera's local X/Y axes directly in the Head_2 (=body, at head
-            yaw/pitch=0) frame: X=(0,-1,0) is image-right = the robot's right
-            (left is +Y here), Y=(0,0,1) is image-up = world-up when the head is
-            level; the implied Z = X x Y = (-1,0,0) puts the view direction
-            (-Z) at body +X, i.e. straight ahead -- this repo's own convention,
-            confirmed three ways: the kickoff keyframe's comment ("rotation 0
-            => facing +x"), the feet's toe-forward geometry (foot box offset
-            +x), and Left/Right arm y-signs (left=+y). fovy=70 (vertical) gives
-            a ~86 deg horizontal FOV at 4:3 -- a modest, ZED-mini-ish wide view;
-            verified level/forward with an offscreen render (host MuJoCo, EGL)
-            of this exact camera at the "ready" keyframe: horizon centred,
-            floor/sky split behaves exactly as predicted from cam_xpos/cam_xmat.
+            Head RGB camera for module::Camera (config/camera.yaml). Just in front of the Head_2 face
+            mesh (front face at x ~= 0.063), centred at y = 0 and the face plate's vertical midpoint
+            (z ~= 0.089). xyaxes makes image-right the robot's right (-Y) and image-up +Z, so the
+            camera looks along body +X. fovy matches the real K1 head camera (see camera.yaml).
           -->
           <camera name="head" pos="0.075 0 0.089" xyaxes="0 -1 0  0 0 1" fovy="95.7"/>
         </body>
@@ -257,17 +241,11 @@
 
   <keyframe>
     <!--
-      qpos layout: [x y z qw qx qy qz] (free "root" joint) followed by the
-      22 hinge joints in body-tree order, which is identical to JointIndexK1
-      order (head yaw/pitch, L arm x4, R arm x4, L leg x6, R leg x6) --
-      see mujoco/shared/k1/JointIndex.hpp. Heights/orientations were derived
-      from this mesh's actual collision geometry (not assumed) and verified
-      in simulation (mj_step x500 from each key) to settle without the base
-      jumping/exploding -- see VENDORED.md "Local modifications" for the
-      settle-test methodology and measured results. ctrl is left at the
-      MuJoCo default (0 torque) since the actuators are direct-torque
-      <motor> elements, not position servos; joint targets for a PD
-      controller are supplied externally (module/Simulation + gains.yaml).
+      qpos layout: [x y z qw qx qy qz] for the free "root" joint, then the 22 hinge joints in
+      body-tree order, which matches JointIndexK1 (see mujoco/shared/k1/JointIndex.hpp). Base heights
+      come from the collision geometry and settle cleanly (see VENDORED.md "Local modifications").
+      ctrl stays 0: the actuators are torque motors, and PD targets come from module::Simulation and
+      gains.yaml.
     -->
     <key name="ready"
          qpos="0 0 0.555 1 0 0 0

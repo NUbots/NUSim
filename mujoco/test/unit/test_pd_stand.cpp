@@ -1,13 +1,10 @@
-// M2 acceptance: SimCore's PD-to-ready fallback (no StepController attached) holds the K1
-// standing for 60s of sim time in free-run (rtf=0).
+// SimCore's PD-to-ready fallback (no StepController) holds the K1 standing for 60 s of sim time in
+// free-run (rtf = 0).
 //
-// Drives the real SimCore physics thread (not a hand-rolled loop) so this also exercises the
-// free-run pacing path and reports its stepping rate. state_publish_divisor is set to 1 so the
-// SimStateUpdate callback (fired from the physics thread — see SimCore::physics_loop) gives
-// deterministic per-step coverage instead of sampling from a second thread.
+// Drives the real SimCore physics thread, so this also covers free-run pacing. state_publish_divisor
+// is 1, so the SimStateUpdate callback runs on every step.
 //
-// Model path resolution mirrors test_model_load.cpp: $K1SIM_TEST_MODEL overrides
-// the scene of config/simulation.yaml's default `field`.
+// Model: $K1SIM_TEST_MODEL if set, else the scene of config/simulation.yaml's default `field`.
 //
 // Asserts:
 //   - no NaN appears in qpos (base pose/orientation + all 22 joint angles) at any point.
@@ -82,8 +79,7 @@ int main() {
     cfg.state_publish_divisor = 1;
     cfg.resync_threshold      = 0.05;  // unused in free-run
 
-    // Gains + fallback pose come from config/gains.yaml, same as production — this test is
-    // exactly what gates any tuning of that file.
+    // Gains and fallback pose come from config/gains.yaml, so this test gates tuning that file.
     auto gains_cfg = k1sim::config::load("gains.yaml");
     for (std::size_t i = 0; i < JOINT_COUNT; ++i) {
         cfg.kp[i]                  = gains_cfg["kp"][i].as<double>();

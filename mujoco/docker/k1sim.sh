@@ -12,7 +12,7 @@
 #   docker/k1sim.sh shell             interactive shell in the build environment
 #
 # DDS: the sim runs with --network host --ipc host so FastDDS (SHM + UDP,
-# domain 0) reaches NUbots_K1 containers exactly like the old mck-on-host setup.
+# domain 0) reaches NUbots_K1 containers.
 # GPU: uses --gpus all when the NVIDIA container toolkit is installed, otherwise
 # falls back to /dev/dri (mesa). See docs/K1_MUJOCO_SETUP.md.
 set -euo pipefail
@@ -47,10 +47,8 @@ run_flags() {
     if [ -d /dev/dri ]; then
         echo -n " --device /dev/dri"
     fi
-    # NVIDIA: prefer explicit CDI device naming over `--gpus all` — on Docker 25+
-    # a bare --gpus resolves vendor-by-vendor through CDI and hard-fails on
-    # hybrid-graphics machines with "AMD CDI spec not found" even though the
-    # NVIDIA spec exists. Fall back to the classic nvidia runtime if configured.
+    # NVIDIA: explicit CDI device naming, since a bare `--gpus all` on Docker 25+ fails on
+    # hybrid-graphics machines ("AMD CDI spec not found"). Fall back to the nvidia runtime.
     if ls /etc/cdi/nvidia*.yaml /var/run/cdi/nvidia*.yaml > /dev/null 2>&1; then
         echo -n " --device nvidia.com/gpu=all -e NVIDIA_DRIVER_CAPABILITIES=all"
     elif docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q '"nvidia"'; then

@@ -6,21 +6,13 @@
 #include <cstdint>
 #include <cstring>
 
-// RoboCup GameController UDP broadcast packet (receive side only — this sim
-// never sends a reply; NUbots' own module::input::GameController does that
-// independently over its own socket).
+// RoboCup GameController UDP broadcast packet, receive side only (NUbots replies over its own
+// socket).
 //
-// Provenance: field layout, enum values and struct order are ported from
-// NUbots_K1's module/input/GameController/src/GameControllerData.hpp
-// (MIT License, Copyright (c) 2014 NUbots — https://github.com/NUbots/NUbots),
-// which itself mirrors the official RoboCup GameController network protocol
-// (RoboCupGameControlData.h, struct RoboCupGameControlData, version 20).
-// Trimmed here to the receive-only subset (drops RETURN_HEADER/RETURN_VERSION
-// and GameControllerReplyPacket, which only the reply side needs) and
-// re-namespaced under k1sim so this module has no build/source dependency on
-// the separate NUbots_K1 repo. #pragma pack(1) and every field's type/order
-// below must stay byte-for-byte identical to the wire format for
-// reinterpret_cast parsing to work — see try_parse() at the bottom.
+// Ported from NUbots_K1's module/input/GameController/src/GameControllerData.hpp (MIT License,
+// Copyright (c) 2014 NUbots — https://github.com/NUbots/NUbots), which mirrors the official
+// RoboCupGameControlData.h (version 20), trimmed to the receive side. The packed layout must match
+// the wire format byte for byte, since try_parse() copies the payload straight into it.
 namespace k1sim::module::supervisor::gc {
 
     inline constexpr std::size_t MAX_NUM_PLAYERS        = 20;
@@ -148,17 +140,12 @@ namespace k1sim::module::supervisor::gc {
         }
     }
 
-    // A State value that never equals any real State — used as the "no packet
-    // seen yet" sentinel so the very first real packet is always treated as a
-    // transition (mirrors NUbots' GameController::reset_state(), which seeds
-    // packet.state = static_cast<State>(-1) for the same reason).
+    // Never equals a real State: the "no packet yet" sentinel, so the first real packet counts as a
+    // transition (as in NUbots' GameController::reset_state()).
     inline constexpr State UNKNOWN_STATE = static_cast<State>(0xFF);
 
-    // Parses a raw UDP payload into a GameControllerPacket. Returns false (leaves
-    // out untouched) if the payload is too short, or its header/version don't
-    // match — callers should treat that as "not a GameController packet" and
-    // ignore it silently, not as an error (harmless traffic on the port, or a GC
-    // version we don't speak, is expected and not exceptional).
+    // Parses a raw UDP payload. Returns false, leaving `out` untouched, if it is too short or its
+    // header/version don't match; callers should ignore such packets silently.
     inline bool try_parse(const std::uint8_t* data, std::size_t len, GameControllerPacket& out) {
         if (data == nullptr || len < sizeof(GameControllerPacket)) {
             return false;

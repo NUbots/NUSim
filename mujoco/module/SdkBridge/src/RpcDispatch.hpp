@@ -6,12 +6,9 @@
 
 #include "shared/message/Commands.hpp"
 
-// Pure (no DDS, no NUClear) parse/dispatch core for the Booster LocoApi RPC surface.
-// Kept free of any DDS dependency so it is directly unit-testable (test/unit/
-// test_rpc_dispatch.cpp) — RpcServer.cpp is the only consumer that talks DDS, and it
-// does nothing more than: read a booster_msgs::msg::dds_::RpcReqMsg_ off the wire,
-// call dispatch_rpc() with its header/body strings, emit the resulting NUClear
-// message (if any), and write the reply. See module/SdkBridge/PROTOCOL.md §3.
+// Parse/dispatch core for the Booster LocoApi RPC surface. Free of DDS and NUClear so
+// test_rpc_dispatch.cpp can test it directly; RpcServer.cpp handles the DDS side. See
+// module/SdkBridge/PROTOCOL.md §3.
 
 namespace k1sim::module::sdkbridge {
 

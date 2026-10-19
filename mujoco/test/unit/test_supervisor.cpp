@@ -1,29 +1,17 @@
-// WS-Supervisor acceptance: the GameController packet parser and the MuJoCo
-// body-placement logic it drives.
+// GameController packet parsing and the body placement it drives.
 //
-// Model path resolution mirrors test_model_load.cpp / test_pd_stand.cpp:
-// $K1SIM_TEST_MODEL overrides the scene of config/simulation.yaml's default `field`.
+// Model: $K1SIM_TEST_MODEL if set, else the scene of config/simulation.yaml's default `field`.
 //
-// Four independent checks:
-//   A. Wire-format parsing: a hand-built raw byte buffer (offsets computed
-//      independently of the GameControllerPacket struct definition, i.e. not
-//      just "cast a live struct back to itself") round-trips through
-//      try_parse() with the right header/version/state/kicking_team/team/
-//      player fields; malformed headers/versions/lengths are rejected.
-//   B. Placement primitives on the real scene: place_free_body_by_geom_center
-//      lands the ball's *geom* (not its body origin -- see
-//      SupervisorPlacement.hpp for why those differ for this scene's "ball"
-//      body) at the field centre at the correct resting height, verified
-//      both algebraically and via mj_kinematics; place_free_body lands the
-//      robot's root exactly on the requested pose. Both zero residual qvel.
-//   C. SupervisorLogic end-to-end, loading the real config/supervisor.yaml:
-//      a single State=PLAYING packet (the acceptance scenario) centres the
-//      ball; a repeated identical packet is a no-op (edge-triggered, not
-//      level-triggered); a per-player PenaltyState transition moves the
-//      configured robot body to its penalty_pose / home_pose.
-//   D. Kickoff transition truth table across INITIAL->READY->SET->PLAYING:
-//      the ball resets on entering READY and on entering PLAYING, not on
-//      entering SET.
+// Checks:
+//   A. try_parse() decodes a hand-built byte buffer (offsets computed independently of the struct)
+//      and rejects malformed headers, versions and lengths.
+//   B. place_free_body_by_geom_center puts the ball's geom (not its body origin) at the field
+//      centre at resting height, checked algebraically and via mj_kinematics; place_free_body puts
+//      the robot root on the requested pose. Both zero qvel.
+//   C. SupervisorLogic with the real config/supervisor.yaml: a first PLAYING packet centres the
+//      ball, a repeat is a no-op, and a penalty transition moves the robot to its penalty/home pose.
+//   D. Across INITIAL -> READY -> SET -> PLAYING, the ball resets on entering READY and PLAYING
+//      only.
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -74,11 +62,8 @@ namespace {
 
     // --- A. Wire-format parsing -------------------------------------------------
     //
-    // Byte offsets below are computed by hand from GameControllerPacket's field
-    // order/sizes under #pragma pack(1) (see GameControllerPacket.hpp), *not*
-    // derived from sizeof()/offsetof() on the struct itself -- the point is to
-    // catch a struct-definition bug (wrong field order/type/size), so the
-    // expected layout has to come from an independent source.
+    // Offsets are computed by hand from the packed field order, not sizeof/offsetof, so a wrong
+    // field order, type or size in the struct is caught.
     void test_wire_format() {
         constexpr std::size_t OFF_HEADER       = 0;
         constexpr std::size_t OFF_VERSION      = 4;
@@ -161,8 +146,7 @@ namespace {
         const int ball_dof_adr  = m->jnt_dofadr[ball_jnt];
         const double radius     = m->geom_size[3 * ball_geom + 0];
 
-        // Dirty the ball's velocity so zeroing is actually exercised, not
-        // trivially true because it started at zero.
+        // Dirty the velocity so the zeroing is actually tested.
         for (int i = 0; i < 6; ++i) {
             d->qvel[ball_dof_adr + i] = 3.5;
         }
@@ -185,10 +169,7 @@ namespace {
                  + std::to_string(wy) + ", " + std::to_string(wz) + "), radius=" + std::to_string(radius));
         }
 
-        // Kinematic check: let MuJoCo itself compute geom_xpos from qpos and
-        // compare against the same target -- this is the actually-meaningful
-        // physical claim ("the ball ends up at field centre"), not just that our
-        // own offset arithmetic is self-consistent.
+        // Kinematic check: MuJoCo's own geom_xpos must match the target too.
         mj_kinematics(m, d);
         const double kx = d->geom_xpos[3 * ball_geom + 0];
         const double ky = d->geom_xpos[3 * ball_geom + 1];
@@ -205,9 +186,7 @@ namespace {
             }
         }
 
-        // Robot root: no geom-offset quirk, qpos_xyz is the requested pose
-        // directly (see k1_scene_robocup.xml's "kickoff" keyframe, which uses
-        // this exact convention).
+        // The robot root has no geom offset: qpos_xyz is the requested pose.
         const int trunk_body = mj_name2id(m, mjOBJ_BODY, "Trunk");
         if (trunk_body < 0) {
             fail("scene is missing the 'Trunk' body");
@@ -220,7 +199,7 @@ namespace {
             d->qvel[trunk_dof_adr + i] = -2.0;
         }
 
-        const double yaw = 1.5707963267948966;  // pi/2 -- avoid relying on M_PI's availability under -std=c++17
+        const double yaw = 1.5707963267948966;  // pi/2
         if (!sup::place_free_body(m, d, trunk_body, -1.0, 2.0, 0.6, yaw)) {
             fail("place_free_body returned false for Trunk");
             return;
@@ -252,9 +231,8 @@ namespace {
             fail("config/supervisor.yaml has no robots[] entries -- test needs at least one");
             return;
         }
-        // SupervisorLogic's constructor takes its config by value (and moves
-        // that parameter copy into itself) -- passing the `cfg` lvalue below
-        // copies it, so `cfg` (and this reference into it) stays valid after.
+        // SupervisorLogic takes its config by value, so `cfg` (and this reference into it) stays
+        // valid.
         const sup::RobotConfig& robot_cfg = cfg.robots.front();
 
         const int ball_body  = mj_name2id(m, mjOBJ_BODY, cfg.ball.body.c_str());
@@ -272,9 +250,7 @@ namespace {
 
         sup::SupervisorLogic logic(cfg);
 
-        // The acceptance scenario: a single State=PLAYING packet (first packet
-        // this SupervisorLogic has ever seen -- old state is the UNKNOWN_STATE
-        // sentinel) must centre the ball.
+        // A first PLAYING packet (old state is the UNKNOWN_STATE sentinel) must centre the ball.
         gc::GameControllerPacket pkt{};
         pkt.header       = gc::RECEIVE_HEADER;
         pkt.version      = gc::SUPPORTED_VERSION;
@@ -294,9 +270,8 @@ namespace {
             fail("SupervisorLogic: no ball-placement action reported for the kickoff packet");
         }
 
-        // No-op check: mark the ball with a recognisable position that isn't the
-        // centre, then re-run the *same* State=PLAYING packet (no transition --
-        // still PLAYING) and confirm the marker survives untouched.
+        // No-op check: move the ball off-centre, resend the same PLAYING packet, and confirm the
+        // ball stays put.
         sup::place_free_body(m, d, ball_body, 5.0, 5.0, 5.0, 0.0);
         logic.process(m, d, pkt);
         if (!approx(d->qpos[ball_qpos_adr + 0], 5.0) || !approx(d->qpos[ball_qpos_adr + 1], 5.0)
@@ -304,9 +279,8 @@ namespace {
             fail("SupervisorLogic: a repeated (non-transitioning) PLAYING packet moved the ball (should be a no-op)");
         }
 
-        // Penalty transition: this player becomes penalised -> robot goes to
-        // penalty_pose; then unpenalised -> back to home_pose. Uses whichever
-        // packet slot/player index the config actually points at.
+        // Penalty transition for the configured slot/player: penalised -> penalty_pose,
+        // unpenalised -> home_pose.
         gc::Team* team_ptr = nullptr;
         if (robot_cfg.team_id >= 0) {
             for (auto& t : pkt.teams) {

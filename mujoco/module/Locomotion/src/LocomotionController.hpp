@@ -16,30 +16,20 @@
 #include "shared/sim/PdController.hpp"
 #include "shared/sim/StepController.hpp"
 
-// LocomotionController is deliberately NUClear-free: it is exercised directly
-// (no PowerPlant/Reactor) by test/unit/test_locomotion.cpp, and is driven by
-// module::Simulation's physics thread in production via the StepController
-// seam. All logging of *requests* (as opposed to internal FSM detail) is the
-// Locomotion reactor's job (Locomotion.cpp) since only it has a NUClear
-// logging context.
+// NUClear-free so test_locomotion.cpp can drive it directly; in production module::Simulation's
+// physics thread drives it through StepController. Request logging is done by the Locomotion
+// reactor.
 
 namespace k1sim::module {
 
-    // The reduced Booster mode state machine: DAMPING (motors limp), PREPARE
-    // (blend to and hold the gains.yaml ready pose -- boot convenience, so the
-    // robot doesn't collapse before a client connects) and CUSTOM (PD-track the
-    // rt/joint_ctrl LowCmd servo targets). All locomotion *policies* (walking,
-    // get-up, kick, ...) live on the NUbots_K1 side and arrive here as LowCmd
-    // joint commands -- the sim only simulates servos and publishes state.
-    // WALKING/SOCCER mode requests are accepted for SDK wire compatibility but
-    // mapped to PREPARE with a warning.
+    // Reduced Booster mode state machine: DAMPING (limp), PREPARE (blend to and hold the gains.yaml
+    // ready pose) and CUSTOM (PD-track rt/joint_ctrl LowCmd targets). Locomotion policies (walk,
+    // get-up, kick) run on the NUbots_K1 side and arrive as LowCmd. WALKING/SOCCER requests are
+    // accepted for wire compatibility but mapped to PREPARE with a warning.
     //
-    // Thread model: setters below are called from arbitrary NUClear reaction
-    // threads (SdkBridge's RPC dispatch) and only ever write a mutex-guarded
-    // mailbox. step() runs on the physics thread with the sim mutex already held
-    // (per StepController's contract) and snapshots the mailbox once per call;
-    // all FSM state is touched only from step(). mode()/fall_state() are the only
-    // cross-thread reads and are plain atomics.
+    // Threading: the setters run on NUClear reaction threads and only write a mutex-guarded mailbox.
+    // step() runs on the physics thread with the sim mutex held, snapshots the mailbox once per call,
+    // and owns all FSM state. mode()/fall_state() are atomics.
     class LocomotionController : public StepController {
     public:
         // locomotion_cfg: config/locomotion.yaml root node.
@@ -55,7 +45,7 @@ namespace k1sim::module {
             return fall_state_.load(std::memory_order_relaxed);
         }
         bool getting_up() const override {
-            return false;  // scripted get-up removed; recovery is a NUbots_K1 policy
+            return false;  // recovery is a NUbots_K1 policy
         }
 
         // -- thread-safe setters (called from NUClear reaction threads) --
@@ -63,7 +53,7 @@ namespace k1sim::module {
         void request_mode_change(int mode);
         void set_low_cmd(int cmd_type, std::vector<message::MotorCmdData> motors);
 
-        // Test/introspection helper (harmless in production: read-only).
+        // Read-only introspection for tests.
         bool is_initialized() const {
             return initialized_;
         }

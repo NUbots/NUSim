@@ -90,8 +90,7 @@ namespace k1sim::module::sdkbridge {
                                                                         DdsParticipant::state_writer_qos());
         battery_writer_   = dds.create_writer<BatteryState_PubSubType>(k1sim::booster::TOPIC_BATTERY_STATE,
                                                                      DdsParticipant::state_writer_qos());
-        // Created so the topic/type exist on the wire (a real subscriber could match),
-        // but per the M4/M5 spec we never actually write to it — the sim has no buttons.
+        // Created so subscribers can match the topic; never written, as the sim has no buttons.
         button_event_writer_ = dds.create_writer<ButtonEventMsg_PubSubType>(k1sim::booster::TOPIC_BUTTON_EVENT,
                                                                             DdsParticipant::state_writer_qos());
     }
@@ -115,11 +114,10 @@ namespace k1sim::module::sdkbridge {
             motors.push_back(to_motor_state(update.joints[i]));
         }
         low_state.motor_state_serial(motors);
-        // motor_state_parallel mirrors the real firmware's layout: the 12 leg motors only
-        // (JointIndexK1 kLeftHipPitch..kCrankDownRight => vector indices 0..11), with the
-        // crank slots carrying the serial-equivalent ankle pitch/roll values (the sim has
-        // no true parallel actuation). Clients (e.g. NUbots HardwareIO) index this vector
-        // as joint_index - kLeftHipPitch.
+        // motor_state_parallel matches the real firmware: the 12 leg motors only
+        // (kLeftHipPitch..kCrankDownRight => indices 0..11), with the crank slots carrying the serial
+        // ankle pitch/roll (the sim has no parallel actuation). Clients index it as
+        // joint_index - kLeftHipPitch.
         std::vector<booster_interface::msg::dds_::MotorState_> legs(motors.begin() + JointIndexK1::LeftHipPitch,
                                                                     motors.end());
         low_state.motor_state_parallel(legs);

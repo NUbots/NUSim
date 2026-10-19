@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Contract checks for the vendored K1 model + RoboCup scene (workstream A / M1).
+"""Contract checks for the vendored K1 model and RoboCup scene.
 
 Loads mujoco/models/k1/k1_scene_robocup.xml and asserts:
   1. the model compiles;
@@ -12,10 +12,8 @@ Loads mujoco/models/k1/k1_scene_robocup.xml and asserts:
      0.76^2 * drop_height (Webots' RoboCup ball/grass bounce coefficient);
   6. (informational) a plain per-joint PD loop, seeded from
      mujoco/config/gains.yaml's kp/kd/ready_pose, holds the "ready" stance
-     for 10 s. This is not expected to succeed with joint-space PD alone
-     (no whole-body balance strategy) so a failure here prints WARN and does
-     NOT affect the script's exit code -- gain/controller tuning is
-     workstream B's milestone, not this model-and-scene contract.
+     for 10 s. Joint-space PD has no balance strategy, so a failure prints
+     WARN and doesn't affect the exit code.
 
 Exit code: 0 if checks 1-5 all pass, 1 otherwise. Prints a PASS/FAIL/WARN
 summary line per check.

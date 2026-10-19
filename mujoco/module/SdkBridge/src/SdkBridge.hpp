@@ -19,8 +19,7 @@ namespace k1sim::module {
         explicit SdkBridge(std::unique_ptr<NUClear::Environment> environment);
 
     private:
-        // Constructed in on<Startup> (after config/dds.yaml is read) — see DdsParticipant
-        // for why a live participant can't be created before that.
+        // Constructed in on<Startup>, after config/dds.yaml is read.
         std::unique_ptr<sdkbridge::DdsParticipant> dds_;
         std::unique_ptr<sdkbridge::StatePublisher> state_publisher_;
         std::unique_ptr<sdkbridge::RpcServer> rpc_server_;

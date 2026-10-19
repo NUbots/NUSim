@@ -2,13 +2,9 @@
 # Generates the Fast-DDS type support from mujoco/idl/**/*.idl using the fastddsgen
 # baked into the k1sim docker image (/opt/k1sim-deps/bin/fastddsgen).
 #
-# CMake is the normal caller: cmake/IdlGen.cmake wires this up as a build step and
-# passes OUT_DIR=${CMAKE_BINARY_DIR}/idl_gen, so the generated code is a build
-# artifact and is never committed (same arrangement as NUbots generating protobuf
-# from shared/message/**.proto). Nothing downstream should ever read a generated
-# file from the source tree.
-#
-# Run it by hand only to inspect the output, and point OUT_DIR somewhere scratch:
+# cmake/IdlGen.cmake runs this as a build step with OUT_DIR=${CMAKE_BINARY_DIR}/idl_gen; the output
+# is a build artifact, never committed. To inspect the output by hand, point OUT_DIR somewhere
+# scratch:
 #
 #   docker run --rm -v $(pwd)/..:/workspace/NUSim \
 #     -w /workspace/NUSim/mujoco --user $(id -u):$(id -g) \
@@ -16,36 +12,23 @@
 #
 # NOTE: OUT_DIR is wiped (rm -rf) before generating. Never aim it at a source dir.
 #
-# The generator version is asserted below, not just reported: the wire format is
-# version- and flag-sensitive, and with the output no longer visible in a diff,
-# this assertion is what catches a generator swap. See module/SdkBridge/PROTOCOL.md.
+# The generator version is asserted, not just reported: the wire format depends on the version
+# and flags, and the generated code never shows up in a diff. See module/SdkBridge/PROTOCOL.md.
 #
 # Flags:
-#   -cdr v1 -de final   Force classic CDR (no XCDR2 DELIMIT_CDR2/DHEADER framing),
-#                       matching the GEN_API_VER==2 / Fast-DDS-2.13.1-era code the
-#                       pinned Booster SDK ships. Verified empirically: without these
-#                       flags, fastddsgen 3.2.1 defaults to `-cdr v2 -de appendable`,
-#                       which emits runtime-conditional DELIMIT_CDR2 framing — a
-#                       different wire format when XCDR2 representation is negotiated.
-#                       See module/SdkBridge/PROTOCOL.md §5.
+#   -cdr v1 -de final   Classic CDR, matching the pinned Booster SDK's generated code. fastddsgen
+#                       3.2.1 otherwise defaults to -cdr v2 -de appendable, a different wire format
+#                       when XCDR2 is negotiated (PROTOCOL.md §5).
 #   -replace            Overwrite previously generated files.
-#   (deliberately NOT -typeros2) We already author the ROS2 `dds_` module nesting and
-#                       trailing-underscore struct names explicitly in our .idl (to
-#                       match the SDK's exact registered type names, see PROTOCOL.md
-#                       §1-2). Passing -typeros2 on top of already-nested/suffixed
-#                       input double-applies the transform and produces the WRONG
-#                       registered name (empirically verified: `dds_::Name__` for
-#                       2-level module input, `dds_::dds_::Name__` for 3-level module
-#                       input — see PROTOCOL.md §2 "Empirical finding on -typeros2").
-#                       Do not add this flag back without re-reading that note.
+#   (not -typeros2)     The .idl files already spell out the ROS2 `dds_` nesting and trailing
+#                       underscores; -typeros2 would apply them twice and register the wrong type
+#                       names (PROTOCOL.md §2).
 #
 # Each idl/<package>/msg/*.idl generates into idl_gen/<package>/.
 #
-# fastddsgen also generates every file an .idl #includes, placed by that file's path
-# relative to the directory fastddsgen runs in; a file outside that directory goes flat into
-# the output directory. So it runs once, from a directory linking each <package>/ to
-# idl/<package>/msg: an included type then generates into its own package's directory, not
-# as a copy in the including package's.
+# fastddsgen also generates every #included file, placed by its path relative to where it runs (a
+# file outside that directory lands flat in OUT_DIR). So it runs once, from a directory linking each
+# <package>/ to idl/<package>/msg, and an included type generates into its own package's directory.
 set -euo pipefail
 
 FASTDDSGEN=${FASTDDSGEN:-/opt/k1sim-deps/bin/fastddsgen}
