@@ -124,6 +124,18 @@ covariances are zero. HardwareIO logs the frames of the
 first message it receives, which shows which convention the real robot uses. Layouts and
 registered names verified against the SDK (`d5d8f7ae`) with `getName()`, as for `Pose_`.
 
+### `sensor_msgs::msg::dds_::JointState_` (JointState.idl)
+Topic `rt/joint_states` (not an SDK topic). The standard ROS 2 `sensor_msgs/JointState`:
+`header` (wall-clock stamp, empty `frame_id`), `name` (`k1sim::JOINT_NAMES`), and
+`position`/`velocity`/`effort` (`double[22]`, rad, rad/s, N·m) in `JointIndexK1` order, the
+same values as `rt/low_state`'s `motor_state_serial` (`q`, `dq`, `tau_est`). Published at 50 Hz.
+
+### `sensor_msgs::msg::dds_::Imu_` (Imu.idl)
+Topic `rt/imu/data` (not an SDK topic). The standard ROS 2 `sensor_msgs/Imu`, `frame_id`
+"imu": `orientation` (world->imu, the quaternion `imu_state.rpy` is derived from),
+`angular_velocity` (rad/s) and `linear_acceleration` (m/s², includes gravity), body frame, the
+same values as `rt/low_state`'s `imu_state`. The covariances are zero (unknown). 50 Hz.
+
 ### `booster_interface::msg::dds_::FallDownState_` (FallDownState.h)
 Enum `FallDownStateType : unsigned long` (C++ `uint32_t`) = `{IS_READY=0, IS_FALLING=1,
 HAS_FALLEN=2, IS_GETTING_UP=3}`.
@@ -336,7 +348,7 @@ Per the lead's explicit spec (de-risks RPC correctness over squeezing out best-e
 UDP savings — reliability never hurts a loopback/`--network host` transport, and the
 SDK's own defaults would silently degrade to best-effort which is a *safe* superset
 to widen, not narrow), `module::SdkBridge` uses:
-- **State writers** (`low_state`, `odometer_state`, `odom`, `head_pose`, `fall_down`,
+- **State writers** (`low_state`, `odometer_state`, `odom`, `head_pose`, `joint_states`, `imu/data`, `fall_down`,
   `battery_state`, `button_event`): `RELIABLE` + `VOLATILE` durability + `KEEP_LAST(5)`
   history. `head_pose` must be `RELIABLE`: K1Sensors creates its reader with
   `reliable = true`, which a best-effort writer would not match.
