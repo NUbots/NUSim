@@ -1,0 +1,82 @@
+# Embedded GameController + automatic referee (module::MatchReferee, the sim/match role).
+# NUSim runs the game itself and broadcasts the same UDP control messages an external GameController
+# would, so don't run the GameController app alongside sim/match. Team numbers come from the roster.
+
+# Competition rules: a GameController config directory name, staged by
+# tools/install_game_controller_api.sh. middle_foundation is 3 a side on the M-Field.
+competition: middle_foundation
+kick_off_side: home # home or away; home is --game's first team, in the -x half
+
+# Start the game as soon as every robot's player has taken control.
+auto_start_when_connected: true
+# Or this many seconds of sim time after launch. Negative waits for the above or the Start button; a
+# --headless run has no button, so it uses 30 s instead.
+auto_start_after: -1.0
+
+# Go straight to Playing, for every kick-off, instead of through Ready and Set.
+skip_kick_off_phases: true
+
+# Stop robots where they are and move them into the ready pose unless the game is in Playing and
+# they're not penalised. For roles that don't listen to GameController, such as nusim/behaviour; turn
+# it off for roles that do. Robots aren't moved to kick-off positions.
+hold_robots: true
+
+# Seconds every penalty lasts, with no increase for repeat offences. Competition times are 45 s and up,
+# which leaves a third of a match frozen with robots this prone to leaving the field. Negative keeps them.
+penalty_seconds: 10
+
+network:
+  # Where control messages go. NUClear's UDP::Broadcast only accepts 255.255.255.255 or the broadcast
+  # address of an interface with the broadcast flag, which rules out 127.255.255.255.
+  broadcast_address: 255.255.255.255
+  # Interface to send on. lo reaches every process on this machine, and unlike the network interface
+  # isn't blocked by a firewall such as ufw. Leave empty to use the network, for robots on other
+  # machines (which does need the firewall to allow it).
+  interface: lo
+  control_port: 3838
+  status_port: 3939
+  control_interval: 0.5 # wall-clock seconds between control messages
+  status_timeout: 4.0 # wall-clock seconds without a status message before a player counts as offline
+
+autoreferee:
+  # Names are game_controller_autoreferee::Features in lower case.
+  # Most penalties are left out, as robots that ignore GameController can't react to them. Those that
+  # remain need unpenalize, or the penalised robot is held for the rest of the game.
+  features:
+    - switch_to_set
+    - switch_to_playing
+    - switch_to_finished
+    - ball_out
+    - invalid_goal
+    - ball_free
+    - game_stuck
+    - penalize_leaving_the_field
+    - unpenalize
+    - clear_ball
+    - place_for_penalty
+    - place_ball
+  time_until_switch_to_set: 5.0 # seconds
+  time_until_switch_to_playing: 3.0 # seconds
+  penalty_placement_distance: 0.6 # metres
+  player_radius: 0.2 # metres, at ground level when upright
+  stand_height: 0.555 # metres, root height a robot is placed at (the "ready" keyframe's)
+
+# Head cameras (module::MatchCameras). Resolution and segment names come from camera.yaml.
+cameras_fps: 30
+
+# HSL M-Field, matching models/k1/k1_scene_robocup_middle.xml. Letters are the rule book's.
+field:
+  length: 14.0 # A
+  width: 9.0 # B
+  goal_width: 2.5 # D
+  goal_height: 1.8
+  goal_area_length: 1.0 # E
+  goal_area_width: 4.0 # F
+  penalty_area_length: 3.0 # G
+  penalty_area_width: 6.0 # H
+  penalty_mark_distance: 2.0 # I
+  center_circle_radius: 1.5 # J/2
+  border_strip_width: 1.0 # K
+  mark_radius: 0.05
+  line_width: 0.05
+  ball_radius: 0.0785

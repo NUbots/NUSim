@@ -46,6 +46,8 @@ namespace k1sim::module {
                     robot_odometry.seed += static_cast<uint64_t>(robot.robot_id);
                 }
 
+                robot_odometry.from_start = cli().game > 0;
+
                 RobotConnection connection;
                 connection.robot_id = robot.robot_id;
                 connection.dds = std::make_unique<sdkbridge::DdsParticipant>(robot.dds_domain, udp_only, local_only);

@@ -9,6 +9,7 @@
 #include <mujoco/mujoco.h>
 #include <mutex>
 
+#include "MatchPanel.hpp"
 #include "VideoRecorder.hpp"
 #include "shared/CliOptions.hpp"
 #include "shared/k1/BoosterApi.hpp"
@@ -56,6 +57,9 @@ namespace k1sim::module {
         // Set by the Viewer constructor; lets the plain-C GLFW key callback emit a
         // NUClear message (SimResetRequest) without holding a Reactor pointer here.
         std::function<void()> g_request_reset;
+
+        MatchPanel match_panel;
+        std::function<void(const message::MatchCommand&)> g_send_match_command;
 
         // Mouse state for the simulate-style camera + perturb controls.
         bool button_left   = false;
@@ -122,6 +126,23 @@ namespace k1sim::module {
             if (act == GLFW_RELEASE) {
                 end_perturb();
                 return;
+            }
+
+            if (button == GLFW_MOUSE_BUTTON_LEFT) {
+                int window_width  = 0;
+                int window_height = 0;
+                int width         = 0;
+                int height        = 0;
+                glfwGetWindowSize(w, &window_width, &window_height);
+                glfwGetFramebufferSize(w, &width, &height);
+                if (window_width > 0 && window_height > 0) {
+                    const int x = static_cast<int>(last_x * width / window_width);
+                    const int y = height - static_cast<int>(last_y * height / window_height);
+                    if (const auto command = match_panel.click({0, 0, width, height}, x, y)) {
+                        g_send_match_command(*command);
+                        return;
+                    }
+                }
             }
 
             const bool mod_ctrl = (mods & GLFW_MOD_CONTROL) != 0;
@@ -237,6 +258,10 @@ namespace k1sim::module {
         // thread-safe, and the callback only ever runs on the MainThread glfwPollEvents pump.
         g_request_reset = [this] { emit(std::make_unique<message::SimResetRequest>()); };
 
+        g_send_match_command = [this](const message::MatchCommand& command) {
+            emit(std::make_unique<message::MatchCommand>(command));
+        };
+
         on<Startup, MainThread>().then([this] {
             if (cli().headless) {
                 log<NUClear::LogLevel::INFO>("Viewer disabled (--headless)");
@@ -338,6 +363,9 @@ namespace k1sim::module {
         });
 
         // Overlay-only telemetry — never touches mjData, so no MainThread/mutex needed.
+        // Not MainThread, for the same reason as SimStateUpdate below: the render loop can starve it.
+        on<Trigger<message::MatchStatus>>().then([](const message::MatchStatus& status) { match_panel.set(status); });
+
         on<Trigger<message::SimStateUpdate>>().then([](const message::SimStateUpdate& state) {
             g_sim_time.store(state.sim_time, std::memory_order_relaxed);
             g_mode.store(state.mode, std::memory_order_relaxed);
@@ -370,6 +398,9 @@ namespace k1sim::module {
                     }
                 }
                 mjv_updateScene(g_model, g_data, &opt, &pert, &cam, mjCAT_ALL, &scn);
+                if (!video) {
+                    match_panel.add_labels(g_model, g_data, &scn);
+                }
                 if (video) {
                     for (const auto& robot : video_roster) {
                         const int body = mj_name2id(g_model, mjOBJ_BODY, robot.body().c_str());
@@ -410,6 +441,7 @@ namespace k1sim::module {
                               rtf,
                               mode_name(g_mode.load(std::memory_order_relaxed)));
                 mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, viewport, overlay, nullptr, &con);
+                match_panel.render(viewport, &con);
             }
 
             if (scene_ready && video) {

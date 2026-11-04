@@ -92,7 +92,8 @@ binary (`argparse.REMAINDER`), so sim flags are never parsed by `./b`.
 | --- | --- |
 | `./b configure [-i] [--clean] [--set-role R] [--unset-role R]` | CMake-configure with the selected backend; `-i` opens `ccmake`, `--clean` wipes the build dir. |
 | `./b build [targets...]` | Ninja build with the selected backend (default: everything; e.g. `./b build sim-soccer`). |
-| `./b run <role> [args]` | Run `bin/<role>` natively or in the container. Only role today: `sim/soccer`. |
+| `./b run <role> [args]` | Run `bin/<role>` natively or in the container. Roles: `sim/soccer`, and `sim/match` once [built](mujoco/module/MatchReferee/README.md). |
+| `./b match --game <n> [args]` | Run a refereed match of 1 to 3 a side: the sim plus a hidden NUbots process per robot. See [MatchReferee](mujoco/module/MatchReferee/README.md). |
 | `./b roles` | List sim roles and their enabled/disabled state. |
 | `./b image` | (Re)build the docker toolchain image. |
 | `./b test` | Build and run the C++ unit tests with the selected backend. |
@@ -180,6 +181,9 @@ no build flag, no shim and no code change — the same code path they use agains
   camera is rendered — `K1Camera` warn-retries harmlessly on the right one; stereo is future work.
 
 ## GameController
+
+`./b match` runs the game inside the sim, with no GameController app: see
+[MatchReferee](mujoco/module/MatchReferee/README.md). The rest of this section is about `sim/soccer`.
 
 This is the **RoboCup GameController** (the UDP match-control broadcast), not a USB gamepad — there is no
 joypad/SDL input path in NUSim, and manual driving is done from `NUbots_K1`'s `keyboardwalk` role.

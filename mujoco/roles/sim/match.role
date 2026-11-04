@@ -1,0 +1,14 @@
+# A refereed match: physics + DDS bridge + locomotion + a head camera per robot + embedded GameController and automatic
+# referee + viewer. Needs --game <n>. Only built when the GameController API is staged
+# (tools/install_game_controller_api.sh). ConsoleLog first so it captures startup logs.
+if(TARGET k1sim_module_matchreferee)
+  k1sim_role(
+    ConsoleLog
+    Simulation
+    SdkBridge
+    Locomotion
+    MatchCameras
+    MatchReferee
+    Viewer
+  )
+endif()
