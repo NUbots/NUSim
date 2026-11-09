@@ -24,6 +24,50 @@ sim/soccer  (native macOS / Linux docker container, NUClear)
 - **GameController** is heard directly by NUbots over the network; the sim additionally runs a supervisor
   that places the ball/robots per game phase.
 
+## Refereed matches (`layton/sim-match`)
+
+This branch adds `./b match`, which plays a 1v1, 2v2 or 3v3 game with one command: the GameController and an automatic
+referee run inside the sim, and every robot gets its own NUbots process with the right team and player number. It
+works toward [NUSim#10](https://github.com/NUbots/NUSim/issues/10). Linux only.
+
+It's built on rUNSWift's multi-robot work, which gives each robot its own control, sensors and DDS domain:
+
+```
+NUbots/NUSim  main
+  └─ UNSWComputing/NUSim  feature/multi-robot-ground-truth   (rUNSWift, not yet merged into NUbots)
+       └─ papazed/NUSim  layton/sim-match                    (this branch)
+```
+
+A pull request from this branch into `NUbots/NUSim` would also carry rUNSWift's commits unless theirs merges first.
+
+### Repositories needed
+
+| Repository | Used for |
+| --- | --- |
+| This one | The sim, GameController, referee and launcher |
+| [NUbots_K1](https://github.com/NUbots/NUbots_K1) | The robot code, unchanged. `./b match` runs its docker image, so it can be anywhere |
+| [GameController](https://github.com/RoboCup-HumanoidSoccerLeague/GameController) | Its C API is built into the sim once. Put it next to this checkout, at the commit pinned in [`install_game_controller_api.sh`](mujoco/tools/install_game_controller_api.sh) |
+
+### Running a match
+
+```bash
+# Once: build NUbots_K1 (in NUbots_K1)
+./b target generic && ./b build
+
+# Once: build the sim with the GameController API (in this repo, needs cargo)
+mujoco/tools/install_game_controller_api.sh   # or pass the path to a GameController checkout
+./b configure && ./b build
+
+# Every time
+./b match --game 3                            # 1 to 3 a side; starts once every robot connects
+./b match --game 1 --away-role <role>         # a different NUbots role for one team
+./b match --game 2 --headless                 # no window
+```
+
+Robots run `nusim/behaviour` unless told otherwise, and use their own vision and localisation, not ground truth. Their
+output is in `mujoco/build-docker/match/robot<id>/log`. Don't run the GameController app at the same time, as both use
+port 3939. How it works, settings and limitations are in [MatchReferee](mujoco/module/MatchReferee/README.md).
+
 ## Quick start
 
 On **Linux**, requirements are **Docker** (everything else is baked into the image). Full setup, config reference, and
