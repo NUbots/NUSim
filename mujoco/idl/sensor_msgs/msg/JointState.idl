@@ -1,0 +1,18 @@
+// sensor_msgs::msg::dds_::JointState_ — the standard ROS 2 sensor_msgs/JointState, in the
+// rmw_fastrtps naming (see PROTOCOL.md).
+
+#include "Header.idl"
+
+module sensor_msgs {
+    module msg {
+        module dds_ {
+            struct JointState_ {
+                std_msgs::msg::dds_::Header_ header;
+                sequence<string> name;
+                sequence<double> position;
+                sequence<double> velocity;
+                sequence<double> effort;
+            };
+        };
+    };
+};

@@ -1,7 +1,9 @@
 #include "module/Simulation/src/Simulation.hpp"
 
+#include <cmath>
 #include <cstddef>
 #include <mujoco/mujoco.h>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <utility>
 
@@ -10,6 +12,7 @@
 #include "shared/message/Commands.hpp"
 #include "shared/message/SimMessages.hpp"
 #include "shared/util/Config.hpp"
+#include "shared/util/RobotRoster.hpp"
 
 namespace k1sim::module {
 
@@ -30,6 +33,7 @@ namespace k1sim::module {
                 cfg.model_path = config::field_scene(sim_cfg, cli().field);
                 cfg.robots     = cli().robots;
             }
+            cfg.identities = config::robot_roster();
             cfg.initial_keyframe =
                 !cli().keyframe.empty() ? cli().keyframe : sim_cfg["initial_keyframe"].as<std::string>("ready");
             // CliOptions.rtf < 0 means "use config"; the config's real_time_factor may itself be 0
@@ -61,8 +65,10 @@ namespace k1sim::module {
         // Constructed here (not inside on<Startup>) — see the header comment on sim_.
         SimCore::Config sim_config = build_sim_config();
         const std::string scene    = sim_config.model_path;
-        sim_                       = std::make_unique<SimCore>(std::move(sim_config),
-                                         [this](std::unique_ptr<message::SimStateUpdate> state) { emit(state); });
+        sim_                       = std::make_unique<SimCore>(
+            std::move(sim_config),
+            [this](std::unique_ptr<message::SimStateUpdate> state) { emit(state); },
+            [this](std::unique_ptr<message::RobotStatesUpdate> states) { emit(states); });
 
         on<Startup>().then([this, scene] {
             sim_->load_model();
@@ -72,6 +78,8 @@ namespace k1sim::module {
             handles->data         = sim_->data();
             handles->mutex        = &sim_->mutex();
             handles->measured_rtf = &sim_->measured_rtf();
+            handles->reset_world  = [this] { sim_->reset(); };
+            handles->placed_robot = [this](int id) { sim_->placed_robot_locked(id); };
             emit(handles);
 
             log<NUClear::LogLevel::INFO>("Simulation ready (scene",
@@ -86,21 +94,80 @@ namespace k1sim::module {
                                          "controller attaches)");
 
             // Start immediately with the PD fallback engaged; if Locomotion's ControllerHandle
-            // arrives it is swapped in atomically by the Trigger reaction below — race-free, no
+            // arrives it is attached under the physics lock — no
             // need to wait for it (Locomotion may not even be installed, e.g. in unit tests).
             sim_->start();
         });
 
         on<Trigger<message::ControllerHandle>>().then([this](const message::ControllerHandle& handle) {
-            sim_->set_controller(handle.controller);
-            log<NUClear::LogLevel::INFO>("Simulation: controller attached");
+            if (handle.owner) {
+                sim_->set_robot_controller(handle.robot_id, handle.owner);
+            }
+            else if (handle.robot_id == 1) {
+                sim_->set_controller(handle.controller);
+            }
+            log<NUClear::LogLevel::INFO>("Simulation: controller attached for robot", handle.robot_id);
         });
 
-        // Viewer Backspace (or any other emitter): snap mjData back to the startup keyframe.
-        // Physics state only — the attached controller keeps its mode/commands (SimCore::reset).
+        // Opt-in loopback-only scenario control; absent in normal simulator runs.
+        const int scenario_port = config::load("simulation.yaml")["scenario_port"].as<int>(0);
+        if (scenario_port) {
+            on<UDP, Single>(scenario_port).then([this](const UDP::Packet& packet) {
+                if (packet.remote.address != "127.0.0.1")
+                    return;
+                try {
+                    const auto request = nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
+                    const auto action  = request.at("action").get<std::string>();
+                    if (action == "reset")
+                        sim_->reset();
+                    else if (action == "fall")
+                        sim_->topple_robot(request.at("robot_id").get<int>());
+                    else if (action == "record") {
+                        auto video      = std::make_unique<message::VideoRecordRequest>();
+                        video->path     = request.at("path").get<std::string>();
+                        video->duration = request.at("duration").get<double>();
+                        if (video->path.empty() || !std::isfinite(video->duration) || video->duration <= 0.)
+                            return;
+                        emit(std::move(video));
+                    }
+                    else if (action == "ball") {
+                        const double x = request.at("x"), y = request.at("y");
+                        if (!std::isfinite(x) || !std::isfinite(y))
+                            return;
+                        sim_->relocate_ball(x, y);
+                    }
+                    else
+                        return;
+                    log<NUClear::LogLevel::INFO>("SCENARIO applied", request.dump());
+                }
+                catch (const std::exception& e) {
+                    log<NUClear::LogLevel::WARN>("SCENARIO rejected", e.what());
+                }
+            });
+        }
+        on<Every<1, std::chrono::seconds>>().then([this] {
+            log<NUClear::LogLevel::INFO>("SIM_METRICS rtf",
+                                         sim_->measured_rtf().load(),
+                                         "physics_step_ms",
+                                         sim_->physics_step_ms(),
+                                         "dropped_deadlines",
+                                         sim_->dropped_deadlines());
+        });
+
+        // Viewer Backspace restores the world and clears every controller.
         on<Trigger<message::SimResetRequest>>().then([this] {
             sim_->reset();
             log<NUClear::LogLevel::INFO>("Simulation: state reset to startup keyframe");
+        });
+
+        on<Trigger<message::RobotResetRequest>>().then([this](const message::RobotResetRequest& req) {
+            try {
+                sim_->reset_robot(req.robot_id);
+                log<NUClear::LogLevel::INFO>("Simulation: reset robot", req.robot_id);
+            }
+            catch (const std::exception& error) {
+                log<NUClear::LogLevel::WARN>("Simulation: robot reset rejected:", error.what());
+            }
         });
 
         // Base-pose heartbeat: one INFO line every ~5 s of sim time (updates arrive at

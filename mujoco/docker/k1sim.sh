@@ -112,7 +112,7 @@ case "${1:-}" in
         [ -x "$REPO/mujoco/$BUILD_DIR/$bin" ] || build
         [ -n "${DISPLAY:-}" ] && xhost +local: > /dev/null 2>&1 || true
         # shellcheck disable=SC2046
-        docker run -it $(common_flags) $(run_flags) "$IMAGE" "./$BUILD_DIR/$bin" "$@"
+        docker run -it $(common_flags) $(run_flags) ${K1SIM_RUN_FLAGS:-} "$IMAGE" "./$BUILD_DIR/$bin" "$@"
         ;;
     shell)
         ensure_image

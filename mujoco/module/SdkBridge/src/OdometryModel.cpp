@@ -44,7 +44,7 @@ namespace k1sim::module::sdkbridge {
             }
             initialised_ = true;
             t_           = t;
-            return estimate_;
+            return published();
         }
         t_ = t;
 
@@ -64,7 +64,18 @@ namespace k1sim::module::sdkbridge {
         estimate_.x += (cm * estimate_.velocity[0] - sm * estimate_.velocity[1]) * dt;
         estimate_.y += (sm * estimate_.velocity[0] + cm * estimate_.velocity[1]) * dt;
         estimate_.yaw = std::remainder(estimate_.yaw + estimate_.velocity[2] * dt, 2.0 * std::numbers::pi_v<double>);
-        return estimate_;
+        return published();
+    }
+
+    const OdometryModel::Estimate& OdometryModel::published() {
+        if (!config_.from_start) {
+            return estimate_;
+        }
+        if (!start_) {
+            start_ = estimate_;
+        }
+        published_ = from_start(estimate_, *start_);
+        return published_;
     }
 
 }  // namespace k1sim::module::sdkbridge

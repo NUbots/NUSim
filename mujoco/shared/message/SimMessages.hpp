@@ -4,10 +4,13 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <mujoco/mujoco.h>
 #include <mutex>
+#include <vector>
 
 #include "shared/k1/JointIndex.hpp"
+#include "shared/sim/RobotIdentity.hpp"
 
 // NUClear messages exchanged between the sim's own modules (in-process only —
 // nothing here goes over DDS; the SdkBridge translates to the Booster wire types).
@@ -22,7 +25,7 @@ namespace k1sim::message {
     };
 
     struct ImuData {
-        std::array<double, 4> quat{1, 0, 0, 0};  // w,x,y,z world->imu
+        std::array<double, 4> quat{1, 0, 0, 0};  // w,x,y,z imu->world
         std::array<double, 3> rpy{};             // roll, pitch, yaw (rad)
         std::array<double, 3> gyro{};            // rad/s, body frame
         std::array<double, 3> acc{};             // m/s^2, body frame, includes gravity
@@ -65,6 +68,20 @@ namespace k1sim::message {
         int fall_state      = 0;  // booster::FallState value
         bool getting_up     = false;
         double measured_rtf = 0.0;
+        RobotIdentity identity{1, 0, 125, 1, 0};
+        uint64_t reset_count = 0;  // per-robot resets, including full-world resets
+    };
+
+    // Captured under one physics lock. Used by SdkBridge so NUClear's per-type
+    // cache cannot substitute another robot's latest state for an earlier one.
+    struct RobotStatesUpdate {
+        std::vector<SimStateUpdate> robots;
+        bool ball_valid = false;
+        std::array<double, 3> ball_centre{}, ball_velocity{}, ball_angular_velocity{};
+        uint64_t reset_generation     = 0;
+        uint64_t sample_sequence      = 0;
+        uint64_t capture_time_unix_ns = 0;
+        std::array<char, 36> session_id{};
     };
 
     // Emitted once by module::Simulation after the model is loaded. The mutex guards
@@ -74,6 +91,10 @@ namespace k1sim::message {
         mjData* data                      = nullptr;
         std::mutex* mutex                 = nullptr;
         std::atomic<double>* measured_rtf = nullptr;
+        // Caller holds mutex. Clear the relocated robot's controller and signal its reset.
+        std::function<void(int)> placed_robot;
+        // Acquires mutex internally; call before acquiring the physics lock.
+        std::function<void()> reset_world;
     };
 
 }  // namespace k1sim::message

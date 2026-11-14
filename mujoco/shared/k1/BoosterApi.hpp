@@ -22,6 +22,11 @@ namespace k1sim::booster {
     // Not an SDK constant: the robot's head pose (geometry_msgs Pose), the topic NUbots'
     // K1Sensors subscribes to (K1Sensors.yaml head_pose.topic).
     inline constexpr const char* TOPIC_HEAD_POSE = "rt/head_pose";
+    // Not an SDK constant: the 22 joints as a standard sensor_msgs JointState (names from
+    // k1sim::JOINT_NAMES, in JointIndexK1 order), so plain ROS 2 tools can read them.
+    inline constexpr const char* TOPIC_JOINT_STATES = "rt/joint_states";
+    // Not an SDK constant: the IMU as a standard sensor_msgs Imu (same data as low_state's imu_state).
+    inline constexpr const char* TOPIC_IMU_DATA = "rt/imu/data";
 
     // LocoApiId values carried in RpcReqMsg.header JSON {"api_id": <int>}
     enum ApiId : int {

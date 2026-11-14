@@ -5,11 +5,13 @@
 #include <chrono>
 #include <cmath>
 #include <ctime>
+#include <random>
 #include <stdexcept>
 
 #include "shared/k1/BoosterApi.hpp"
 #include "shared/sim/FreeBody.hpp"
 #include "shared/sim/HeadPose.hpp"
+#include "shared/sim/RobotIdentity.hpp"
 #include "shared/util/Config.hpp"
 
 namespace k1sim {
@@ -73,13 +75,6 @@ namespace k1sim {
 #endif
         }
 
-        // Name prefix for the k-th extra robot's joints/actuators/bodies (k starts at 1).
-        std::string extra_prefix(int k) {
-            char buf[16];
-            std::snprintf(buf, sizeof(buf), "sub%02d_", k);
-            return buf;
-        }
-
         // Standing base height of the "ready" pose; game spawns and the extra_spawn grid use it.
         constexpr double STAND_Z = 0.555;
 
@@ -135,7 +130,7 @@ namespace k1sim {
                 frame->pos[1]        = pos[1];
                 frame->pos[2]        = pos[2];
                 mjsBody* trunk       = mjs_findBody(robot, "Trunk");
-                mjsElement* attached = mjs_attach(frame->element, trunk->element, extra_prefix(k).c_str(), "");
+                mjsElement* attached = mjs_attach(frame->element, trunk->element, robot_prefix(k).c_str(), "");
                 if (attached == nullptr) {
                     const std::string what = std::string("mjs_attach failed for robot copy ") + std::to_string(k) + ": "
                                              + mjs_getError(scene);
@@ -162,10 +157,54 @@ namespace k1sim {
 
     }  // namespace
 
-    SimCore::SimCore(Config config, StateCallback on_state)
-        : config_(std::move(config)), on_state_(std::move(on_state)) {
-        pd_.kp = config_.kp;
-        pd_.kd = config_.kd;
+    SimCore::SimCore(Config config, StateCallback on_state, BatchCallback on_batch)
+        : config_(std::move(config)), on_state_(std::move(on_state)), on_batch_(std::move(on_batch)) {
+        if (config_.robots < 1 || config_.robots > 22
+            || (!config_.spawns.empty() && config_.spawns.size() != static_cast<std::size_t>(config_.robots))
+            || (!config_.identities.empty() && config_.identities.size() != static_cast<std::size_t>(config_.robots))) {
+            throw std::invalid_argument("invalid robot count, spawn count or roster size");
+        }
+        for (int i = 0; i < config_.robots; ++i) {
+            RobotContext robot;
+            robot.identity = config_.identities.empty() ? RobotIdentity{i + 1, i, 125 + i / 11, i % 11 + 1, i}
+                                                        : config_.identities[i];
+            if (robot.identity.robot_id != i + 1 || robot.identity.model_index != i) {
+                throw std::invalid_argument("robot identities must follow model order");
+            }
+            robot.pd.kp = config_.kp;
+            robot.pd.kd = config_.kd;
+            robot_contexts_.push_back(std::move(robot));
+        }
+    }
+
+    SimCore::RobotContext& SimCore::context(int robot_id) {
+        return const_cast<RobotContext&>(static_cast<const SimCore&>(*this).context(robot_id));
+    }
+
+    const SimCore::RobotContext& SimCore::context(int robot_id) const {
+        if (robot_id < 1 || robot_id > static_cast<int>(robot_contexts_.size())) {
+            throw std::out_of_range("unknown robot_id " + std::to_string(robot_id));
+        }
+        return robot_contexts_[robot_id - 1];
+    }
+
+    void SimCore::set_controller(StepController* controller) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto& robot = context(1);
+        robot.owner.reset();
+        robot.controller = controller;
+    }
+
+    StepController* SimCore::controller() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return context(1).controller;
+    }
+
+    void SimCore::set_robot_controller(int robot_id, std::shared_ptr<StepController> controller) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto& robot      = context(robot_id);
+        robot.owner      = std::move(controller);
+        robot.controller = robot.owner.get();
     }
 
     SimCore::~SimCore() {
@@ -174,6 +213,16 @@ namespace k1sim {
     }
 
     void SimCore::load_model() {
+        std::random_device random;
+        const char* hex = "0123456789abcdef";
+        for (std::size_t i = 0; i < session_id_.size(); ++i)
+            session_id_[i] = hex[random() & 15];
+        for (auto i : {8, 13, 18, 23})
+            session_id_[i] = '-';
+        session_id_[14] = '4';
+        session_id_[19] = hex[8 + (random() & 3)];
+
+        std::lock_guard<std::mutex> lock(mutex_);
         const std::string resolved = config::resolve_path(config_.model_path).string();
 
         char error[1024] = {0};
@@ -186,7 +235,11 @@ namespace k1sim {
         m_ = load_multi_robot_model(resolved, extras, error, sizeof(error));
 
         // Throws if any joint/actuator is missing or there is no free root joint.
-        map_ = ModelMap::build(m_);
+        for (auto& robot : robot_contexts_) {
+            const auto prefix  = robot_prefix(robot.identity.model_index);
+            robot.map          = ModelMap::build(m_, prefix);
+            robot.head_body_id = mj_name2id(m_, mjOBJ_BODY, (prefix + "Head_2").c_str());
+        }
 
         apply_surface_override();
 
@@ -198,11 +251,6 @@ namespace k1sim {
         if (!freebody::valid_free_body_geom(m_, ball_body_id_, ball_geom_id_)) {
             ball_body_id_ = ball_geom_id_ = -1;
             std::fprintf(stderr, "SimCore: scene has no free \"ball\" body/geom; ball ground truth is off\n");
-        }
-
-        head_body_id_ = mj_name2id(m_, mjOBJ_BODY, "Head_2");
-        if (head_body_id_ < 0) {
-            std::fprintf(stderr, "SimCore: model has no Head_2 body; rt/head_pose will not be published\n");
         }
         if (!config_.foot_log_path.empty()) {
             if (left_foot_body_id_ < 0 || right_foot_body_id_ < 0) {
@@ -220,33 +268,6 @@ namespace k1sim {
                     std::fprintf(stderr, "SimCore: foot contact log -> %s\n", config_.foot_log_path.c_str());
                 }
             }
-        }
-
-        // Index maps for the extra robot copies so the physics loop can PD-hold them
-        // upright. Only the three per-joint index arrays are needed.
-        extra_maps_.clear();
-        for (int k = 1; k < config_.robots; ++k) {
-            const std::string prefix = extra_prefix(k);
-            ModelMap em{};
-            for (std::size_t i = 0; i < JOINT_COUNT; ++i) {
-                const std::string name = prefix + JOINT_NAMES[i];
-                const int jnt          = mj_name2id(m_, mjOBJ_JOINT, name.c_str());
-                const int act          = mj_name2id(m_, mjOBJ_ACTUATOR, name.c_str());
-                if (jnt < 0 || act < 0) {
-                    throw std::runtime_error("multi-robot scene is missing joint/actuator '" + name + "'");
-                }
-                em.qpos_adr[i] = m_->jnt_qposadr[jnt];
-                em.dof_adr[i]  = m_->jnt_dofadr[jnt];
-                em.act_id[i]   = act;
-            }
-            const std::string root = prefix + "root";
-            const int root_jnt     = mj_name2id(m_, mjOBJ_JOINT, root.c_str());
-            if (root_jnt < 0) {
-                throw std::runtime_error("multi-robot scene is missing free joint '" + root + "'");
-            }
-            em.root_qpos_adr = m_->jnt_qposadr[root_jnt];
-            em.root_dof_adr  = m_->jnt_dofadr[root_jnt];
-            extra_maps_.push_back(em);
         }
 
         d_ = mj_makeData(m_);
@@ -273,14 +294,23 @@ namespace k1sim {
         const int ready_key = mj_name2id(m_, mjOBJ_KEY, "ready");
         if (ready_key >= 0) {
             for (std::size_t i = 0; i < JOINT_COUNT; ++i) {
-                ready_target_[i] = m_->key_qpos[ready_key * m_->nq + map_.qpos_adr[i]];
+                robot_contexts_[0].ready_target[i] = m_->key_qpos[ready_key * m_->nq + model_map().qpos_adr[i]];
             }
         }
         else {
-            ready_target_ = config_.ready_pose_fallback;
+            robot_contexts_[0].ready_target = config_.ready_pose_fallback;
         }
 
+        for (auto& robot : robot_contexts_) {
+            robot.ready_target = robot_contexts_[0].ready_target;
+        }
         place_robots();
+        for (auto& robot : robot_contexts_) {
+            std::copy_n(d_->qpos + robot.map.root_qpos_adr, 7, robot.startup_root.begin());
+            for (std::size_t i = 0; i < JOINT_COUNT; ++i) {
+                robot.startup_joints[i] = d_->qpos[robot.map.qpos_adr[i]];
+            }
+        }
 
         // Populate derived quantities (xquat, sensordata, ...) for the reset pose before the
         // physics thread's first mj_step; harmless if nothing reads them this early.
@@ -406,9 +436,9 @@ namespace k1sim {
         }
 
         std::array<double, 4> quat{1, 0, 0, 0};
-        if (map_.root_body_id >= 0) {
+        if (model_map().root_body_id >= 0) {
             for (int k = 0; k < 4; ++k) {
-                quat[k] = d_->xquat[4 * map_.root_body_id + k];
+                quat[k] = d_->xquat[4 * model_map().root_body_id + k];
             }
         }
         std::array<double, 3> rpy{};
@@ -428,7 +458,7 @@ namespace k1sim {
                      feet[1].pitch,
                      feet[1].roll,
                      rpy[1],
-                     d_->qpos[map_.root_qpos_adr + 2]);
+                     d_->qpos[model_map().root_qpos_adr + 2]);
     }
 
     // Put every extra robot copy at its spawn slot in the ready pose with zero velocity.
@@ -450,7 +480,7 @@ namespace k1sim {
         // x/y and turned by its yaw.
         if (!config_.spawns.empty()) {
             const auto pose = spawn_pose(0);
-            double* root    = d_->qpos + map_.root_qpos_adr;
+            double* root    = d_->qpos + model_map().root_qpos_adr;
             const double cw = std::cos(pose[3] / 2.0);
             const double sw = std::sin(pose[3] / 2.0);
             const std::array<double, 4> q{root[3], root[4], root[5], root[6]};
@@ -463,9 +493,9 @@ namespace k1sim {
         }
         place_ball();
 
-        for (std::size_t j = 0; j < extra_maps_.size(); ++j) {
-            const ModelMap& em             = extra_maps_[j];
-            const auto pose                = spawn_pose(static_cast<int>(j) + 1);
+        for (std::size_t j = 1; j < robot_contexts_.size(); ++j) {
+            const ModelMap& em             = robot_contexts_[j].map;
+            const auto pose                = spawn_pose(static_cast<int>(j));
             d_->qpos[em.root_qpos_adr + 0] = pose[0];
             d_->qpos[em.root_qpos_adr + 1] = pose[1];
             d_->qpos[em.root_qpos_adr + 2] = pose[2];
@@ -477,7 +507,7 @@ namespace k1sim {
                 d_->qvel[em.root_dof_adr + v] = 0.0;
             }
             for (std::size_t i = 0; i < JOINT_COUNT; ++i) {
-                d_->qpos[em.qpos_adr[i]] = ready_target_[i];
+                d_->qpos[em.qpos_adr[i]] = robot_contexts_[j].ready_target[i];
                 d_->qvel[em.dof_adr[i]]  = 0.0;
             }
         }
@@ -509,6 +539,10 @@ namespace k1sim {
 
     void SimCore::reset() {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (!d_) {
+            throw std::logic_error("reset requires a loaded model");
+        }
+        ++reset_generation_;
         if (reset_key_ >= 0) {
             mj_resetDataKeyframe(m_, d_, reset_key_);
         }
@@ -516,9 +550,152 @@ namespace k1sim {
             mj_resetData(m_, d_);
         }
         place_robots();
+        step_count_.store(0, std::memory_order_relaxed);
+        for (auto& robot : robot_contexts_) {
+            ++robot.reset_count;
+            if (robot.controller) {
+                robot.controller->reset();
+            }
+        }
         // Repopulate derived quantities so snapshots/viewer frames between now and the next
         // mj_step see the reset pose, not stale kinematics.
         mj_forward(m_, d_);
+    }
+
+    void SimCore::reset_robot(int robot_id) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto& robot = context(robot_id);
+        if (!d_) {
+            throw std::logic_error("reset requires a loaded model");
+        }
+        ++reset_generation_;
+        std::copy(robot.startup_root.begin(), robot.startup_root.end(), d_->qpos + robot.map.root_qpos_adr);
+        for (int i = 0; i < 6; ++i) {
+            d_->qvel[robot.map.root_dof_adr + i]           = 0.0;
+            d_->qfrc_applied[robot.map.root_dof_adr + i]   = 0.0;
+            d_->qacc_warmstart[robot.map.root_dof_adr + i] = 0.0;
+        }
+        for (std::size_t i = 0; i < JOINT_COUNT; ++i) {
+            d_->qpos[robot.map.qpos_adr[i]]          = robot.startup_joints[i];
+            d_->qvel[robot.map.dof_adr[i]]           = 0.0;
+            d_->qfrc_applied[robot.map.dof_adr[i]]   = 0.0;
+            d_->qacc_warmstart[robot.map.dof_adr[i]] = 0.0;
+            d_->ctrl[robot.map.act_id[i]]            = 0.0;
+        }
+        // Clear only this robot's applied body wrenches (including pushed limbs).
+        for (int body = 1; body < m_->nbody; ++body) {
+            int ancestor = body;
+            while (ancestor != 0 && ancestor != robot.map.root_body_id) {
+                ancestor = m_->body_parentid[ancestor];
+            }
+            if (ancestor == robot.map.root_body_id) {
+                std::fill_n(d_->xfrc_applied + 6 * body, 6, 0.0);
+            }
+        }
+        ++robot.reset_count;
+        if (robot.controller) {
+            robot.controller->reset();
+        }
+        mj_forward(m_, d_);
+    }
+
+    void SimCore::placed_robot_locked(int robot_id) {
+        auto& robot = context(robot_id);
+        ++robot.reset_count;
+        if (robot.controller)
+            robot.controller->reset();
+    }
+
+    void SimCore::relocate_ball(double x, double y) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const int geom = mj_name2id(m_, mjOBJ_GEOM, "ball");
+        if (geom < 0)
+            throw std::runtime_error("ball missing");
+        const int joint = m_->body_jntadr[m_->geom_bodyid[geom]];
+        const int q = m_->jnt_qposadr[joint], v = m_->jnt_dofadr[joint];
+        d_->qpos[q]     = x - m_->geom_pos[3 * geom];
+        d_->qpos[q + 1] = y - m_->geom_pos[3 * geom + 1];
+        d_->qpos[q + 2] = m_->geom_size[3 * geom] - m_->geom_pos[3 * geom + 2];
+        d_->qpos[q + 3] = 1;
+        std::fill_n(d_->qpos + q + 4, 3, 0.);
+        std::fill_n(d_->qvel + v, 6, 0.);
+        mj_forward(m_, d_);
+    }
+
+    void SimCore::topple_robot(int robot_id) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto& robot = context(robot_id);
+        const int q = robot.map.root_qpos_adr;
+        // Deterministic prone placement, with no impulse applied to other robots.
+        d_->qpos[q + 2] = .25;
+        d_->qpos[q + 3] = std::sqrt(.5);
+        d_->qpos[q + 4] = 0;
+        d_->qpos[q + 5] = std::sqrt(.5);
+        d_->qpos[q + 6] = 0;
+        std::fill_n(d_->qvel + robot.map.root_dof_adr, 6, 0.);
+        placed_robot_locked(robot_id);
+        mj_forward(m_, d_);
+    }
+
+    void SimCore::advance_locked() {
+        for (auto& robot : robot_contexts_) {
+            if (robot.controller) {
+                robot.controller->step(m_, d_);
+            }
+            else {
+                robot.pd.apply(m_, d_, robot.map, robot.ready_target);
+            }
+        }
+        const auto began = std::chrono::steady_clock::now();
+        mj_step(m_, d_);
+        physics_ns_.fetch_add(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - began).count(),
+            std::memory_order_relaxed);
+        physics_steps_.fetch_add(1, std::memory_order_relaxed);
+        step_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    void SimCore::step_once() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!d_ || running_.load(std::memory_order_acquire)) {
+            throw std::logic_error("step_once requires a loaded, stopped simulator");
+        }
+        advance_locked();
+        mj_forward(m_, d_);
+    }
+
+    message::RobotStatesUpdate SimCore::capture_locked() const {
+        message::RobotStatesUpdate result;
+        result.session_id       = session_id_;
+        result.reset_generation = reset_generation_;
+        result.sample_sequence  = ++sample_sequence_;
+        result.capture_time_unix_ns =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch())
+                .count();
+        const int ball = mj_name2id(m_, mjOBJ_GEOM, "ball");
+        if (ball >= 0) {
+            result.ball_valid = true;
+            for (int i = 0; i < 3; ++i)
+                result.ball_centre[i] = d_->geom_xpos[3 * ball + i];
+            mjtNum velocity[6];
+            mj_objectVelocity(m_, d_, mjOBJ_GEOM, ball, velocity, 0);
+            for (int i = 0; i < 3; ++i) {
+                result.ball_angular_velocity[i] = velocity[i];
+                result.ball_velocity[i]         = velocity[3 + i];
+            }
+        }
+        for (const auto& robot : robot_contexts_) {
+            result.robots.push_back(*make_snapshot(robot, step_count()));
+        }
+        return result;
+    }
+
+    message::RobotStatesUpdate SimCore::capture_states() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!d_) {
+            throw std::logic_error("capture requires a loaded model");
+        }
+        return capture_locked();
     }
 
     void SimCore::start() {
@@ -551,65 +728,68 @@ namespace k1sim {
         }
     }
 
-    std::unique_ptr<message::SimStateUpdate> SimCore::make_snapshot(uint64_t steps) const {
-        auto s      = std::make_unique<message::SimStateUpdate>();
-        s->sim_time = d_->time;
+    std::unique_ptr<message::SimStateUpdate> SimCore::make_snapshot(const RobotContext& robot, uint64_t steps) const {
+        const auto& map = robot.map;
+        auto s          = std::make_unique<message::SimStateUpdate>();
+        s->sim_time     = d_->time;
         s->wall_time_ns =
             std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch())
                 .count();
-        s->step_count = steps;
+        s->step_count  = steps;
+        s->identity    = robot.identity;
+        s->reset_count = robot.reset_count;
 
         for (std::size_t i = 0; i < JOINT_COUNT; ++i) {
             auto& j = s->joints[i];
-            j.q     = d_->qpos[map_.qpos_adr[i]];
-            j.dq    = d_->qvel[map_.dof_adr[i]];
-            j.ddq   = d_->qacc[map_.dof_adr[i]];
-            j.tau   = d_->actuator_force[map_.act_id[i]];
+            j.q     = d_->qpos[map.qpos_adr[i]];
+            j.dq    = d_->qvel[map.dof_adr[i]];
+            j.ddq   = d_->qacc[map.dof_adr[i]];
+            j.tau   = d_->actuator_force[map.act_id[i]];
         }
 
         // IMU orientation + rpy.
         std::array<double, 4> quat{1, 0, 0, 0};
-        if (map_.sens_quat >= 0) {
+        if (map.sens_quat >= 0) {
             for (int k = 0; k < 4; ++k) {
-                quat[k] = d_->sensordata[map_.sens_quat + k];
+                quat[k] = d_->sensordata[map.sens_quat + k];
             }
         }
-        else if (map_.root_body_id >= 0) {
+        else if (map.root_body_id >= 0) {
             for (int k = 0; k < 4; ++k) {
-                quat[k] = d_->xquat[4 * map_.root_body_id + k];
+                quat[k] = d_->xquat[4 * map.root_body_id + k];
             }
         }
         s->imu.quat = quat;
         quat_to_rpy(quat, s->imu.rpy);
 
-        if (map_.sens_gyro >= 0) {
+        if (map.sens_gyro >= 0) {
             for (int k = 0; k < 3; ++k) {
-                s->imu.gyro[k] = d_->sensordata[map_.sens_gyro + k];
+                s->imu.gyro[k] = d_->sensordata[map.sens_gyro + k];
             }
         }
-        else if (map_.root_body_id >= 0) {
+        else if (map.root_body_id >= 0) {
             // Fallback: cvel's angular part is world-axis-aligned; rotate into the body's local
             // frame with the body rotation matrix (R^T * world = mju_mulMatTVec3).
-            const mjtNum* rmat    = d_->xmat + 9 * map_.root_body_id;
-            const mjtNum world[3] = {d_->cvel[6 * map_.root_body_id + 0],
-                                     d_->cvel[6 * map_.root_body_id + 1],
-                                     d_->cvel[6 * map_.root_body_id + 2]};
+            const mjtNum* rmat    = d_->xmat + 9 * map.root_body_id;
+            const mjtNum world[3] = {d_->cvel[6 * map.root_body_id + 0],
+                                     d_->cvel[6 * map.root_body_id + 1],
+                                     d_->cvel[6 * map.root_body_id + 2]};
             mjtNum local[3];
             mju_mulMatTVec3(local, rmat, world);
             s->imu.gyro = {local[0], local[1], local[2]};
         }
 
-        if (map_.sens_acc >= 0) {
+        if (map.sens_acc >= 0) {
             for (int k = 0; k < 3; ++k) {
-                s->imu.acc[k] = d_->sensordata[map_.sens_acc + k];
+                s->imu.acc[k] = d_->sensordata[map.sens_acc + k];
             }
         }
-        else if (map_.root_body_id >= 0) {
+        else if (map.root_body_id >= 0) {
             // Fallback approximation: the reading a stationary accelerometer would show under
             // gravity alone (R^T * (0,0,+g)); ignores true linear acceleration (no cacc bookkeeping
             // without the real sensor). Good enough for a defensive path that isn't exercised by
             // the vendored model, which always carries the real sensor.
-            const mjtNum* rmat    = d_->xmat + 9 * map_.root_body_id;
+            const mjtNum* rmat    = d_->xmat + 9 * map.root_body_id;
             const mjtNum g        = -m_->opt.gravity[2];
             const mjtNum world[3] = {0, 0, g};
             mjtNum local[3];
@@ -619,24 +799,24 @@ namespace k1sim {
 
         // Base pose/velocity (free root joint). qpos: [x y z qw qx qy qz]; qvel: [vx vy vz wx wy wz]
         // with the linear part in world frame and the angular part in the body's local frame.
-        const int qadr  = map_.root_qpos_adr;
-        const int vadr  = map_.root_dof_adr;
+        const int qadr  = map.root_qpos_adr;
+        const int vadr  = map.root_dof_adr;
         s->base.x       = d_->qpos[qadr + 0];
         s->base.y       = d_->qpos[qadr + 1];
         s->base.z       = d_->qpos[qadr + 2];
         s->base.quat    = {d_->qpos[qadr + 3], d_->qpos[qadr + 4], d_->qpos[qadr + 5], d_->qpos[qadr + 6]};
         s->base.lin_vel = {d_->qvel[vadr + 0], d_->qvel[vadr + 1], d_->qvel[vadr + 2]};
         {
-            const mjtNum* rmat    = d_->xmat + 9 * map_.root_body_id;
+            const mjtNum* rmat    = d_->xmat + 9 * map.root_body_id;
             const mjtNum local[3] = {d_->qvel[vadr + 3], d_->qvel[vadr + 4], d_->qvel[vadr + 5]};
             mjtNum world[3];
             mju_mulMatVec3(world, rmat, local);
             s->base.ang_vel = {world[0], world[1], world[2]};
         }
 
-        if (head_body_id_ >= 0) {
-            const FootprintPose Hrh = head_in_footprint(d_->xpos + 3 * head_body_id_,
-                                                        d_->xquat + 4 * head_body_id_,
+        if (robot.head_body_id >= 0) {
+            const FootprintPose Hrh = head_in_footprint(d_->xpos + 3 * robot.head_body_id,
+                                                        d_->xquat + 4 * robot.head_body_id,
                                                         d_->qpos + qadr,
                                                         d_->qpos + qadr + 3);
             s->head.valid           = true;
@@ -652,7 +832,7 @@ namespace k1sim {
             s->ball.ang_vel  = ball.ang_vel;
         }
 
-        StepController* ctrl = controller_.load(std::memory_order_acquire);
+        StepController* ctrl = robot.controller;
         if (ctrl != nullptr) {
             s->mode       = ctrl->mode();
             s->fall_state = ctrl->fall_state();
@@ -678,38 +858,30 @@ namespace k1sim {
         timespec deadline{};
         clock_gettime(CLOCK_MONOTONIC, &deadline);
 
-        double window_wall_start   = to_seconds(deadline);
-        uint64_t window_step_start = 0;
-        uint64_t steps             = 0;
+        double window_wall_start = to_seconds(deadline);
+        uint64_t window_steps    = 0;
 
         while (running_.load(std::memory_order_acquire)) {
-            std::unique_ptr<message::SimStateUpdate> snapshot;
+            std::unique_ptr<message::RobotStatesUpdate> snapshot;
             {
                 std::lock_guard<std::mutex> lock(mutex_);
-
-                StepController* ctrl = controller_.load(std::memory_order_acquire);
-                if (ctrl != nullptr) {
-                    ctrl->step(m_, d_);
-                }
-                else {
-                    pd_.apply(m_, d_, map_, ready_target_);
-                }
-                // Extra --robots copies have no controller; hold them at the ready pose.
-                for (const auto& em : extra_maps_) {
-                    pd_.apply(m_, d_, em, ready_target_);
-                }
-                mj_step(m_, d_);
-                ++steps;
-                step_count_.store(steps, std::memory_order_relaxed);
-
-                if (publish_every > 0 && steps % publish_every == 0) {
-                    snapshot = make_snapshot(steps);
+                advance_locked();
+                ++window_steps;
+                if (publish_every > 0 && step_count() % publish_every == 0) {
+                    // mj_step integrates qpos after evaluating sensors; refresh them at the
+                    // new pose so joint, IMU and head data share one capture time.
+                    mj_forward(m_, d_);
+                    snapshot = std::make_unique<message::RobotStatesUpdate>(capture_locked());
                     log_foot_state();
                 }
-            }  // release the mutex before emitting/pacing
-
-            if (snapshot && on_state_) {
-                on_state_(std::move(snapshot));
+            }
+            if (snapshot) {
+                if (on_state_) {
+                    on_state_(std::make_unique<message::SimStateUpdate>(snapshot->robots.front()));
+                }
+                if (on_batch_) {
+                    on_batch_(std::move(snapshot));
+                }
             }
 
             if (!free_run) {
@@ -728,10 +900,10 @@ namespace k1sim {
             clock_gettime(CLOCK_MONOTONIC, &wall_now);
             const double wall_elapsed = to_seconds(wall_now) - window_wall_start;
             if (wall_elapsed >= 1.0) {
-                const double sim_elapsed = static_cast<double>(steps - window_step_start) * dt;
+                const double sim_elapsed = static_cast<double>(window_steps) * dt;
                 measured_rtf_.store(sim_elapsed / wall_elapsed, std::memory_order_relaxed);
                 window_wall_start = to_seconds(wall_now);
-                window_step_start = steps;
+                window_steps      = 0;
             }
         }
     }

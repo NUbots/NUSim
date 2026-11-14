@@ -4,6 +4,8 @@
 #include <cmath>
 #include <cstdio>
 #include <numbers>
+#include <string>
+#include <vector>
 
 #include "BatteryState.h"
 #include "BatteryStatePubSubTypes.h"
@@ -19,6 +21,10 @@
 #include "OdometryPubSubTypes.h"
 #include "Pose.h"
 #include "PosePubSubTypes.h"
+#include "JointState.h"
+#include "Imu.h"
+#include "ImuPubSubTypes.h"
+#include "JointStatePubSubTypes.h"
 #include "shared/k1/BoosterApi.hpp"
 #include "shared/k1/JointIndex.hpp"
 
@@ -77,6 +83,8 @@ namespace k1sim::module::sdkbridge {
         using booster_interface::msg::dds_::Odometer_PubSubType;
         using geometry_msgs::msg::dds_::Pose_PubSubType;
         using nav_msgs::msg::dds_::Odometry_PubSubType;
+        using sensor_msgs::msg::dds_::Imu_PubSubType;
+        using sensor_msgs::msg::dds_::JointState_PubSubType;
 
         low_state_writer_ =
             dds.create_writer<LowState_PubSubType>(k1sim::booster::TOPIC_LOW_STATE, DdsParticipant::state_writer_qos());
@@ -86,6 +94,10 @@ namespace k1sim::module::sdkbridge {
                                                                       DdsParticipant::state_writer_qos());
         head_pose_writer_ =
             dds.create_writer<Pose_PubSubType>(k1sim::booster::TOPIC_HEAD_POSE, DdsParticipant::state_writer_qos());
+        joint_states_writer_ = dds.create_writer<JointState_PubSubType>(k1sim::booster::TOPIC_JOINT_STATES,
+                                                                        DdsParticipant::state_writer_qos());
+        imu_writer_ = dds.create_writer<Imu_PubSubType>(k1sim::booster::TOPIC_IMU_DATA,
+                                                        DdsParticipant::state_writer_qos());
         fall_down_writer_ = dds.create_writer<FallDownState_PubSubType>(k1sim::booster::TOPIC_FALL_DOWN,
                                                                         DdsParticipant::state_writer_qos());
         battery_writer_   = dds.create_writer<BatteryState_PubSubType>(k1sim::booster::TOPIC_BATTERY_STATE,
@@ -198,6 +210,48 @@ namespace k1sim::module::sdkbridge {
             pose.orientation().z(update.head.quat[3]);
             head_pose_writer_->write(&pose);
         }
+
+        // --- rt/joint_states --- The same joints as rt/low_state's motor_state_serial, as a ROS
+        // sensor_msgs JointState (position/velocity/effort = q/dq/tau_est).
+        sensor_msgs::msg::dds_::JointState_ joint_state;
+        joint_state.header().stamp().sec(static_cast<int32_t>(sec.count()));
+        joint_state.header().stamp().nanosec(
+            static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(stamp - sec).count()));
+        std::vector<std::string> names(k1sim::JOINT_NAMES.begin(), k1sim::JOINT_NAMES.end());
+        std::vector<double> position, velocity, effort;
+        position.reserve(k1sim::JOINT_COUNT);
+        velocity.reserve(k1sim::JOINT_COUNT);
+        effort.reserve(k1sim::JOINT_COUNT);
+        for (std::size_t i = 0; i < k1sim::JOINT_COUNT; ++i) {
+            position.push_back(update.joints[i].q);
+            velocity.push_back(update.joints[i].dq);
+            effort.push_back(update.joints[i].tau);
+        }
+        joint_state.name(std::move(names));
+        joint_state.position(std::move(position));
+        joint_state.velocity(std::move(velocity));
+        joint_state.effort(std::move(effort));
+        joint_states_writer_->write(&joint_state);
+
+        // --- rt/imu/data --- The same IMU as rt/low_state's imu_state, as a ROS sensor_msgs Imu:
+        // orientation world->imu, gyro in rad/s and acceleration (with gravity) in m/s^2, body frame.
+        // Covariances are left zero (unknown).
+        sensor_msgs::msg::dds_::Imu_ imu;
+        imu.header().stamp().sec(static_cast<int32_t>(sec.count()));
+        imu.header().stamp().nanosec(
+            static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(stamp - sec).count()));
+        imu.header().frame_id("imu");
+        imu.orientation().w(update.imu.quat[0]);
+        imu.orientation().x(update.imu.quat[1]);
+        imu.orientation().y(update.imu.quat[2]);
+        imu.orientation().z(update.imu.quat[3]);
+        imu.angular_velocity().x(update.imu.gyro[0]);
+        imu.angular_velocity().y(update.imu.gyro[1]);
+        imu.angular_velocity().z(update.imu.gyro[2]);
+        imu.linear_acceleration().x(update.imu.acc[0]);
+        imu.linear_acceleration().y(update.imu.acc[1]);
+        imu.linear_acceleration().z(update.imu.acc[2]);
+        imu_writer_->write(&imu);
 
         // --- rt/fall_down --- publish on change, or every >=1s as a keepalive.
         const bool changed       = !have_last_fall_state_ || last_fall_state_ != update.fall_state;

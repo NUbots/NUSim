@@ -24,6 +24,50 @@ sim/soccer  (native macOS / Linux docker container, NUClear)
 - **GameController** is heard directly by NUbots over the network; the sim additionally runs a supervisor
   that places the ball/robots per game phase.
 
+## Refereed matches (`layton/sim-match`)
+
+This branch adds `./b match`, which plays a 1v1, 2v2 or 3v3 game with one command: the GameController and an automatic
+referee run inside the sim, and every robot gets its own NUbots process with the right team and player number. It
+works toward [NUSim#10](https://github.com/NUbots/NUSim/issues/10). Linux only.
+
+It's built on rUNSWift's multi-robot work, which gives each robot its own control, sensors and DDS domain:
+
+```
+NUbots/NUSim  main
+  └─ UNSWComputing/NUSim  feature/multi-robot-ground-truth   (rUNSWift, not yet merged into NUbots)
+       └─ papazed/NUSim  layton/sim-match                    (this branch)
+```
+
+A pull request from this branch into `NUbots/NUSim` would also carry rUNSWift's commits unless theirs merges first.
+
+### Repositories needed
+
+| Repository | Used for |
+| --- | --- |
+| This one | The sim, GameController, referee and launcher |
+| [NUbots_K1](https://github.com/NUbots/NUbots_K1) | The robot code, unchanged. `./b match` runs its docker image, so it can be anywhere |
+| [GameController](https://github.com/RoboCup-HumanoidSoccerLeague/GameController) | Its C API is built into the sim once. Put it next to this checkout, at the commit pinned in [`install_game_controller_api.sh`](mujoco/tools/install_game_controller_api.sh) |
+
+### Running a match
+
+```bash
+# Once: build NUbots_K1 (in NUbots_K1)
+./b target generic && ./b build
+
+# Once: build the sim with the GameController API (in this repo, needs cargo)
+mujoco/tools/install_game_controller_api.sh   # or pass the path to a GameController checkout
+./b configure && ./b build
+
+# Every time
+./b match --game 3                            # 1 to 3 a side; starts once every robot connects
+./b match --game 1 --away-role <role>         # a different NUbots role for one team
+./b match --game 2 --headless                 # no window
+```
+
+Robots run `nusim/behaviour` unless told otherwise, and use their own vision and localisation, not ground truth. Their
+output is in `mujoco/build-docker/match/robot<id>/log`. Don't run the GameController app at the same time, as both use
+port 3939. How it works, settings and limitations are in [MatchReferee](mujoco/module/MatchReferee/README.md).
+
 ## Quick start
 
 On **Linux**, requirements are **Docker** (everything else is baked into the image). Full setup, config reference, and
@@ -92,7 +136,8 @@ binary (`argparse.REMAINDER`), so sim flags are never parsed by `./b`.
 | --- | --- |
 | `./b configure [-i] [--clean] [--set-role R] [--unset-role R]` | CMake-configure with the selected backend; `-i` opens `ccmake`, `--clean` wipes the build dir. |
 | `./b build [targets...]` | Ninja build with the selected backend (default: everything; e.g. `./b build sim-soccer`). |
-| `./b run <role> [args]` | Run `bin/<role>` natively or in the container. Only role today: `sim/soccer`. |
+| `./b run <role> [args]` | Run `bin/<role>` natively or in the container. Roles: `sim/soccer`, and `sim/match` once [built](mujoco/module/MatchReferee/README.md). |
+| `./b match --game <n> [args]` | Run a refereed match of 1 to 3 a side: the sim plus a hidden NUbots process per robot. See [MatchReferee](mujoco/module/MatchReferee/README.md). |
 | `./b roles` | List sim roles and their enabled/disabled state. |
 | `./b image` | (Re)build the docker toolchain image. |
 | `./b test` | Build and run the C++ unit tests with the selected backend. |
@@ -105,12 +150,13 @@ Parsed in [`mujoco/shared/CliOptions.hpp`](mujoco/shared/CliOptions.hpp); `--hel
 | --- | --- | --- |
 | `--headless` | off | Run without the GLFW viewer window (CI / headless servers). Physics, DDS and the camera bridge all still run. |
 | `--field <name>` | `simulation.yaml`'s `field` (`middle`) | Field to play on, one of `simulation.yaml`'s `fields`: `middle` — the RoboCup 2026 Humanoid Soccer League M-Field (14 × 9 m), the field of the Middle Division the K1 plays in; `kidsize` — RoboCup KidSize under the pre-2026 rules (9 × 6 m); `no-field` — a bare flat floor with no field or ball. NUbots' `FieldDescription.yaml` `field_type` must match for localisation. |
-| `--game <n>` | none | A match of `n` robots a side, 1–11 (so 2–22 K1s), on `simulation.yaml`'s `game.field` (`middle`). Sets the field and robot count itself, so it can't be combined with `--field` or `--robots`. Team 1 is in the -x half, team 2 is its mirror image; by default each team lines up just off the touchlines facing into the field, two at a time on alternate sides, starting level with its penalty mark and filling towards the halfway line. The main robot is team 1's first. Only the main robot is controlled, the rest are PD-held at the `ready` pose like `--robots` extras. `--keyframe` still sets the main robot's pose, moved to its game spot. |
+| `--game <n>` | none | A match of `n` robots a side, 1–11 (so 2–22 K1s), on `simulation.yaml`'s `game.field` (`middle`). Sets the field and robot count itself, so it can't be combined with `--field` or `--robots`. Team 1 is in the -x half, team 2 is its mirror image; by default each team lines up just off the touchlines facing into the field, two at a time on alternate sides, starting level with its penalty mark and filling towards the halfway line. The main robot is team 1's first. Every robot has independent control, sensors and a DDS domain. `--keyframe` still sets the main robot's pose, moved to its game spot. |
 | `--on-field-positions` | off | With `--game`, start in kickoff positions facing the opponent's goal instead of on the touchlines: the attacker (the main robot), then the goalkeeper (2v2+), left wing (3v3+), right wing (4v4+), and the 5th to 11th robots spread evenly through the rest of the team's half (outside the centre circle). Positions are in `simulation.yaml`'s `game`. |
+| `--match <file>` | none | With `--game`, load team/player identities and per-robot DDS domains from a validated roster, relative to the config directory unless absolute. See [the multi-robot contract](docs/MULTI_ROBOT_DATA_CONTRACT.md). |
 | `--config-dir <dir>` | `mujoco/config` | Config directory to read the YAML from. |
 | `--keyframe <name>` | `ready` | Startup keyframe for the **main** robot (e.g. `lying_front` to start fallen and exercise the get-up chain). |
 | `--rtf <factor>` | `simulation.yaml`'s `real_time_factor` | Real-time factor; `0` = free-run (uncapped, for tests/sweeps). |
-| `--robots <n>` | `1` | **Total** K1s on the field, 1–20. `n−1` extra copies are attached via MuJoCo's `mjSpec` attach API with `subNN_` name prefixes, so the main robot's unprefixed joint/sensor names — and every DDS and shared-memory contract — are untouched. Extras spawn standing on a 5×4 grid clear of the `y = 0` main-robot/ball lane and are PD-held at the `ready` pose: uncontrolled obstacles for dribbling and navigation practice, not extra DDS endpoints. Sim resets re-place them; `--keyframe` does not apply to them. |
+| `--robots <n>` | `1` | **Total** K1s on the field, 1–20. `n−1` extra copies are attached via MuJoCo's `mjSpec` attach API with `subNN_` name prefixes, so the main robot's unprefixed joint/sensor names — and every DDS and shared-memory contract — are untouched. Extras spawn standing on a 5×4 grid clear of the `y = 0` main-robot/ball lane. Each has its own controller and DDS endpoint, holding `ready` until commanded. Sim resets re-place them; `--keyframe` does not apply to them. |
 | `--help`, `-h` | — | Print the flag list and exit. |
 
 ```bash
@@ -141,7 +187,7 @@ perturbation drags), plus:
 
 | Key | Action |
 | --- | --- |
-| `Backspace` | Reset the sim to its startup state (and re-place `--robots` extras). |
+| `Backspace` | Reset the world and all controllers to startup state, clearing previous commands. |
 | `F` | Shove the robot over — a deterministic topple for testing fall detection / `GetUp`, harder than a mouse-drag perturb, which the push-randomised policy usually rides out. |
 | `Esc` | Close the window. |
 
@@ -179,6 +225,9 @@ no build flag, no shim and no code change — the same code path they use agains
   camera is rendered — `K1Camera` warn-retries harmlessly on the right one; stereo is future work.
 
 ## GameController
+
+`./b match` runs the game inside the sim, with no GameController app: see
+[MatchReferee](mujoco/module/MatchReferee/README.md). The rest of this section is about `sim/soccer`.
 
 This is the **RoboCup GameController** (the UDP match-control broadcast), not a USB gamepad — there is no
 joypad/SDL input path in NUSim, and manual driving is done from `NUbots_K1`'s `keyboardwalk` role.
@@ -224,7 +273,13 @@ MuJoCo remains the default for this interactive simulator.
 | `mujoco/docker/` | Toolchain image + `k1sim.sh` (the container workflow `./b` wraps). |
 | `docs/K1_MUJOCO_SETUP.md` | Setup, config reference, end-to-end with `NUbots_K1`, and troubleshooting. |
 | `docs/OBS_ACTION_CONTRACT.md` | ONNX policy interface contract (obs/action layout the sim expects). |
+| [docs/MULTI_ROBOT_DATA_CONTRACT.md](docs/MULTI_ROBOT_DATA_CONTRACT.md) | Multi-robot roster, independent control and sensors, and planned ground-truth snapshots. |
 | `mujoco/module/SdkBridge/PROTOCOL.md` | Booster SDK DDS wire surface: topics, message layouts, RPC `api_id`s. |
 
 Forked from [NUWebots](https://github.com/NUbots/NUWebots); the Webots/NUgus simulation has been removed in
 favour of the MuJoCo path (see git history if you need it).
+
+### Native motion-policy players
+
+See [Native motion-policy players](docs/NATIVE_MOTION_PLAYER.md) for the companion CPU
+player build and behavioural checks using independent robot domains and simulated localisation.

@@ -36,7 +36,11 @@ namespace k1sim::module {
 
     }  // namespace
 
-    LocomotionController::LocomotionController(const YAML::Node& locomotion_cfg, const YAML::Node& gains_cfg) {
+    LocomotionController::LocomotionController(const YAML::Node& locomotion_cfg,
+                                               const YAML::Node& gains_cfg,
+                                               std::string prefix)
+        : prefix_(std::move(prefix)) {
+        low_cmd_timeout_    = locomotion_cfg["low_cmd_timeout"].as<double>(0.);
         prepare_blend_time_ = locomotion_cfg["prepare_blend_time"].as<double>(1.0);
 
         const auto fall_node = locomotion_cfg["fall"];
@@ -55,7 +59,8 @@ namespace k1sim::module {
         // ChangeMode arrives.
         const std::string initial_mode = locomotion_cfg["initial_mode"].as<std::string>("prepare");
         if (initial_mode == "prepare") {
-            request_mode_change(booster::PREPARE);
+            initial_mode_ = booster::PREPARE;
+            request_mode_change(initial_mode_);
         }
         else if (initial_mode != "damping") {
             throw std::runtime_error("config/locomotion.yaml: unknown initial_mode '" + initial_mode
@@ -63,11 +68,29 @@ namespace k1sim::module {
         }
     }
 
+    void LocomotionController::reset() {
+        // The caller holds the physics lock, so only mailbox writers can run concurrently.
+        std::lock_guard<std::mutex> lock(cmd_mutex_);
+        head_pitch_ = head_yaw_ = 0.0;
+        low_cmd_type_           = 1;
+        low_cmd_motors_.clear();
+        requested_mode_ = initial_mode_;
+        ++mode_seq_;
+        stale_hold_             = false;
+        state_                  = State::Damping;
+        custom_parallel_warned_ = false;
+        custom_low_cmd_seen_    = false;
+        custom_entry_step_      = false;
+        prepare_start_time_     = 0.0;
+        mode_.store(initial_mode_, std::memory_order_relaxed);
+        fall_state_.store(booster::IS_READY, std::memory_order_relaxed);
+    }
+
     void LocomotionController::ensure_initialized(const mjModel* m) {
         if (initialized_) {
             return;
         }
-        map_         = std::make_unique<ModelMap>(ModelMap::build(m));
+        map_         = std::make_unique<ModelMap>(ModelMap::build(m, prefix_));
         initialized_ = true;
     }
 
@@ -87,6 +110,8 @@ namespace k1sim::module {
         snap.mode_seq       = mode_seq_;
         snap.requested_mode = requested_mode_;
         snap.low_cmd_type   = low_cmd_type_;
+        snap.low_seq        = low_seq_;
+        snap.low_received   = low_received_;
         snap.low_cmd_motors = low_cmd_motors_;
         return snap;
     }
@@ -105,7 +130,9 @@ namespace k1sim::module {
 
     void LocomotionController::set_low_cmd(int cmd_type, std::vector<message::MotorCmdData> motors) {
         std::lock_guard<std::mutex> lock(cmd_mutex_);
-        low_cmd_type_   = cmd_type;
+        low_cmd_type_ = cmd_type;
+        ++low_seq_;
+        low_received_   = std::chrono::steady_clock::now();
         low_cmd_motors_ = std::move(motors);
     }
 
@@ -222,6 +249,19 @@ namespace k1sim::module {
             return;
         }
 
+        if (low_cmd_timeout_ > 0.
+            && std::chrono::duration<double>(std::chrono::steady_clock::now() - snap.low_received).count()
+                   > low_cmd_timeout_) {
+            // A disconnected controller holds the current pose rather than pursuing stale targets.
+            if (!stale_hold_) {
+                stale_pose_ = current_q(d);
+                stale_hold_ = true;
+            }
+            pd_.apply(m, d, *map_, stale_pose_);
+            return;
+        }
+
+        stale_hold_         = false;
         const auto& motors  = snap.low_cmd_motors;
         const std::size_t n = std::min(motors.size(), JOINT_COUNT);
         for (std::size_t i = 0; i < n; ++i) {
@@ -235,6 +275,14 @@ namespace k1sim::module {
             }
             d->ctrl[act] = tau;
         }
+        if (n && snap.low_seq != applied_low_seq_) {
+            applied_low_seq_ = snap.low_seq;
+            latency_ns_.fetch_add(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()
+                                                                                       - snap.low_received)
+                                      .count());
+            latency_count_.fetch_add(1);
+        }
+
         // Joints beyond `n` (an undersized LowCmd) are left at their previous
         // ctrl value -- the same "hold" behaviour as a PARALLEL command.
     }

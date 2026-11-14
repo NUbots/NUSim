@@ -4,8 +4,10 @@
 #include <fastdds/dds/subscriber/DataReader.hpp>
 #include <fastdds/dds/subscriber/DataReaderListener.hpp>
 #include <nuclear>
+#include <string>
 
 #include "module/SdkBridge/src/DdsParticipant.hpp"
+#include "shared/sim/RobotIdentity.hpp"
 
 // Reads rt/nusim/ball_command (NUSim test control, see shared/k1/NUSimApi.hpp and PROTOCOL.md §6)
 // and emits it as message::BallCommand for module::Supervisor to apply. Used by NUbots-side test
@@ -15,7 +17,7 @@ namespace k1sim::module::sdkbridge {
 
     class BallCommandReader : public eprosima::fastdds::dds::DataReaderListener {
     public:
-        BallCommandReader(DdsParticipant& dds, NUClear::Reactor& reactor);
+        BallCommandReader(DdsParticipant& dds, NUClear::Reactor& reactor, const k1sim::RobotIdentity& robot);
         ~BallCommandReader() override;
 
         BallCommandReader(const BallCommandReader&)            = delete;
@@ -26,6 +28,7 @@ namespace k1sim::module::sdkbridge {
     private:
         DdsParticipant& dds_;
         NUClear::Reactor& reactor_;
+        std::string robot_body_;  // Trunk of the robot this domain belongs to
         eprosima::fastdds::dds::DataReader* reader_ = nullptr;
     };
 

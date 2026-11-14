@@ -27,7 +27,9 @@ namespace k1sim::module::sdkbridge {
         // udp_only strips the SHM transport (config/dds.yaml: udp_only, or env
         // K1_DDS_UDP_ONLY=1), leaving UDPv4 only — a workaround for docker boundaries
         // where /dev/shm isn't shared (e.g. no --ipc host).
-        DdsParticipant(int domain_id, bool udp_only);
+        // local_only selects non-blocking UDP on loopback for native players on
+        // the same host. It leaves the normal network transport unchanged.
+        DdsParticipant(int domain_id, bool udp_only, bool local_only = false);
         ~DdsParticipant();
 
         DdsParticipant(const DdsParticipant&)            = delete;
@@ -62,7 +64,10 @@ namespace k1sim::module::sdkbridge {
         // For a reader whose listener dies before this participant: deleting it here waits out any
         // in-flight callback, where leaving it for the destructor would call into a dead listener.
         void delete_reader(eprosima::fastdds::dds::DataReader* reader) {
-            subscriber_->delete_datareader(reader);
+            if (reader) {
+                reader->set_listener(nullptr);
+                subscriber_->delete_datareader(reader);
+            }
         }
 
         eprosima::fastdds::dds::DomainParticipant* participant() const {

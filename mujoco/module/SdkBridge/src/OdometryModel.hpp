@@ -2,7 +2,10 @@
 #define K1SIM_MODULE_SDKBRIDGE_ODOMETRYMODEL_HPP
 
 #include <array>
+#include <cmath>
 #include <cstdint>
+#include <numbers>
+#include <optional>
 #include <random>
 #include <yaml-cpp/yaml.h>
 
@@ -37,6 +40,10 @@ namespace k1sim::module::sdkbridge {
             // Time over which the bias decorrelates [s]
             std::array<double, 3> bias_time_constant{10.0, 10.0, 10.0};
             uint64_t seed = 0;  // 0 seeds from std::random_device
+            // Report the pose relative to the first sample, as a real robot's odometry starts at zero
+            // when it boots, instead of in the world frame. NUbots subtracts the first sample without
+            // rotating by its heading, which reverses a robot that starts facing -x.
+            bool from_start = false;
         };
 
         // Planar pose in the odometry world frame, and the body-frame velocity that moved it
@@ -45,6 +52,17 @@ namespace k1sim::module::sdkbridge {
             std::array<double, 3> velocity{};           // body frame (vx, vy, wz)
             std::array<double, 3> velocity_variance{};  // of this sample's velocity error
         };
+
+        // `estimate` in the frame of `start`, where a robot's odometry begins at zero as a real robot's
+        // does when it boots.
+        static Estimate from_start(Estimate estimate, const Estimate& start) {
+            const double dx = estimate.x - start.x, dy = estimate.y - start.y;
+            const double c = std::cos(start.yaw), s = std::sin(start.yaw);
+            estimate.x   = c * dx + s * dy;
+            estimate.y   = -s * dx + c * dy;
+            estimate.yaw = std::remainder(estimate.yaw - start.yaw, 2.0 * std::numbers::pi_v<double>);
+            return estimate;
+        }
 
         static Config load_config(const YAML::Node& node);
 
@@ -63,7 +81,11 @@ namespace k1sim::module::sdkbridge {
         bool initialised_ = false;
         double t_         = 0.0;
         std::array<double, 3> bias_{};
+        const Estimate& published();
+
         Estimate estimate_;
+        std::optional<Estimate> start_;  // Config::from_start's first sample
+        Estimate published_;
     };
 
 }  // namespace k1sim::module::sdkbridge
