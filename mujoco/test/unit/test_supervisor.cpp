@@ -495,9 +495,10 @@ namespace {
     }
 
 
-    // Re-originating the ball must not move it in any keyframe: every inherited keyframe zero-pads
-    // the ball, which used to mean "body at the origin, sphere at its offset spot".
-    void test_ball_keyframes(const mjModel* m, mjData* d) {
+    // The scene ball's geoms must sit on its body origin (an offset geom is numerically unstable
+    // under a free joint), with the body at the rest point. Keyframes zero-pad the ball, so
+    // SimCore::place_ball puts it back at this rest pose (qpos0) after every keyframe reset.
+    void test_ball_rest_pose(const mjModel* m, mjData* d) {
         const int ball_geom = mj_name2id(m, mjOBJ_GEOM, "ball");
         const int ball_body = mj_name2id(m, mjOBJ_BODY, "ball");
         if (ball_geom < 0 || ball_body < 0) {
@@ -506,19 +507,15 @@ namespace {
         }
         for (double v : {m->geom_pos[3 * ball_geom], m->geom_pos[3 * ball_geom + 1], m->geom_pos[3 * ball_geom + 2]}) {
             if (!approx(v, 0.0)) {
-                fail("ball geom still offset from its body origin after re-originating");
-            }
-        }
-        for (int key = 0; key < m->nkey; ++key) {
-            mj_resetDataKeyframe(m, d, key);
-            mj_kinematics(m, d);
-            const double* p = d->geom_xpos + 3 * ball_geom;
-            if (!approx(p[0], 1.38, 1e-9) || !approx(p[1], 0.0, 1e-9) || !approx(p[2], 0.0785, 1e-9)) {
-                fail(std::string("keyframe '") + mj_id2name(m, mjOBJ_KEY, key)
-                     + "' no longer rests the ball at (1.38, 0, 0.0785)");
+                fail("ball geom is offset from its body origin");
             }
         }
         mj_resetData(m, d);
+        mj_kinematics(m, d);
+        const double* p = d->geom_xpos + 3 * ball_geom;
+        if (!approx(p[0], 1.38, 1e-9) || !approx(p[1], 0.0, 1e-9) || !approx(p[2], 0.0785, 1e-9)) {
+            fail("the scene no longer rests the ball at (1.38, 0, 0.0785)");
+        }
     }
 
 }  // namespace
@@ -543,9 +540,6 @@ int main() {
         return 1;
     }
     k1sim::freebody::shift_reoriginated_keyframes(m, mj_name2id(m, mjOBJ_BODY, "ball"), ball_offset);
-    if (ball_offset[0] == 0.0 && ball_offset[1] == 0.0 && ball_offset[2] == 0.0) {
-        fail("expected the scene ball to be re-originated (its geom sits off the body origin)");
-    }
     mjData* d = mj_makeData(m);
     if (d == nullptr) {
         std::fprintf(stderr, "mj_makeData failed\n");
@@ -557,7 +551,7 @@ int main() {
     test_supervisor_logic(m, d);
     test_kickoff_transitions(m, d);
     test_ball_command(m, d);
-    test_ball_keyframes(m, d);
+    test_ball_rest_pose(m, d);
 
     mj_deleteData(d);
     mj_deleteModel(m);
