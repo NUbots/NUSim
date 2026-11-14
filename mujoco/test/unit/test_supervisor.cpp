@@ -12,8 +12,7 @@
 //      player fields; malformed headers/versions/lengths are rejected.
 //   B. Placement primitives on the real scene: place_free_body_by_geom_center
 //      lands the ball's *geom* (not its body origin -- see
-//      SupervisorPlacement.hpp for why those differ for this scene's "ball"
-//      body) at the field centre at the correct resting height, verified
+//      SupervisorPlacement.hpp) at the field centre at the correct resting height, verified
 //      both algebraically and via mj_kinematics; place_free_body lands the
 //      robot's root exactly on the requested pose. Both zero residual qvel.
 //   C. SupervisorLogic end-to-end, loading the real config/supervisor.yaml:

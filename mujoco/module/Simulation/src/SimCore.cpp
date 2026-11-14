@@ -453,8 +453,8 @@ namespace k1sim {
             root[4] = cw * q[1] - sw * q[2];
             root[5] = cw * q[2] + sw * q[1];
             root[6] = cw * q[3] + sw * q[0];
-            place_ball_on_centre_mark();
         }
+        place_ball();
 
         for (std::size_t j = 0; j < extra_maps_.size(); ++j) {
             const ModelMap& em             = extra_maps_[j];
@@ -476,15 +476,28 @@ namespace k1sim {
         }
     }
 
-    void SimCore::place_ball_on_centre_mark() {
+    void SimCore::place_ball() {
         // Find the ball, if the scene has one
         const int joint = mj_name2id(m_, mjOBJ_JOINT, "ball_free");
-        const int geom  = mj_name2id(m_, mjOBJ_GEOM, "ball");
-        if (joint < 0 || geom < 0) {
+        if (joint < 0) {
             return;
         }
-        // Move the ball back by its x offset so it sits on the centre mark
-        d_->qpos[m_->jnt_qposadr[joint]] = -m_->geom_pos[3 * geom];
+        // The scene declares the ball body at its rest point, so qpos0 holds that pose. The ball
+        // geom sits on the body origin (an offset geom makes the free joint spin the ball about a
+        // distant point, which is numerically unstable), so qpos is the ball centre.
+        const int qadr = m_->jnt_qposadr[joint];
+        const int vadr = m_->jnt_dofadr[joint];
+        for (int i = 0; i < 7; ++i) {
+            d_->qpos[qadr + i] = m_->qpos0[qadr + i];
+        }
+        // A game kicks off from the centre mark
+        if (!config_.spawns.empty()) {
+            d_->qpos[qadr + 0] = 0.0;
+            d_->qpos[qadr + 1] = 0.0;
+        }
+        for (int i = 0; i < 6; ++i) {
+            d_->qvel[vadr + i] = 0.0;
+        }
     }
 
     void SimCore::reset() {

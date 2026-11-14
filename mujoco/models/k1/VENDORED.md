@@ -147,26 +147,23 @@ thin white `contype="0" conaffinity="0"` box geoms at the standard KidSize
 positions above, per the task brief's fallback instruction. The ball is a
 plain `PBRAppearance`-free solid-color sphere for the same reason.
 
-**Ball body/geom offset (important for anyone editing this file):** the
-`ball` body is declared at `pos="0 0 0"`, with its sphere geom offset to
-`pos="1.38 0 0.0785"`, rather than putting that offset on the body (which
-is what the task brief's literal snippet shows). This is deliberate, not
-an oversight -- see the long comment at the top of `k1_scene_robocup.xml`
-for the full explanation: `K1_22dof.xml`'s own keyframes have qpos sized
-for the bare 29-DOF robot; once the scene adds the ball's freejoint
-(model nq becomes 36), MuJoCo automatically zero-pads the 7 missing ball
-qpos entries in the *inherited* keyframes to `(0,0,0,1,0,0,0)` (verified
-empirically -- it is a zero pad, not a copy of `qpos0`/the body's `pos`
-attribute), and MuJoCo rejects a second `<key>` element reusing the name
-`ready` (also verified empirically -- it's a hard compile error, "repeated
-name ... in key"), so the keyframes can't simply be redefined at the scene
-level either. Keeping the ball body's own frame at the origin means the
-zero-padded default *is* the correct rest pose, so `ready`/`lying_front`/
-`lying_back` all place the ball correctly with no scene-level keyframe
-override needed. A separate `kickoff` keyframe (new name, no conflict) is
-defined in the scene for the actual RoboCup match-start layout (robot at
-the Webots world's red-K1 spawn, ball still resolved via the same
-zero-pad mechanism).
+**Ball body/geom layout (important for anyone editing this file):** the
+`ball` body sits at its rest point, `pos="1.38 0 0.0785"`, with its geoms at
+the body origin. Do not move the geoms off the body origin: a free joint
+rotates about its body's origin, so an offset geom makes the ball spin about a
+point metres away, and with the 1 ms timestep any roll faster than ~1.5 m/s
+diverges (the ball accelerates and flies off the field). An earlier version
+did exactly that, to work around keyframe padding: `K1_22dof.xml`'s own
+keyframes have qpos sized for the bare 29-DOF robot, and once the scene adds
+the ball's freejoint (nq becomes 36) MuJoCo zero-pads the 7 missing ball qpos
+entries in the *inherited* keyframes to `(0,0,0,1,0,0,0)` (a zero pad, not a
+copy of `qpos0`), which would bury the ball at the world origin. MuJoCo also
+rejects a second `<key>` reusing the name `ready`, so the keyframes can't be
+redefined at scene level. Instead `SimCore::place_ball` puts the ball back at
+its rest point (or the centre mark in a game) after every keyframe reset; any
+other code that resets to one of these keyframes must place the ball itself. A
+separate `kickoff` keyframe (new name, no conflict) is defined in the scene for
+the RoboCup match-start layout (robot at the Webots world's red-K1 spawn).
 
 **Ball bounce tuning.** MuJoCo's contact model produces genuine
 under-damped/bouncy contact resolution when a contact's `solref`
