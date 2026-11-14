@@ -1,6 +1,7 @@
 #include "module/Viewer/src/Viewer.hpp"
 
 #include <GLFW/glfw3.h>
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -20,6 +21,46 @@
 namespace k1sim::module {
 
     namespace {
+        // mjv_defaultFreeCamera frames the whole model extent, which leaves the
+        // pitch small in the window. If the scene has a finite "floor" plane,
+        // instead centre on it and pull back just far enough that the whole
+        // plane fits in the window, whatever the field size.
+        void frame_floor(GLFWwindow* window, const mjModel* m, mjvCamera& cam) {
+            const int id = mj_name2id(m, mjOBJ_GEOM, "floor");
+            if (id < 0 || m->geom_type[id] != mjGEOM_PLANE) {
+                return;
+            }
+            const double hx = m->geom_size[3 * id + 0];
+            const double hy = m->geom_size[3 * id + 1];
+            if (hx <= 0.0 || hy <= 0.0) {
+                return;  // infinite plane — keep the default framing
+            }
+
+            int w = 0;
+            int h = 0;
+            glfwGetFramebufferSize(window, &w, &h);
+            const double aspect = (w > 0 && h > 0) ? static_cast<double>(w) / h : 4.0 / 3.0;
+
+            const double fovy   = m->vis.global.fovy * mjPI / 180.0;
+            const double tan_vy = std::tan(fovy / 2.0);
+            const double tan_vx = tan_vy * aspect;
+
+            // Look along +y at the field (long axis across the screen), from above.
+            cam.type      = mjCAMERA_FREE;
+            cam.azimuth   = 90.0;
+            cam.elevation = -50.0;
+            for (int i = 0; i < 3; ++i) {
+                cam.lookat[i] = m->geom_pos[3 * id + i];
+            }
+
+            // Horizontal: the x half-extent must fit the horizontal half-FOV.
+            // Vertical: the y half-extent, foreshortened by the elevation, must fit
+            // the vertical half-FOV. Small margin covers perspective on the near edge.
+            const double sin_el = std::sin(std::abs(cam.elevation) * mjPI / 180.0);
+            const double d      = std::max(hx / tan_vx, hy * sin_el / tan_vy);
+            cam.distance        = 1.1 * d;
+        }
+
 
         // GLFW callbacks must be plain C function pointers, and this Reactor is only
         // ever installed once (PowerPlant::install<Viewer>() is called exactly once
@@ -323,6 +364,7 @@ namespace k1sim::module {
                 // from the compiled model extent) so the scene isn't clipped or
                 // too distant to see on first frame.
                 mjv_defaultFreeCamera(g_model, &cam);
+                frame_floor(window, g_model, cam);
                 scene_ready = true;
                 log<NUClear::LogLevel::INFO>("Viewer scene ready (",
                                              g_model->nbody,
