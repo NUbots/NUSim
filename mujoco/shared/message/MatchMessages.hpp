@@ -26,7 +26,8 @@ namespace k1sim::message {
 
     struct MatchCommand {
         // SET_PLAY calls a set play by hand and holds it until RELEASE sets the ball free.
-        enum class Action { PRIMARY, RESET, SET_PLAY, RELEASE } action = Action::PRIMARY;
+        // READY and SET step a kick-off by hand; RELEASE (ball free) then starts play.
+        enum class Action { PRIMARY, RESET, SET_PLAY, RELEASE, READY, SET } action = Action::PRIMARY;
         int side     = 0;  // SET_PLAY: 0 = home, 1 = away
         int set_play = 0;  // SET_PLAY: a GameController SetPlay value
     };

@@ -22,11 +22,21 @@ mujoco/tools/install_game_controller_api.sh [path to GameController]   # needs c
 ./b match --ground-truth                             # robots skip vision + localisation
 ```
 
-The window's Setup panel changes the mode, the robots a side, each team's NUbots role and perception; Apply and
-Restart closes the sim and `./b match` starts it again with the new setup. `--mode freeplay` runs `sim/soccer`, with no
-referee. `--ground-truth` gives each robot a `NUSimGroundTruth.yaml` that switches NUbots' `input::NUSimGroundTruth` on:
-it takes the robot's pose and the ball from `rt/nusim/gt/robot` and `rt/nusim/gt/ball` in place of vision and
-localisation, and the role must include that module.
+The window's Setup panel (press Change) picks the mode, the robots a side, each team's codebase and perception; Apply
+and Restart closes the sim and `./b match` starts it again with the new setup.
+
+- `--mode game` (default): `sim/match`, the automatic referee. The window's INITIAL / READY / SET / PLAYING buttons step
+  each kick-off by hand. Every robot runs NUbots' `nusim/robocup` role (or `nusim/behaviour` if that isn't built).
+- `--mode testing`: `sim/testing`, with module::Referee's built-in GameController operated by hand from the window (or
+  the browser viewer, which also has the stadium and Village Green venues). Nothing is refereed automatically. Each team
+  picks its own NUbots role.
+- `--mode freeplay`: `sim/soccer` alone, one robot on a field you choose, for a role you start from a terminal. It can
+  obey a GameController running elsewhere.
+
+`--ground-truth` gives each robot a `NUSimGroundTruth.yaml` that switches NUbots' `input::NUSimGroundTruth` on: it takes
+the robot's pose and the ball from `rt/nusim/gt/robot` and `rt/nusim/gt/ball` in place of vision and localisation, and
+the role must include that module. Codebases other than NUbots are listed in `tools/match.py`'s `CODEBASES`; each needs
+a way to start one player per robot before it can be chosen.
 
 `./b match` starts `sim/match` and a hidden NUbots container per robot, and stops them all when the sim exits. Robot
 output is in `mujoco/build-docker/match/robot<id>/log`, and it warns if a robot stops. Roles that need a terminal, such

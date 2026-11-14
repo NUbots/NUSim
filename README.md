@@ -24,6 +24,13 @@ sim/soccer  (native macOS / Linux docker container, NUClear)
 - **GameController** is heard directly by NUbots over the network; the sim additionally runs a supervisor
   that places the ball/robots per game phase.
 
+## The match window
+
+`./b match` opens the sim with control panels in the window and starts one NUbots process per robot. It has three
+modes: **Game** (an automatic referee; you press Start), **Testing Room** (you referee by hand, with set plays and
+penalties) and **Free Play** (just the sim, for roles you run yourself). See [docs/MATCH_WINDOW.md](docs/MATCH_WINDOW.md)
+for setup and how each mode works.
+
 ## Refereed matches (`layton/sim-match`)
 
 This branch adds `./b match`, which plays a 1v1, 2v2 or 3v3 game with one command: the GameController and an automatic

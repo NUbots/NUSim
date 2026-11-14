@@ -315,7 +315,12 @@ void ViewerUI::render_scoreboard(const UIState& state) {
         const float ax   = team == 0 ? 0.0f : 1.0f;
         const float bar  = team == 0 ? o.x + dp(8) : o.x + w - dp(12);
         dl->AddRectFilled({bar, o.y + dp(18)}, {bar + dp(4), o.y + h - dp(18)}, col(team_colour(team)), dp(2));
-        text_at(dl, font_title_, {edge, o.y + dp(37)}, ax, col(team_colour(team)), TEAM_TAG[team]);
+        const int codebase = team == 0 ? state.running.home_codebase : state.running.away_codebase;
+        const char* name   = codebase < static_cast<int>(state.codebases.size())
+                                 ? state.codebases[static_cast<std::size_t>(codebase)].name.c_str()
+                                 : "NUbots";
+        text_at(dl, font_title_, {edge, o.y + dp(28)}, ax, col(C_TEXT), name);
+        text_at(dl, font_small_, {edge, o.y + dp(56)}, ax, col(team_colour(team)), TEAM_TAG[team]);
 
         char text[8];
         std::snprintf(text, sizeof(text), "%d", score[team]);
@@ -368,42 +373,233 @@ void ViewerUI::render_simulation_controls(UIState& state) {
     stat_row("Robot mode", state.robot_mode);
 }
 
-// Right-hand panel: the match (when module::MatchReferee is running) and the simulation.
+namespace {
+    bool allowed(const UIState& state, const char* decision) {
+        return state.legal.empty() || std::find(state.legal.begin(), state.legal.end(), decision) != state.legal.end();
+    }
+    const char* const SIDE[2] = {"home", "away"};
+}  // namespace
+
+// Game mode: one Start button. Robots walk on from the touchlines (Ready); once they have stopped it
+// is Set and the ball goes to the centre mark; two seconds later it is Playing and the clock runs.
+void ViewerUI::render_game_controls(UIState& state) {
+    const std::string& phase = state.match.state;
+    if (phase == "INITIAL" || phase.empty()) {
+        if (button("Start Match", 0.0f, dp(42), Kind::Primary)) {
+            pending_.match_primary = true;
+        }
+        note(font_small_, C_MUTED, "Robots walk to their positions, then the referee calls Set and Playing by itself.");
+    }
+    else {
+        if (phase == "READY") {
+            note(font_small_, C_WARN, "READY: robots are moving to their positions. Set follows once they stop.");
+        }
+        else if (phase == "SET") {
+            note(font_small_, C_WARN, "SET: ball on the centre mark. Playing in two seconds.");
+        }
+        if (state.match.primary_button == "Pause" || state.match.primary_button == "Resume") {
+            const std::string label = state.match.primary_button + " Match";
+            if (button(label.c_str(), 0.0f, dp(36), state.match.primary_button == "Resume" ? Kind::Primary : Kind::Secondary)) {
+                pending_.match_primary = true;
+            }
+        }
+        if (button("New Game", 0.0f, dp(32))) {
+            pending_.match_new_game = true;
+        }
+    }
+    char robots[48];
+    std::snprintf(robots, sizeof(robots), "%d / %d", state.match.connected, state.match.players);
+    stat_row("Robots online", robots);
+    if (!state.match.messages.empty()) {
+        section(font_small_, "REFEREE");
+        note(font_small_, C_TEXT, state.match.messages.c_str());
+    }
+}
+
+// Testing Room: you are the referee. Every button is a decision for the built-in GameController,
+// enabled when the rules allow it; nothing is called automatically.
+void ViewerUI::render_testing_controls(UIState& state) {
+    const float gap  = dp(6);
+    const float half = std::floor((ImGui::GetContentRegionAvail().x - gap) * 0.5f);
+    const std::string& phase = state.match.state;
+    auto send = [this](const char* action, const char* side = "", const char* arg = "", int player = 0) {
+        pending_.referee.push_back({action, side, arg, player});
+    };
+
+    section(font_small_, "KICK-OFF");
+    // The GameController decides who may kick off (referee.yaml's kick_off at the start, then the
+    // team that conceded). Follow it, and say so, rather than offer a call it would refuse.
+    const bool may[2] = {allowed(state, "kickoff:home"), allowed(state, "kickoff:away")};
+    if (!state.legal.empty() && !may[state.kick_off_team] && may[1 - state.kick_off_team]) {
+        state.kick_off_team = 1 - state.kick_off_team;
+    }
+    for (int team = 0; team < 2; ++team) {
+        if (team > 0) {
+            ImGui::SameLine(0.0f, gap);
+        }
+        ImGui::PushID(team);
+        ImGui::BeginDisabled(!state.legal.empty() && !may[team] && may[1 - team]);
+        if (button(TEAM_TAG[team], half, dp(30), state.kick_off_team == team ? Kind::Selected : Kind::Secondary)) {
+            state.kick_off_team = team;
+        }
+        ImGui::EndDisabled();
+        ImGui::PopID();
+    }
+    // Always present, so the buttons below don't jump when it changes.
+    note(font_small_, C_MUTED,
+         state.legal.empty() || may[0] == may[1] ? "Who takes the next kick-off. The first one is kick_off in config/referee.yaml."
+         : may[0] ? "The rules give this kick-off to Home (kick_off in config/referee.yaml sets the first one)."
+                  : "The rules give this kick-off to Away (kick_off in config/referee.yaml sets the first one).");
+
+    section(font_small_, "GAME STATE");
+    ImGui::BeginDisabled();
+    button("INITIAL", half, dp(34), phase == "INITIAL" ? Kind::Selected : Kind::Secondary);
+    ImGui::EndDisabled();
+    ImGui::SameLine(0.0f, gap);
+    const std::string kick_off = std::string("kickoff:") + SIDE[state.kick_off_team];
+    ImGui::BeginDisabled(!allowed(state, kick_off.c_str()));
+    if (button("READY", half, dp(34), phase == "READY" ? Kind::Selected : Kind::Secondary)) {
+        send("kickoff", SIDE[state.kick_off_team]);
+    }
+    ImGui::EndDisabled();
+    ImGui::BeginDisabled(!allowed(state, "set"));
+    if (button("SET", half, dp(34), phase == "SET" ? Kind::Selected : Kind::Secondary)) {
+        send("set");
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine(0.0f, gap);
+    ImGui::BeginDisabled(!allowed(state, "play"));
+    if (button("PLAYING", half, dp(34), phase == "PLAYING" ? Kind::Selected : Kind::Secondary)) {
+        send("play");
+    }
+    ImGui::EndDisabled();
+    ImGui::BeginDisabled(!allowed(state, "stop"));
+    if (button("Stop Play", half, dp(30))) {
+        send("stop");
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine(0.0f, gap);
+    ImGui::BeginDisabled(!allowed(state, "resume"));
+    if (button("Resume Play", half, dp(30))) {
+        send("resume");
+    }
+    ImGui::EndDisabled();
+
+    section(font_small_, "GOAL");
+    for (int team = 0; team < 2; ++team) {
+        if (team > 0) {
+            ImGui::SameLine(0.0f, gap);
+        }
+        const std::string goal = std::string("goal:") + SIDE[team];
+        ImGui::PushID(team);
+        ImGui::BeginDisabled(!allowed(state, goal.c_str()));
+        if (button(team == 0 ? "Home scored" : "Away scored", half, dp(30))) {
+            send("goal", SIDE[team]);
+        }
+        ImGui::EndDisabled();
+        ImGui::PopID();
+    }
+    ImGui::BeginDisabled(!allowed(state, "finish_half"));
+    if (button("Finish Half", half, dp(30))) {
+        send("finish_half");
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine(0.0f, gap);
+    ImGui::BeginDisabled(!allowed(state, "undo"));
+    if (button("Undo", half, dp(30))) {
+        send("undo");
+    }
+    ImGui::EndDisabled();
+    ImGui::BeginDisabled(!allowed(state, "switch_half"));
+    if (button("Switch Half", half, dp(30))) {
+        send("switch_half");
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine(0.0f, gap);
+    ImGui::BeginDisabled(!allowed(state, "stuck"));
+    if (button("Game Stuck", half, dp(30))) {
+        send("stuck");
+    }
+    ImGui::EndDisabled();
+    for (int team = 0; team < 2; ++team) {
+        if (team > 0) {
+            ImGui::SameLine(0.0f, gap);
+        }
+        const std::string timeout = std::string("timeout:") + SIDE[team];
+        ImGui::PushID(team + 10);
+        ImGui::BeginDisabled(!allowed(state, timeout.c_str()));
+        if (button(team == 0 ? "Timeout Home" : "Timeout Away", half, dp(30))) {
+            send("timeout", SIDE[team]);
+        }
+        ImGui::EndDisabled();
+        ImGui::PopID();
+    }
+
+    section(font_small_, "PENALTIES");
+    if (button(state.penalise_armed ? "Click a robot on the field..." : "Penalise / Release a Robot", 0.0f, dp(34),
+               state.penalise_armed ? Kind::Selected : Kind::Secondary)) {
+        state.penalise_armed = !state.penalise_armed;
+    }
+    int out = 0;
+    for (const UIState::Robot& robot : state.robots) {
+        out += robot.penalised ? 1 : 0;
+    }
+    char text[96];
+    std::snprintf(text, sizeof(text),
+                  state.penalise_armed ? "It goes back to the touchline. Click a penalised robot to let it back on."
+                                       : "%d robot%s penalised.",
+                  out, out == 1 ? "" : "s");
+    note(font_small_, state.penalise_armed ? C_WARN : C_MUTED, text);
+}
+
+// Right-hand panel: the match and the simulation.
 void ViewerUI::render_side_panel(UIState& state) {
     const ImVec2 display = ImGui::GetIO().DisplaySize;
     begin_panel("##side", {display.x - dp(14), dp(14)}, {1.0f, 0.0f}, {dp(290), 0.0f});
 
-    if (state.match.has_game || !state.match.primary_button.empty()) {
+    const bool testing = state.launcher && state.running.mode == MODE_TESTING;
+    if (testing) {
+        heading(font_title_, "Referee");
+        render_testing_controls(state);
+        section(font_small_, "SIMULATION");
+    }
+    else if (!(state.launcher && state.running.mode == MODE_FREEPLAY)
+             && (state.match.has_game || !state.match.primary_button.empty())) {
         heading(font_title_, "Match");
-        if (!state.match.primary_button.empty()) {
-            const bool go = state.match.primary_button != "Pause";
-            const std::string label = state.match.primary_button + " Match";
-            if (button(label.c_str(), 0.0f, dp(40), go ? Kind::Primary : Kind::Secondary)) {
-                pending_.match_primary = true;
-            }
-        }
-        if (button("New Game", 0.0f, dp(34))) {
-            pending_.match_new_game = true;
-        }
-        char robots[48];
-        std::snprintf(robots, sizeof(robots), "%d / %d", state.match.connected, state.match.players);
-        stat_row("Robots online", robots);
-        if (!state.match.messages.empty()) {
-            section(font_small_, "REFEREE");
-            note(font_small_, C_TEXT, state.match.messages.c_str());
-        }
+        render_game_controls(state);
         section(font_small_, "SIMULATION");
     }
     else {
         heading(font_title_, "Simulation");
     }
+    if (state.launcher && state.running.mode == MODE_FREEPLAY) {
+        // Free Play is the bare simulator: pause, reset and the clock.
+        if (button(state.paused ? "Resume Simulation" : "Pause Simulation", 0.0f, dp(40),
+                   state.paused ? Kind::Primary : Kind::Secondary)) {
+            pending_.pause = !state.paused;
+        }
+        if (button("Reset Simulation", 0.0f, dp(34))) {
+            pending_.reset_sim = true;
+            pending_.pause     = false;
+        }
+        stat_row("Sim time", clock_text(state.sim_time, true).c_str());
+        ImGui::End();
+        return;
+    }
     render_simulation_controls(state);
+    if (testing) {
+        ImGui::End();
+        return;  // the referee's buttons need the room
+    }
 
+    if (state.launcher && state.running.mode == MODE_GAME) {
+        ImGui::End();
+        return;  // hands off during a refereed game
+    }
     section(font_small_, "MOVING THINGS");
     static constexpr const char* help[][2] = {
         {"Double-click", "Show move handles"},
-        {"Drag an arrow", "Slide along that axis"},
-        {"Drag the ring", "Turn on the spot"},
+        {"Drag arrow / ring", "Slide / turn on the spot"},
         {"Ctrl + drag", "Carry it across the field"},
         {"Ctrl + right-drag", "Shove it (applies force)"},
         {"Space", "Pause or resume"},
@@ -449,8 +645,10 @@ void ViewerUI::render_placement(UIState& state) {
         dl->AddCircleFilled(at, dp(4), col(ImVec4{1, 1, 1, 1}));
     };
     auto place = [&](double x, double y) {
-        pending_.place_ball = std::array<double, 2>{x, y};
-        state.placing       = false;
+        pending_.place_ball  = std::array<double, 2>{x, y};
+        state.placing        = false;
+        state.ball_spot      = {x, y};
+        state.set_play_stage = UIState::SP_PLACED;
     };
 
     const double L   = state.field_length * 0.5;
@@ -503,19 +701,47 @@ void ViewerUI::render_placement(UIState& state) {
     }
 }
 
-// Left-hand panel: what tools/match.py launched (mode, teams, perception), and, in the Testing
-// Room, the set plays.
+// Left-hand panel: what tools/match.py launched (mode, teams, perception, environment), and, in
+// the Testing Room, the set plays.
 void ViewerUI::render_setup_panel(UIState& state) {
     begin_panel("##setup", {dp(14), dp(14)}, {0.0f, 0.0f}, {dp(300), 0.0f});
-    heading(font_title_, "Setup");
     const float gap = dp(6);
+    Setup& want     = state.wanted;
+    static constexpr const char* mode_names[3] = {"Game", "Testing Room", "Free Play"};
+    {
+        // Title row with the Change / Close toggle; closed, the panel is one summary line.
+        const float right = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
+        const float y     = ImGui::GetCursorPosY();
+        ImGui::PushFont(font_title_);
+        ImGui::TextUnformatted(mode_names[state.running.mode]);
+        ImGui::PopFont();
+        ImGui::SameLine(right - dp(84));
+        ImGui::SetCursorPosY(y - dp(2));
+        ImGui::PushFont(font_small_);
+        if (button(setup_open_ ? "Close" : "Change", dp(84), dp(28))) {
+            setup_open_ = !setup_open_;
+            want        = state.running;  // abandon unapplied edits
+        }
+        ImGui::PopFont();
+        char summary[96];
+        if (state.running.mode == MODE_FREEPLAY) {
+            std::snprintf(summary, sizeof(summary), "%d robot%s. Run your own role from a terminal.",
+                          state.running.robots, state.running.robots == 1 ? "" : "s");
+        }
+        else {
+            std::snprintf(summary, sizeof(summary), "%d v %d  \xC2\xB7  %s", state.running.game, state.running.game,
+                          state.running.ground_truth ? "ground truth" : "vision");
+        }
+        note(font_small_, C_MUTED, summary);
+    }
+    if (setup_open_) {
 
     section(font_small_, "MODE");
-    static constexpr const char* modes[3] = {"Game", "Testing Room", "Free Play"};
+    const auto& modes = mode_names;
     static constexpr const char* about[3] = {
-        "A refereed match: the automatic referee starts play, counts goals and calls restarts.",
-        "You are the referee: call a set play, place the ball, then set it free.",
-        "No referee. Every robot just runs its code.",
+        "A refereed match. You start each kick-off; the automatic referee counts goals and calls restarts.",
+        "You are the referee. Robots obey the built-in GameController, and nothing is called automatically.",
+        "Just the simulator. Run your own role from a terminal.",
     };
     const float third = std::floor((ImGui::GetContentRegionAvail().x - 2 * gap) / 3.0f);
     for (int m = 0; m < 3; ++m) {
@@ -523,92 +749,151 @@ void ViewerUI::render_setup_panel(UIState& state) {
             ImGui::SameLine(0.0f, gap);
         }
         ImGui::PushFont(font_small_);
-        if (button(modes[m], third, dp(32), state.wanted.mode == m ? Kind::Selected : Kind::Secondary)) {
-            state.wanted.mode = m;
+        if (button(modes[m], third, dp(32), want.mode == m ? Kind::Selected : Kind::Secondary) && want.mode != m) {
+            want.mode         = m;
+            want.ground_truth = m == MODE_GAME;  // a game defaults to ground truth
         }
         ImGui::PopFont();
     }
-    note(font_small_, C_MUTED, about[state.wanted.mode]);
+    note(font_small_, C_MUTED, about[want.mode]);
 
-    section(font_small_, "TEAMS");
-    {
-        const float h      = dp(30);
-        const float y      = ImGui::GetCursorPosY();
-        const float right  = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
-        ImGui::SetCursorPosY(y + (h - ImGui::GetTextLineHeight()) * 0.5f);
-        ImGui::TextUnformatted("Players a side");
-        ImGui::SameLine(right - 3 * h - 2 * gap);
-        ImGui::SetCursorPosY(y);
-        ImGui::BeginDisabled(state.wanted.game <= 1);
-        if (button("-##players", h, h)) {
-            --state.wanted.game;
-        }
-        ImGui::EndDisabled();
-        char count[8];
-        std::snprintf(count, sizeof(count), "%d", state.wanted.game);
-        ImGui::SameLine(0.0f, gap);
-        ImGui::SetCursorPosY(y);
-        ImGui::BeginDisabled();
-        button(count, h, h);
-        ImGui::EndDisabled();
-        ImGui::SameLine(0.0f, gap);
-        ImGui::SetCursorPosY(y);
-        ImGui::BeginDisabled(state.wanted.game >= 3);
-        if (button("+##players", h, h)) {
-            ++state.wanted.game;
-        }
-        ImGui::EndDisabled();
-    }
-    auto role_row = [&](const char* label, const ImVec4& colour, int* role) {
-        ImGui::PushID(label);
-        ImGui::PushFont(font_small_);
-        ImGui::TextColored(colour, "%s", label);
-        ImGui::SameLine();
-        ImGui::TextColored(C_MUTED, "NUbots role");
-        ImGui::PopFont();
+    auto combo = [&](const char* id, const std::vector<std::string>& items, int* index) {
         ImGui::SetNextItemWidth(-FLT_MIN);
-        const char* current = state.roles.empty() ? "(none found)" : state.roles[static_cast<std::size_t>(*role)].c_str();
-        if (ImGui::BeginCombo("##role", current)) {
-            for (int i = 0; i < static_cast<int>(state.roles.size()); ++i) {
-                if (ImGui::Selectable(state.roles[static_cast<std::size_t>(i)].c_str(), i == *role)) {
-                    *role = i;
+        const char* current = items.empty() ? "(none)" : items[static_cast<std::size_t>(*index)].c_str();
+        if (ImGui::BeginCombo(id, current)) {
+            for (int i = 0; i < static_cast<int>(items.size()); ++i) {
+                if (ImGui::Selectable(items[static_cast<std::size_t>(i)].c_str(), i == *index)) {
+                    *index = i;
                 }
             }
             ImGui::EndCombo();
         }
-        ImGui::PopID();
     };
-    role_row("HOME", C_HOME, &state.wanted.home_role);
-    role_row("AWAY", C_AWAY, &state.wanted.away_role);
 
-    section(font_small_, "PERCEPTION");
-    const float half = std::floor((ImGui::GetContentRegionAvail().x - gap) * 0.5f);
-    for (int truth = 0; truth < 2; ++truth) {
-        if (truth > 0) {
+    bool can_apply = true;
+    if (want.mode != MODE_FREEPLAY) {
+        section(font_small_, "TEAMS");
+        {
+            const float h     = dp(30);
+            const float y     = ImGui::GetCursorPosY();
+            const float right = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
+            ImGui::SetCursorPosY(y + (h - ImGui::GetTextLineHeight()) * 0.5f);
+            ImGui::TextUnformatted("Players a side");
+            ImGui::SameLine(right - 3 * h - 2 * gap);
+            ImGui::SetCursorPosY(y);
+            ImGui::BeginDisabled(want.game <= 1);
+            if (button("-##players", h, h)) {
+                --want.game;
+            }
+            ImGui::EndDisabled();
+            char count[8];
+            std::snprintf(count, sizeof(count), "%d", want.game);
             ImGui::SameLine(0.0f, gap);
+            ImGui::SetCursorPosY(y);
+            ImGui::BeginDisabled();
+            button(count, h, h);
+            ImGui::EndDisabled();
+            ImGui::SameLine(0.0f, gap);
+            ImGui::SetCursorPosY(y);
+            ImGui::BeginDisabled(want.game >= 3);
+            if (button("+##players", h, h)) {
+                ++want.game;
+            }
+            ImGui::EndDisabled();
         }
-        if (button(truth == 0 ? "Vision" : "Ground truth", half, dp(32),
-                   state.wanted.ground_truth == (truth == 1) ? Kind::Selected : Kind::Secondary)) {
-            state.wanted.ground_truth = truth == 1;
+        std::vector<std::string> names;
+        for (const Codebase& codebase : state.codebases) {
+            names.push_back(codebase.name);
         }
+        auto team = [&](const char* label, const ImVec4& colour, int* codebase, int* role) {
+            ImGui::PushID(label);
+            ImGui::PushFont(font_small_);
+            ImGui::TextColored(colour, "%s", label);
+            ImGui::PopFont();
+            combo("##codebase", names, codebase);
+            const bool known = *codebase < static_cast<int>(state.codebases.size());
+            if (known && !state.codebases[static_cast<std::size_t>(*codebase)].available) {
+                note(font_small_, C_WARN, state.codebases[static_cast<std::size_t>(*codebase)].note.c_str());
+                can_apply = false;
+            }
+            else if (want.mode == MODE_TESTING && *codebase == 0) {
+                combo("##role", state.roles, role);  // a game always runs the match role
+            }
+            ImGui::PopID();
+        };
+        team("HOME", C_HOME, &want.home_codebase, &want.home_role);
+        team("AWAY", C_AWAY, &want.away_codebase, &want.away_role);
+
+        section(font_small_, "PERCEPTION");
+        const float half = std::floor((ImGui::GetContentRegionAvail().x - gap) * 0.5f);
+        for (int truth = 0; truth < 2; ++truth) {
+            if (truth > 0) {
+                ImGui::SameLine(0.0f, gap);
+            }
+            if (button(truth == 0 ? "Vision" : "Ground truth", half, dp(32),
+                       want.ground_truth == (truth == 1) ? Kind::Selected : Kind::Secondary)) {
+                want.ground_truth = truth == 1;
+            }
+        }
+        note(font_small_, C_MUTED,
+             want.ground_truth ? "Robots are given their true position and the ball's."
+                               : "Robots find themselves and the ball with their own camera.");
     }
-    note(font_small_, C_MUTED,
-         state.wanted.ground_truth ? "Robots are given their true position and the ball's. Vision and localisation are bypassed."
-                                   : "Robots find themselves and the ball with their own camera.");
+
+    section(font_small_, "ENVIRONMENT");
+    if (want.mode == MODE_FREEPLAY) {
+        combo("##field", state.fields, &want.field);
+        {
+            const float h     = dp(30);
+            const float y     = ImGui::GetCursorPosY();
+            const float right = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
+            ImGui::SetCursorPosY(y + (h - ImGui::GetTextLineHeight()) * 0.5f);
+            ImGui::TextUnformatted("Robots");
+            ImGui::SameLine(right - 3 * h - 2 * gap);
+            ImGui::SetCursorPosY(y);
+            ImGui::BeginDisabled(want.robots <= 1);
+            if (button("-##robots", h, h)) {
+                --want.robots;
+            }
+            ImGui::EndDisabled();
+            char count[8];
+            std::snprintf(count, sizeof(count), "%d", want.robots);
+            ImGui::SameLine(0.0f, gap);
+            ImGui::SetCursorPosY(y);
+            ImGui::BeginDisabled();
+            button(count, h, h);
+            ImGui::EndDisabled();
+            ImGui::SameLine(0.0f, gap);
+            ImGui::SetCursorPosY(y);
+            ImGui::BeginDisabled(want.robots >= 6);
+            if (button("+##robots", h, h)) {
+                ++want.robots;
+            }
+            ImGui::EndDisabled();
+        }
+        note(font_small_, C_MUTED,
+             "Start a role yourself:  cd ~/NUbots  then  ./b run <role>. A GameController on the network is obeyed "
+             "if one is running.");
+    }
+    else {
+        note(font_small_, C_MUTED, "Matches are played on the 14 x 9 m middle field.");
+    }
+    if (!state.web_url.empty()) {
+        const std::string venues = "Stadium and Village Green venues: open " + state.web_url + " in a browser.";
+        note(font_small_, C_MUTED, venues.c_str());
+    }
 
     ImGui::Dummy({0.0f, dp(2)});
-    const bool changed = !(state.wanted == state.running);
-    ImGui::BeginDisabled(!changed);
+    const bool changed = !(want == state.running);
+    ImGui::BeginDisabled(!changed || !can_apply);
     if (button("Apply and Restart", 0.0f, dp(40), Kind::Primary)) {
         pending_.restart = true;
     }
     ImGui::EndDisabled();
-    if (changed) {
-        note(font_small_, C_WARN, "Restarts the simulator and every robot's code with this setup.");
-    }
+    }  // setup_open_
 
     // Set plays: the call goes to the robots through the GameController, the ball goes where you click.
-    if (state.running.mode == MODE_TESTING && state.match.has_game) {
+    if (!setup_open_ && state.running.mode == MODE_TESTING && state.match.has_game) {
         section(font_small_, "SET PLAY  \xC2\xB7  WHO TAKES IT");
         struct Play {
             const char* name;
@@ -619,11 +904,8 @@ void ViewerUI::render_setup_panel(UIState& state) {
                                           {"Free kick", SP_FREE_KICK},
                                           {"Throw-in", SP_THROW_IN},
                                           {"Penalty kick", SP_PENALTY_KICK}};
-        const float row_h = dp(30);
-        const float btn_w = dp(68);
-        // Any time after kick-off; the GameController itself refuses a call the rules don't allow.
-        const bool playing = state.match.state != "INITIAL" && state.match.state != "FINISHED";
-        const char* active_name = "";
+        const float row_h  = dp(28);
+        const float btn_w  = dp(68);
         for (const Play& play : plays) {
             const float right = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
             const float y     = ImGui::GetCursorPosY();
@@ -635,14 +917,14 @@ void ViewerUI::render_setup_panel(UIState& state) {
                 ImGui::SetCursorPosY(y);
                 ImGui::PushID(team);
                 const bool active = state.set_play == play.value && state.set_play_team == team;
-                if (active) {
-                    active_name = play.name;
-                }
-                ImGui::BeginDisabled(!playing);
+                // Enabled whenever the GameController's rules allow a set play for that team.
+                const std::string decision = std::string("setplay:") + SIDE[team];
+                ImGui::BeginDisabled(!allowed(state, decision.c_str()) && !active);
                 if (button(TEAM_TAG[team], btn_w, row_h, active ? Kind::Selected : Kind::Secondary)) {
                     state.set_play         = play.value;
                     state.set_play_team    = team;
                     state.placing          = true;
+                    state.set_play_stage   = UIState::SP_IDLE;
                     pending_.call_set_play = std::pair<int, int>{team, play.value};
                 }
                 ImGui::EndDisabled();
@@ -650,32 +932,40 @@ void ViewerUI::render_setup_panel(UIState& state) {
             }
             ImGui::PopID();
         }
-        ImGui::Dummy({0.0f, dp(2)});
-        char status[160];
-        if (!playing) {
-            note(font_small_, C_MUTED, "Start the match first: set plays can only be called while play is running.");
+        // 1. the call stops play and you place the ball; 2. Resume Play lets the robots take up their
+        // positions and the kicking team take the kick; 3. the ball is free for everyone once it has been
+        // kicked (noticed here) or when you say so.
+        const char* taker = state.set_play_team == 0 ? "Home" : "Away";
+        char text[160];
+        if (state.placing) {
+            note(font_small_, C_WARN, "Play is stopped. Click a highlighted spot on the field to place the ball.");
         }
-        else if (state.placing) {
-            const char* where = state.set_play == SP_CORNER_KICK    ? "Click a highlighted corner"
-                                : state.set_play == SP_GOAL_KICK    ? "Click a highlighted spot on the goal area"
-                                : state.set_play == SP_PENALTY_KICK ? "Click the highlighted penalty mark"
-                                : state.set_play == SP_THROW_IN     ? "Click a point on a touchline"
-                                                                    : "Click anywhere on the field";
-            std::snprintf(status, sizeof(status), "%s to place the ball.", where);
-            note(font_small_, C_WARN, status);
+        else if (state.set_play_stage == UIState::SP_PLACED) {
+            note(font_small_, team_colour(state.set_play_team),
+                 "Ball placed, play still stopped. Resume Play sends the robots to their positions.");
+            ImGui::BeginDisabled(!allowed(state, "resume"));
+            if (button("Resume Play", 0.0f, dp(36), Kind::Primary)) {
+                pending_.referee.push_back({"resume", "", "", 0});
+                state.set_play_stage = UIState::SP_IN_FORCE;
+            }
+            ImGui::EndDisabled();
         }
-        else if (state.set_play != SP_NONE) {
-            std::snprintf(status, sizeof(status), "%s for %s called. Press Play to set the ball free.", active_name,
-                          state.set_play_team == 0 ? "Home" : "Away");
-            note(font_small_, team_colour(state.set_play_team), status);
+        else if (state.set_play_stage == UIState::SP_IN_FORCE) {
+            std::snprintf(text, sizeof(text),
+                          "%s's kick. Opponents must keep back until the ball is kicked; it is set free when it moves.",
+                          taker);
+            note(font_small_, team_colour(state.set_play_team), text);
+            const double moved = std::hypot(state.ball_now[0] - state.ball_spot[0], state.ball_now[1] - state.ball_spot[1]);
+            const bool kicked  = moved > 0.25;
+            if (button("Ball Free", 0.0f, dp(36), Kind::Primary) || kicked) {
+                pending_.referee.push_back({"finish_set_play", "", "", 0});
+                state.set_play       = SP_NONE;
+                state.set_play_stage = UIState::SP_IDLE;
+            }
         }
-        ImGui::BeginDisabled(state.set_play == SP_NONE);
-        if (button("Play  -  Ball Free", 0.0f, dp(40), Kind::Primary)) {
-            state.set_play            = SP_NONE;
-            state.placing             = false;
-            pending_.release_set_play = true;
+        else if (!allowed(state, "setplay:home") && !allowed(state, "setplay:away")) {
+            note(font_small_, C_MUTED, "The rules allow set plays once the game is Playing: press READY, SET, PLAYING first.");
         }
-        ImGui::EndDisabled();
     }
     ImGui::End();
 }

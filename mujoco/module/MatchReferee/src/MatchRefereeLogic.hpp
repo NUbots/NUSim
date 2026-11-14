@@ -112,6 +112,13 @@ namespace k1sim::module::matchreferee {
                     apply(RoboCup::gc_action_select_goalkeeper(side, 2));
                 }
             }
+            else {
+                // One a side: the GameController's default goalkeeper is player 1, and a lone player told
+                // it is the goalkeeper never leaves its goal. Name player 2, who isn't there, instead.
+                for (const auto side : {RoboCup::Side::home, RoboCup::Side::away}) {
+                    apply(RoboCup::gc_action_select_goalkeeper(side, 2));
+                }
+            }
         }
 
         // Records which players touch the ball. Must run every physics step, with the sim mutex
@@ -136,6 +143,8 @@ namespace k1sim::module::matchreferee {
         std::vector<std::string> update(mjData* d, double sim_time, std::uint64_t dt_ms) {
             d_ = d;
             RoboCup::gc_seek(game_.get(), dt_ms);
+            advance_kick_off(d, sim_time);
+            remove_incapable(d, sim_time);
 
             for (std::size_t i = 0; i < players_.size(); ++i) {
                 if (touching_[i]) {
@@ -156,11 +165,23 @@ namespace k1sim::module::matchreferee {
             d_ = nullptr;
 
             // One step per update, so that the autoreferee sees Ready and places the ball.
-            if (cfg_.skip_kick_off_phases && !manual_set_play_
-                && !RoboCup::gc_apply(game_.get(),
-                                      RoboCup::gc_action_wait_for_set_play(),
-                                      RoboCup::ActionSource::autoreferee)) {
-                RoboCup::gc_apply(game_.get(), RoboCup::gc_action_free_set_play(), RoboCup::ActionSource::autoreferee);
+            if (cfg_.skip_kick_off_phases && !manual_set_play_) {
+                // A game started with the Start button takes every kick-off the same way, so the one
+                // after a goal also waits in Ready for the robots to walk back before Set and Playing.
+                const auto now = peek();
+                if (staged_kick_offs_ && now && now->state == gc::State::READY && now->set_play == gc::SetPlay::NONE) {
+                    manual_set_play_ = true;
+                    kick_off_        = KickOff::READY;
+                    phase_started_   = -1.0;
+                    events_.push_back("kick-off: Ready until the robots are back in position");
+                }
+                else if (!RoboCup::gc_apply(game_.get(),
+                                            RoboCup::gc_action_wait_for_set_play(),
+                                            RoboCup::ActionSource::autoreferee)) {
+                    RoboCup::gc_apply(game_.get(),
+                                      RoboCup::gc_action_free_set_play(),
+                                      RoboCup::ActionSource::autoreferee);
+                }
             }
 
             std::vector<std::string> events = std::move(events_);
@@ -178,6 +199,32 @@ namespace k1sim::module::matchreferee {
             apply(RoboCup::gc_action_start_set_play(&side, RoboCup::SetPlay::kickOff));
         }
 
+        // Kick-off by hand, one phase at a time: ready() takes the game from Initial to Ready and holds
+        // it there, set() moves on to Set, and release_set_play() starts play.
+        void ready() {
+            if (started_) {
+                return;
+            }
+            manual_set_play_ = true;
+            start();
+        }
+
+        // The Start button: Ready now, then Set and Playing by themselves (see advance_kick_off()).
+        void start_kick_off() {
+            if (started_) {
+                return;
+            }
+            ready();
+            staged_kick_offs_ = true;
+            kick_off_         = KickOff::READY;
+            phase_started_    = -1.0;
+        }
+        void set() {
+            if (manual_set_play_) {
+                apply(RoboCup::gc_action_wait_for_set_play());
+            }
+        }
+
         // Calls a set play by hand (the viewer's Testing Room). It stays in force, instead of being
         // waved straight through like a kick-off, until release_set_play().
         bool call_set_play(RoboCup::Side side, RoboCup::SetPlay set_play) {
@@ -186,6 +233,12 @@ namespace k1sim::module::matchreferee {
             }
             manual_set_play_ = true;
             return true;
+        }
+
+        // The Playing button: kicks off if the game hasn't started, then sets the ball free.
+        void play() {
+            ready();
+            release_set_play();
         }
 
         // Ball free: ends a set play called by hand, as the referee's whistle would.
@@ -201,7 +254,7 @@ namespace k1sim::module::matchreferee {
         // What the panel's main button does: starts the game, or pauses and resumes it.
         void primary_action() {
             if (!last_ || last_->state == gc::State::INITIAL) {
-                start();
+                start_kick_off();
             }
             else if (last_->state != gc::State::FINISHED) {
                 apply(RoboCup::gc_action_stop_play(last_->stopped != 0));
@@ -231,6 +284,18 @@ namespace k1sim::module::matchreferee {
 
         // The next control message for robots. Each call uses up a packet number, so call this
         // only to send one.
+        // The game as it stands this instant; control messages are up to half a second old. Doesn't use
+        // up a packet number.
+        std::optional<gc::GameControllerPacket> peek() const {
+            std::array<std::uint8_t, sizeof(gc::GameControllerPacket)> bytes{};
+            gc::GameControllerPacket packet{};
+            if (!RoboCup::gc_read(game_.get(), packet_number_, false, bytes.data(), bytes.size())
+                || !gc::try_parse(bytes.data(), bytes.size(), packet)) {
+                return std::nullopt;
+            }
+            return packet;
+        }
+
         gc::GameControllerPacket control_message() {
             std::array<std::uint8_t, sizeof(gc::GameControllerPacket)> bytes{};
             gc::GameControllerPacket packet{};
@@ -397,8 +462,22 @@ namespace k1sim::module::matchreferee {
 
         static const char* penalty_message(gc::PenaltyState penalty) {
             switch (penalty) {
-                case gc::PenaltyState::LEAVING_THE_FIELD: return " left the field";
-                case gc::PenaltyState::LOCAL_GAME_STUCK: return " penalised: ball stuck";
+                // Why, and what happens: every penalised robot is stood on the touchline and walks back
+                // on when its penalty ends.
+                case gc::PenaltyState::LEAVING_THE_FIELD: return " left the field: back to the touchline";
+                case gc::PenaltyState::LOCAL_GAME_STUCK:
+                    return " moved to the touchline: the ball was stuck between robots (nobody's fault)";
+                case gc::PenaltyState::INCAPABLE_ROBOT: return " lay on the ground too long: back to the touchline";
+                case gc::PenaltyState::ILLEGAL_POSITIONING: return " penalised: stood where the rules don't allow";
+                case gc::PenaltyState::MOTION_IN_SET: return " penalised: moved during Set";
+                case gc::PenaltyState::MOTION_IN_STOP: return " penalised: moved while play was stopped";
+                case gc::PenaltyState::PICK_UP: return " picked up: back to the touchline";
+                case gc::PenaltyState::BALL_HOLDING: return " penalised: held the ball";
+                case gc::PenaltyState::PLAYING_WITH_ARMS_HANDS: return " penalised: played the ball with its arms";
+                case gc::PenaltyState::PLAYER_PUSHING: return " penalised: pushed another robot";
+                case gc::PenaltyState::CAUTIONED: return " cautioned";
+                case gc::PenaltyState::SENT_OFF: return " sent off";
+                case gc::PenaltyState::SUBSTITUTE: return " is a substitute";
                 default: return " penalised";
             }
         }
@@ -492,6 +571,99 @@ namespace k1sim::module::matchreferee {
             return world;
         }
 
+        // Runs a kick-off started with start_kick_off(). Ready lasts until every robot has stood still
+        // for a moment (or READY_LIMIT passes); then it is Set and the ball goes to the centre mark;
+        // SET_SECONDS later it is Playing, which is when the GameController's clock starts.
+        void advance_kick_off(mjData* d, double sim_time) {
+            static constexpr double SAMPLE_SECONDS = 0.25;  // how often movement is measured
+            static constexpr double STILL_METRES   = 0.02;  // less than this per sample is standing still
+            static constexpr double STILL_RADIANS  = 0.05;
+            static constexpr double STILL_SECONDS  = 1.0;   // how long everyone must stay still
+            static constexpr double READY_MINIMUM  = 3.0;   // players need a moment to hear Ready
+            static constexpr double READY_LIMIT    = 45.0;  // the rule book's Ready period
+            static constexpr double SET_SECONDS    = 2.0;
+
+            if (kick_off_ == KickOff::NONE) {
+                return;
+            }
+            if (phase_started_ < 0.0 || sim_time < phase_started_) {
+                phase_started_ = sim_time;  // first update of this phase, or the sim was reset
+                still_since_   = sim_time;
+                sampled_at_    = -1.0;
+            }
+
+            if (kick_off_ == KickOff::READY) {
+                if (sampled_at_ < 0.0 || sim_time - sampled_at_ >= SAMPLE_SECONDS) {
+                    const RoboCup::AutorefereeWorld world = observe(d);
+                    bool moving = false;
+                    std::vector<std::array<float, 3>> now;
+                    for (const auto& player : players_) {
+                        const auto& seen = world.players[player.side == RoboCup::Side::home ? 0 : 1]
+                                                        [player.identity.player_id - 1];
+                        now.push_back({seen.x, seen.y, seen.theta});
+                    }
+                    for (std::size_t i = 0; sampled_at_ >= 0.0 && i < now.size() && i < sampled_.size(); ++i) {
+                        const double turn = std::remainder(now[i][2] - sampled_[i][2], 2.0 * 3.14159265358979);
+                        moving = moving || std::hypot(now[i][0] - sampled_[i][0], now[i][1] - sampled_[i][1]) > STILL_METRES
+                                 || std::abs(turn) > STILL_RADIANS;
+                    }
+                    sampled_    = std::move(now);
+                    sampled_at_ = sim_time;
+                    if (moving) {
+                        still_since_ = sim_time;
+                    }
+                }
+                const double in_phase = sim_time - phase_started_;
+                const bool settled    = in_phase >= READY_MINIMUM && sim_time - still_since_ >= STILL_SECONDS;
+                if ((settled || in_phase >= READY_LIMIT) && apply(RoboCup::gc_action_wait_for_set_play())) {
+                    supervisor::place_free_body_by_geom_center(m_, d, ball_body_, ball_geom_, 0.0, 0.0,
+                                                               m_->geom_size[3 * ball_geom_]);
+                    events_.push_back(settled ? "robots in position: Set, ball on the centre mark"
+                                              : "Ready time is up: Set, ball on the centre mark");
+                    kick_off_      = KickOff::SET;
+                    phase_started_ = sim_time;
+                }
+            }
+            else if (sim_time - phase_started_ >= SET_SECONDS) {
+                kick_off_ = KickOff::NONE;
+                release_set_play();
+            }
+        }
+
+        // A robot that has been lying on the ground for INCAPABLE_SECONDS while the game is Playing is
+        // not going to get up by itself: call it incapable, which sends it to the touchline, stood
+        // up, to come back on when the penalty ends.
+        void remove_incapable(mjData* d, double sim_time) {
+            static constexpr double INCAPABLE_SECONDS = 10.0;
+            static constexpr double DOWN_HEIGHT       = 0.35;  // trunk height (m); it stands at about 0.55
+            static constexpr double DOWN_UPRIGHT      = 0.5;   // or trunk z axis more than 60 degrees from vertical
+            down_since_.resize(players_.size(), -1.0);
+            const bool playing = last_ && last_->state == gc::State::PLAYING;
+            for (std::size_t i = 0; i < players_.size(); ++i) {
+                const auto& player = players_[i];
+                const double height  = d->xpos[3 * player.root_body + 2];
+                const double upright = d->xmat[9 * player.root_body + 8];
+                const bool penalised =
+                    last_ && robot_in(*last_, player).penalty_state != gc::PenaltyState::UNPENALISED;
+                if (!playing || penalised || (height >= DOWN_HEIGHT && upright >= DOWN_UPRIGHT)
+                    || sim_time < down_since_[i]) {
+                    down_since_[i] = -1.0;
+                    continue;
+                }
+                if (down_since_[i] < 0.0) {
+                    down_since_[i] = sim_time;
+                }
+                else if (sim_time - down_since_[i] >= INCAPABLE_SECONDS) {
+                    down_since_[i] = -1.0;
+                    if (apply(RoboCup::gc_action_penalize(player.side,
+                                                          static_cast<std::uint8_t>(player.identity.player_id),
+                                                          RoboCup::PenaltyCall::incapableRobot))) {
+                        events_.push_back(name(player) + " has been down for 10 s: incapable, back to the touchline");
+                    }
+                }
+            }
+        }
+
         static void on_place_ball(void* self_ptr, float x, float y, float z) {
             auto* self = static_cast<MatchRefereeLogic*>(self_ptr);
             supervisor::place_free_body_by_geom_center(self->m_, self->d_, self->ball_body_, self->ball_geom_, x, y, z);
@@ -538,6 +710,14 @@ namespace k1sim::module::matchreferee {
         Handle<RoboCup::Autoreferee, RoboCup::gc_autoreferee_destroy> autoreferee_;
 
         bool started_               = false;
+        // The automatic kick-off sequence (advance_kick_off()), in simulation time.
+        enum class KickOff { NONE, READY, SET } kick_off_ = KickOff::NONE;
+        double phase_started_ = -1.0;
+        double still_since_   = 0.0;
+        double sampled_at_    = -1.0;
+        std::vector<std::array<float, 3>> sampled_;  // each player's x, y, yaw at the last sample
+        std::vector<double> down_since_;             // sim time each player went down, or -1 (remove_incapable())
+        bool staged_kick_offs_      = false;  // kick-offs go Ready, Set, Playing as the robots settle
         bool manual_set_play_       = false;  // a set play called from the viewer is waiting for its release
         std::uint8_t packet_number_ = 0;
         std::optional<gc::GameControllerPacket> last_;

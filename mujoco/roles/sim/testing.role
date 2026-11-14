@@ -1,0 +1,14 @@
+# The Testing Room: like sim/soccer under --game, but with a head camera per robot (MatchCameras), so every robot's
+# player can see. The built-in GameController (module::Referee, --referee) announces the game and is operated by hand
+# from the viewer or the browser; nothing is refereed automatically. ConsoleLog first so it captures startup logs.
+k1sim_role(
+  ConsoleLog
+  Simulation
+  SdkBridge
+  Locomotion
+  MatchCameras
+  Supervisor
+  Viewer
+  WebViewer
+  Referee
+)

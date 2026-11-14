@@ -79,6 +79,10 @@ namespace k1sim::module {
         std::atomic<bool>* g_paused = nullptr;
         std::mutex g_match_mutex;
         message::MatchStatus g_match_status;
+        std::vector<std::string> g_legal;  // module::Referee: decisions the rules allow now
+        std::vector<viewer::UIState::Robot> g_robots;
+        // Set by the mouse callback when a robot is clicked with "Penalise" armed: (side, player, penalised).
+        std::optional<viewer::UIState::Robot> g_penalise_pick;
 
         // Reads tools/match.py's session.json (what it launched and which roles exist) into the UI.
         void load_session(viewer::UIState& ui) {
@@ -90,25 +94,47 @@ namespace k1sim::module {
             if (!json.is_object()) {
                 return;
             }
-            ui.roles = json.value("roles", std::vector<std::string>{});
-            auto role_index = [&ui](const std::string& role) {
-                const auto found = std::find(ui.roles.begin(), ui.roles.end(), role);
-                if (found == ui.roles.end()) {
-                    ui.roles.push_back(role);
-                    return static_cast<int>(ui.roles.size()) - 1;
+            ui.roles  = json.value("roles", std::vector<std::string>{});
+            ui.fields = json.value("fields", std::vector<std::string>{});
+            for (const auto& entry : json.value("codebases", nlohmann::json::array())) {
+                ui.codebases.push_back({entry.value("name", std::string("?")),
+                                        entry.value("available", true),
+                                        entry.value("note", std::string())});
+            }
+            auto index_of = [](std::vector<std::string>& list, const std::string& value) {
+                const auto found = std::find(list.begin(), list.end(), value);
+                if (found == list.end()) {
+                    list.push_back(value);
+                    return static_cast<int>(list.size()) - 1;
                 }
-                return static_cast<int>(found - ui.roles.begin());
+                return static_cast<int>(found - list.begin());
             };
-            const std::string mode  = json.value("mode", std::string("game"));
-            ui.running.mode         = mode == "testing" ? viewer::MODE_TESTING
-                                      : mode == "freeplay" ? viewer::MODE_FREEPLAY
-                                                           : viewer::MODE_GAME;
-            ui.running.game         = json.value("game", 1);
-            ui.running.home_role    = role_index(json.value("home_role", std::string("nusim/behaviour")));
-            ui.running.away_role    = role_index(json.value("away_role", std::string("nusim/behaviour")));
-            ui.running.ground_truth = json.value("ground_truth", false);
-            ui.wanted               = ui.running;
-            ui.launcher             = true;
+            auto codebase_index = [&ui](const std::string& name) {
+                for (std::size_t i = 0; i < ui.codebases.size(); ++i) {
+                    if (ui.codebases[i].name == name) {
+                        return static_cast<int>(i);
+                    }
+                }
+                ui.codebases.push_back({name, true, ""});
+                return static_cast<int>(ui.codebases.size()) - 1;
+            };
+            const std::string mode   = json.value("mode", std::string("game"));
+            ui.running.mode          = mode == "testing"    ? viewer::MODE_TESTING
+                                       : mode == "freeplay" ? viewer::MODE_FREEPLAY
+                                                            : viewer::MODE_GAME;
+            ui.running.game          = json.value("game", 1);
+            ui.running.home_codebase = codebase_index(json.value("home_codebase", std::string("NUbots")));
+            ui.running.away_codebase = codebase_index(json.value("away_codebase", std::string("NUbots")));
+            ui.running.home_role     = index_of(ui.roles, json.value("home_role", std::string("nusim/behaviour")));
+            ui.running.away_role     = index_of(ui.roles, json.value("away_role", std::string("nusim/behaviour")));
+            ui.running.ground_truth  = json.value("ground_truth", false);
+            ui.running.field         = index_of(ui.fields, json.value("field", std::string("middle")));
+            ui.running.robots        = json.value("robots", 1);
+            ui.wanted                = ui.running;
+            ui.launcher              = true;
+            if (cli().web) {
+                ui.web_url = "http://" + cli().web_host + ":" + std::to_string(cli().web_port);
+            }
 
             const YAML::Node field = config::load("match.yaml")["field"];
             if (field) {
@@ -127,6 +153,14 @@ namespace k1sim::module {
             json["mode"]         = modes[ui.wanted.mode];
             json["game"]         = ui.wanted.game;
             json["ground_truth"] = ui.wanted.ground_truth;
+            json["robots"]       = ui.wanted.robots;
+            if (!ui.codebases.empty()) {
+                json["home_codebase"] = ui.codebases[static_cast<std::size_t>(ui.wanted.home_codebase)].name;
+                json["away_codebase"] = ui.codebases[static_cast<std::size_t>(ui.wanted.away_codebase)].name;
+            }
+            if (!ui.fields.empty()) {
+                json["field"] = ui.fields[static_cast<std::size_t>(ui.wanted.field)];
+            }
             if (!ui.roles.empty()) {
                 json["home_role"] = ui.roles[static_cast<std::size_t>(ui.wanted.home_role)];
                 json["away_role"] = ui.roles[static_cast<std::size_t>(ui.wanted.away_role)];
@@ -150,6 +184,11 @@ namespace k1sim::module {
             q[2] += g_model->geom_size[3 * geom] - g_data->geom_xpos[3 * geom + 2];
             mju_zero(g_data->qvel + g_model->jnt_dofadr[jnt], 6);
             mj_kinematics(g_model, g_data);
+        }
+
+        // Robots and the ball can be moved by hand everywhere except in a refereed game.
+        bool hands_on() {
+            return !(g_ui_state.launcher && g_ui_state.running.mode == viewer::MODE_GAME);
         }
 
         bool ui_wants_mouse() {
@@ -467,7 +506,7 @@ namespace k1sim::module {
             }
             // F: shove the robot over (deterministic fall for testing FallRecovery/GetUp —
             // mouse-drag perturbs are usually within what the push-randomised policy rides out).
-            if (key == GLFW_KEY_F && g_model != nullptr && g_data != nullptr && g_mutex != nullptr) {
+            if (key == GLFW_KEY_F && hands_on() && g_model != nullptr && g_data != nullptr && g_mutex != nullptr) {
                 std::lock_guard<std::mutex> lock(*g_mutex);
                 if (g_model->njnt > 0 && g_model->jnt_type[0] == mjJNT_FREE) {
                     const int dof = g_model->jnt_dofadr[0];
@@ -500,9 +539,31 @@ namespace k1sim::module {
                 return;
             }
 
+            // Testing Room, "Penalise" armed: the robot under this click is penalised or let back on.
+            if (g_ui_state.penalise_armed && button == GLFW_MOUSE_BUTTON_LEFT) {
+                button_left = false;
+                std::lock_guard<std::mutex> lock(*g_mutex);
+                mjtNum selpnt[3];
+                int skinid     = -1;
+                const int root = free_root(select_at(w, selpnt, &skinid));
+                const char* name = root >= 0 ? mj_id2name(g_model, mjOBJ_BODY, root) : nullptr;
+                for (const auto& robot : g_ui_state.robots) {
+                    if (name != nullptr && robot.body == name) {
+                        g_penalise_pick           = robot;
+                        g_ui_state.penalise_armed = false;
+                    }
+                }
+                return;
+            }
+
             // Testing Room ball placement owns left clicks on the field (ViewerUI::render_placement).
             if (g_ui_state.placing && button == GLFW_MOUSE_BUTTON_LEFT) {
                 button_left = false;
+                return;
+            }
+
+            // A refereed game: the mouse only moves the camera.
+            if (!hands_on()) {
                 return;
             }
 
@@ -816,6 +877,26 @@ namespace k1sim::module {
             g_match_status = status;
         });
 
+        // The Testing Room's built-in GameController (module::Referee, or an external one through
+        // module::Supervisor) reports the game here; show it on the same scoreboard.
+        on<Trigger<message::GameState>>().then([](const message::GameState& game) {
+            std::lock_guard<std::mutex> lock(g_match_mutex);
+            g_match_status.has_game       = true;
+            g_match_status.home_score     = game.score_left;  // the home team defends the left goal
+            g_match_status.away_score     = game.score_right;
+            g_match_status.secs_remaining = game.secs_remaining;
+            g_match_status.state          = game.state;
+            g_match_status.players        = static_cast<int>(game.robots.size());
+            g_robots.clear();
+            for (const auto& robot : game.robots) {
+                g_robots.push_back({robot.side, robot.player, !robot.penalty.empty(), robot.body});
+            }
+        });
+        on<Trigger<message::RefereeStatus>>().then([](const message::RefereeStatus& status) {
+            std::lock_guard<std::mutex> lock(g_match_mutex);
+            g_legal = status.legal;
+        });
+
         on<Trigger<message::SimStateUpdate>>().then([](const message::SimStateUpdate& state) {
             g_sim_time.store(state.sim_time, std::memory_order_relaxed);
             g_mode.store(state.mode, std::memory_order_relaxed);
@@ -896,10 +977,17 @@ namespace k1sim::module {
                     ui.measured_rtf = g_measured_rtf != nullptr ? g_measured_rtf->load(std::memory_order_relaxed) : 0.0;
                     ui.robot_mode   = mode_name(g_mode.load(std::memory_order_relaxed));
                     ui.paused       = g_paused != nullptr && g_paused->load(std::memory_order_relaxed);
+                    if (const int ball = mj_name2id(g_model, mjOBJ_GEOM, "ball"); ball >= 0 && g_mutex != nullptr) {
+                        std::lock_guard<std::mutex> lock(*g_mutex);
+                        ui.ball_now = {g_data->geom_xpos[3 * ball], g_data->geom_xpos[3 * ball + 1]};
+                    }
                     {
                         std::lock_guard<std::mutex> lock(g_match_mutex);
                         ui.match = g_match_status;
+                        ui.legal  = g_legal;
+                        ui.robots = g_robots;
                     }
+                    const bool hand_referee = ui.launcher && ui.running.mode == viewer::MODE_TESTING;
                     const viewer::UIActions actions = g_ui->render(ui);
                     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
@@ -908,15 +996,60 @@ namespace k1sim::module {
                         powerplant.shutdown();
                         return;
                     }
+                    auto referee = [this](const std::string& action,
+                                          const std::string& side,
+                                          const std::string& arg,
+                                          int player = 0) {
+                        auto command    = std::make_unique<message::RefereeCommand>();
+                        command->action = action;
+                        command->side   = side;
+                        command->player = player;
+                        command->arg    = arg;
+                        emit(command);
+                    };
+                    if (g_penalise_pick) {
+                        const auto robot = *g_penalise_pick;
+                        g_penalise_pick.reset();
+                        referee(robot.penalised ? "unpenalize" : "penalize", robot.side == 0 ? "home" : "away",
+                                "request_for_pick_up", robot.player);
+                    }
+                    for (const auto& command : actions.referee) {
+                        referee(command.action, command.side, command.arg, command.player);
+                    }
                     if (actions.call_set_play) {
-                        message::MatchCommand command{message::MatchCommand::Action::SET_PLAY};
-                        command.side     = actions.call_set_play->first;
-                        command.set_play = actions.call_set_play->second;
-                        emit(std::make_unique<message::MatchCommand>(command));
+                        const int team = actions.call_set_play->first;
+                        const int play = actions.call_set_play->second;
+                        if (hand_referee) {
+                            const char* name = play == viewer::SP_CORNER_KICK    ? "corner_kick"
+                                               : play == viewer::SP_GOAL_KICK    ? "goal_kick"
+                                               : play == viewer::SP_THROW_IN     ? "throw_in"
+                                               : play == viewer::SP_PENALTY_KICK ? "penalty_kick"
+                                                                                 : "direct_free_kick";
+                            referee("setplay", team == 0 ? "home" : "away", name);
+                        }
+                        else {
+                            message::MatchCommand command{message::MatchCommand::Action::SET_PLAY};
+                            command.side     = team;
+                            command.set_play = play;
+                            emit(std::make_unique<message::MatchCommand>(command));
+                        }
                     }
                     if (actions.release_set_play) {
+                        if (hand_referee) {
+                            referee("play", "", "");
+                        }
+                        else {
+                            emit(std::make_unique<message::MatchCommand>(
+                                message::MatchCommand{message::MatchCommand::Action::RELEASE}));
+                        }
+                    }
+                    if (actions.match_ready) {
                         emit(std::make_unique<message::MatchCommand>(
-                            message::MatchCommand{message::MatchCommand::Action::RELEASE}));
+                            message::MatchCommand{message::MatchCommand::Action::READY}));
+                    }
+                    if (actions.match_set) {
+                        emit(std::make_unique<message::MatchCommand>(
+                            message::MatchCommand{message::MatchCommand::Action::SET}));
                     }
                     if (actions.place_ball && g_mutex != nullptr) {
                         std::lock_guard<std::mutex> lock(*g_mutex);

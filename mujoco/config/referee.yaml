@@ -15,13 +15,13 @@ competition: middle_advanced
 # The teams: number as in the GameController's config/teams.yaml, and jersey colours
 # (blue, red, yellow, black, white, green, orange, purple, brown, gray).
 # The home team is the first --game team (the main robot's), defending the -x goal.
-home: {number: 1, field_player_colour: blue, goalkeeper_colour: white}
-away: {number: 18, field_player_colour: red, goalkeeper_colour: yellow}
+home: {number: 125, field_player_colour: blue, goalkeeper_colour: white}
+away: {number: 126, field_player_colour: red, goalkeeper_colour: yellow}
 kick_off: home # home | away
 
 # The real GameController keeps telling the robots "set" for a while after play has started, so that they have
 # to listen for the whistle. true = tell them immediately (the GameController's "no delay" test option).
-no_delay: false
+no_delay: true
 
 # Where the packets go. The broadcast address reaches every robot on the network, 127.0.0.1 robot software on
 # this machine.

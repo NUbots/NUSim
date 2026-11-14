@@ -125,6 +125,9 @@ namespace k1sim::module {
         // Each controller goes back to Simulation wrapped, so the game can hold its robot. Sent
         // from the update reaction below: Simulation must get the original first, or it would
         // overwrite the wrapper.
+        if (cli().free_robots) {
+            cfg_->hold_robots = false;
+        }
         if (cfg_->hold_robots) {
             on<Trigger<message::ControllerHandle>, Sync<MatchReferee>>().then(
                 [this](const message::ControllerHandle& handle) {
@@ -166,8 +169,10 @@ namespace k1sim::module {
                         custom_robots_.insert(robot.identity.robot_id);
                     }
                 }
-                if (cfg_->auto_start_when_connected && connected_ == static_cast<int>(states.robots.size())) {
-                    logic_->start();
+                // With a window, its Start button decides; without one the game starts by itself.
+                if (cfg_->auto_start_when_connected && cli().headless
+                    && connected_ == static_cast<int>(states.robots.size())) {
+                    logic_->start_kick_off();
                 }
 
                 // gc_seek takes whole milliseconds, so carry the remainder over. Sim time rewinds
@@ -219,8 +224,14 @@ namespace k1sim::module {
                                              command.side == 0 ? "home" : "away",
                                              called ? "called" : "refused (not legal right now)");
             }
+            else if (command.action == message::MatchCommand::Action::READY) {
+                logic_->ready();
+            }
+            else if (command.action == message::MatchCommand::Action::SET) {
+                logic_->set();
+            }
             else if (command.action == message::MatchCommand::Action::RELEASE) {
-                logic_->release_set_play();
+                logic_->play();
             }
             else {
                 reset_world_();

@@ -97,6 +97,7 @@ namespace k1sim::module {
         void* (*undo)(std::uint32_t)                       = nullptr;
         void* (*unpenalize)(Side, std::uint8_t, bool)      = nullptr;
         void* (*wait_for_set_play)()                       = nullptr;
+        void* (*select_goalkeeper)(Side, std::uint8_t)     = nullptr;
 
         template <typename Function>
         bool bind(Function& function, const char* name, std::string& error) {
@@ -127,7 +128,8 @@ namespace k1sim::module {
                    && bind(stop_play, "gc_action_stop_play", error) && bind(switch_half, "gc_action_switch_half", error)
                    && bind(timeout, "gc_action_timeout", error) && bind(undo, "gc_action_undo", error)
                    && bind(unpenalize, "gc_action_unpenalize", error)
-                   && bind(wait_for_set_play, "gc_action_wait_for_set_play", error);
+                   && bind(wait_for_set_play, "gc_action_wait_for_set_play", error)
+                   && bind(select_goalkeeper, "gc_action_select_goalkeeper", error);
         }
 
         // The action a command stands for, or nullptr if the command is unknown or incomplete.
@@ -254,6 +256,13 @@ namespace k1sim::module {
         if (game_ == nullptr) {
             error = std::string("GameController: ") + lib_->last_error();
             return false;
+        }
+        // The same goalkeeper as module::MatchReferee: the second robot of each team. One a side, that names
+        // nobody, so a lone player isn't told to stay in its goal.
+        for (const Side side : {HOME, AWAY}) {
+            if (void* action = lib_->select_goalkeeper(side, 2)) {
+                lib_->apply(game_, action, SOURCE_USER);
+            }
         }
 
         socket_fd_ = ::socket(AF_INET, SOCK_DGRAM, 0);
