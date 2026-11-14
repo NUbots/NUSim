@@ -100,7 +100,7 @@ launcher runs the vision model on the CPU instead (`--vision-device gpu` overrid
 
 ## Codebases
 
-The team pickers list NUbots and rUNSWift. Only NUbots can be started so far. To add another, give it an entry in
+The team pickers list NUbots, rUNSWift and B-Human. Only NUbots can be started so far. To add another, give it an entry in
 `CODEBASES` in `mujoco/tools/match.py` and a way to start one player per robot in `start_robot`.
 
 ## What NUbots needs

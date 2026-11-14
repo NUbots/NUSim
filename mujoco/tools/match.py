@@ -74,6 +74,8 @@ CODEBASES = [
     dict(name="NUbots", available=True, note=""),
     dict(name="rUNSWift", available=False,
          note="rUNSWift isn't set up on this machine yet: tools/match.py needs to know how to start its player."),
+    dict(name="B-Human", available=False,
+         note="B-Human isn't set up on this machine yet: tools/match.py needs to know how to start its player."),
 ]
 # The NUbots role a refereed game runs: the competition role with the sim's walk, kick and camera.
 NUBOTS_GAME_ROLES = ["nusim/robocup", "nusim/behaviour"]
