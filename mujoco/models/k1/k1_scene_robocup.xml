@@ -19,19 +19,18 @@
     Solver settings (timestep 0.001, Newton, impratio 10) come from the
     included K1_22dof.xml and are intentionally not overridden here.
 
-    Ball body layout note: the "ball" body is declared at pos="0 0 0" with
-    its sphere geom offset to pos="1.38 0 0.0785" (rather than putting that
-    offset on the body itself). This is deliberate: K1_22dof.xml's own
-    "ready"/"lying_front"/"lying_back" keyframes were authored with qpos
-    sized for the bare robot (nq=29); once this scene adds the ball's
-    freejoint (nq becomes 36), MuJoCo silently zero-pads the missing 7
-    ball qpos entries in those inherited keyframes to (0,0,0,1,0,0,0)
-    (verified: it pads with zero, not with the body's qpos0/pos attribute,
-    and MuJoCo rejects two <key> elements sharing a name, so the keyframes
-    cannot simply be redefined here). Zeroing the *body* frame and offsetting
-    the *geom* means that zero-padded default is exactly the intended rest
-    pose, so the ball lands at (1.38, 0, 0.0785) under all three inherited
-    keyframes with no scene-level keyframe override required.
+    Ball body layout note: the "ball" body sits at its rest point,
+    pos="1.38 0 0.0785", with its geoms at the body origin. Keep it that
+    way -- the free joint rotates about the body origin, so a geom offset
+    from it makes the ball spin about a point metres away, and any roll
+    faster than ~1.5 m/s blows up numerically (the ball accelerates and
+    flies off the field). The catch: K1_22dof.xml's inherited
+    "ready"/"lying_front"/"lying_back" keyframes (and "kickoff" below) only
+    give the robot's 29 qpos values, and MuJoCo zero-pads the ball's 7 to
+    (0,0,0,1,0,0,0) -- not to the body's pos -- which would bury the ball at
+    the world origin. SimCore therefore re-places the ball after every
+    keyframe reset (SimCore::place_ball); anything else that resets to a
+    keyframe of this scene must do the same.
 
     A dedicated "kickoff" keyframe below places the robot at the match-start
     spawn pose (mirrors the Webots world's red K1 at translation -2.71 0 0.53,
@@ -143,22 +142,21 @@
     </body>
 
     <!--
-      Ball: body frame kept at the origin so it lands at the intended rest
-      point purely via the geom's local offset -- see the file header comment
-      for why (K1_22dof.xml's inherited keyframes zero-pad this body's qpos).
+      Ball: body at the rest point, geoms at the body origin -- see the file
+      header comment for why the geoms must not be offset from the body.
       radius 0.0785 m, mass 0.29 kg per task brief; own friction 0.5 (grass);
       the <pair> below overrides the ball/floor solref+friction (tuned so a
       1 m drop's first-bounce apex ratio matches Webots' bounce=0.76 -> 0.76^2
       ~= 0.578 of the drop height; see VENDORED.md for the tuning method).
     -->
-    <body name="ball" pos="0 0 0">
+    <body name="ball" pos="1.38 0 0.0785">
       <freejoint name="ball_free"/>
       <!-- Collision sphere kept invisible (group 3); visuals come from the textured
            NUpbr ball mesh below so rendered imagery matches the Yolo training data. -->
-      <geom name="ball" type="sphere" size="0.0785" pos="1.38 0 0.0785" mass="0.29"
+      <geom name="ball" type="sphere" size="0.0785" mass="0.29"
             friction="0.5 0.005 0.0001" material="ball_mat" priority="1"
             group="3" rgba="0.85 0.25 0.05 0"/>
-      <geom type="mesh" mesh="ball_visual" pos="1.38 0 0.0785" material="ball_tex_mat"
+      <geom type="mesh" mesh="ball_visual" material="ball_tex_mat"
             contype="0" conaffinity="0" density="0" group="1"/>
     </body>
   </worldbody>
@@ -177,8 +175,8 @@
       and the +x goal), base height retuned to 0.555 like "ready" (see
       VENDORED.md) so it doesn't spawn interpenetrating the floor; same
       joint angles as "ready". Only 29 values are given (robot only) --
-      the ball's qpos is left zero-padded by MuJoCo, which (per the body/geom
-      offset above) resolves to the ball's correct rest position automatically.
+      the ball's qpos is zero-padded by MuJoCo and SimCore re-places the ball
+      after the reset (see the file header comment).
     -->
     <key name="kickoff"
          qpos="-2.71 0 0.555 1 0 0 0

@@ -66,10 +66,11 @@ namespace k1sim::module::supervisor {
     }
 
     // Like place_free_body, but the target (x,y,z) is the world-space centre of
-    // one of the body's own geoms rather than the body origin itself — needed for
-    // k1_scene_robocup.xml's "ball" body, whose sphere geom is deliberately kept
-    // off the body origin (a freejoint-keyframe zero-padding workaround; see that
-    // file's header comment). Solves target = qpos_xyz + geom_local_pos for
+    // one of the body's own geoms rather than the body origin itself. The scenes'
+    // "ball" geom now sits on its body origin (an offset geom is numerically
+    // unstable under a free joint; see k1_scene_robocup.xml's header comment), so
+    // for the ball this reduces to place_free_body, but it stays correct for any
+    // geom that is offset. Solves target = qpos_xyz + geom_local_pos for
     // qpos_xyz (valid because the ball geom has no <geom quat=...>, i.e. zero
     // rotation relative to its body, and this function always places the body at
     // identity orientation — a rotated offset would need the body's orientation

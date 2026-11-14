@@ -185,11 +185,12 @@ def run_ball_drop_test(model, data):
         raise RuntimeError("'ball' body does not have a free joint")
     qadr = model.jnt_qposadr[joint_id]
 
-    # The ball body frame is at the origin with the sphere geom offset
-    # locally to (1.38, 0, 0.0785) -- see k1_scene_robocup.xml's header
-    # comment. Setting the body-frame z so the *geom* sits at DROP_BASE_Z:
+    # Drop from the ball's scene x/y (clear of the robot at the origin), with
+    # the body z set so the *geom* sits at DROP_BASE_Z (geom_pos is zero for
+    # the current scenes, but stay correct if it isn't).
     geom_local_z = model.geom_pos[ball_geom_id][2]
-    data.qpos[qadr : qadr + 3] = [0.0, 0.0, DROP_BASE_Z - geom_local_z]
+    x0, y0 = model.qpos0[qadr], model.qpos0[qadr + 1]
+    data.qpos[qadr : qadr + 3] = [x0, y0, DROP_BASE_Z - geom_local_z]
     data.qpos[qadr + 3 : qadr + 7] = [1.0, 0.0, 0.0, 0.0]
     data.qvel[:] = 0.0
     mujoco.mj_forward(model, data)
@@ -236,6 +237,12 @@ def run_pd_stability_check(model, data):
 
     key_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, "ready")
     mujoco.mj_resetDataKeyframe(model, data, key_id)
+    # The keyframe zero-pads the ball's free joint (burying it at the origin,
+    # under the robot); put it back at its scene rest pose like SimCore does.
+    ball_jnt = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "ball_free")
+    if ball_jnt >= 0:
+        bq = model.jnt_qposadr[ball_jnt]
+        data.qpos[bq : bq + 7] = model.qpos0[bq : bq + 7]
     mujoco.mj_forward(model, data)
 
     qpos_adr = np.array([model.jnt_qposadr[model.actuator_trnid[i, 0]] for i in range(model.nu)])
