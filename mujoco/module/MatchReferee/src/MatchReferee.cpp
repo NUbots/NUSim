@@ -212,6 +212,16 @@ namespace k1sim::module {
             if (command.action == message::MatchCommand::Action::PRIMARY) {
                 logic_->primary_action();
             }
+            else if (command.action == message::MatchCommand::Action::SET_PLAY) {
+                const bool called = logic_->call_set_play(command.side == 0 ? RoboCup::Side::home : RoboCup::Side::away,
+                                                          static_cast<RoboCup::SetPlay>(command.set_play));
+                log<NUClear::LogLevel::INFO>("MatchReferee: set play", command.set_play, "for",
+                                             command.side == 0 ? "home" : "away",
+                                             called ? "called" : "refused (not legal right now)");
+            }
+            else if (command.action == message::MatchCommand::Action::RELEASE) {
+                logic_->release_set_play();
+            }
             else {
                 reset_world_();
                 new_game();
@@ -300,6 +310,12 @@ namespace k1sim::module {
         status->primary_button = logic_->primary_label();
         status->robot_labels   = logic_->robot_labels();
         status->messages       = logic_->messages();
+        status->has_game       = logic_->scoreboard(status->home_score,
+                                                    status->away_score,
+                                                    status->secs_remaining,
+                                                    status->state,
+                                                    status->players);
+        status->connected      = connected_;
         emit(status);
     }
 

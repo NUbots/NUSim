@@ -836,9 +836,8 @@ namespace k1sim {
     }
 
     void SimCore::physics_loop() {
-        const double dt     = m_->opt.timestep;
-        const bool free_run = config_.rtf <= 0.0;
-        const double period = free_run ? 0.0 : dt / config_.rtf;
+        const double dt = m_->opt.timestep;
+        rtf_.store(config_.rtf, std::memory_order_release);
         const auto publish_every =
             static_cast<uint64_t>(config_.state_publish_divisor > 0 ? config_.state_publish_divisor : 0);
 
@@ -850,6 +849,32 @@ namespace k1sim {
 
         while (running_.load(std::memory_order_acquire)) {
             std::unique_ptr<message::RobotStatesUpdate> snapshot;
+            if (paused_.load(std::memory_order_acquire)) {
+                // Frozen world: no stepping, but keep publishing (and refresh kinematics, so a body
+                // moved by hand in the viewer shows up) at roughly the usual state rate.
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    mj_forward(m_, d_);
+                    snapshot = std::make_unique<message::RobotStatesUpdate>(capture_locked());
+                }
+                if (on_state_) {
+                    on_state_(std::make_unique<message::SimStateUpdate>(snapshot->robots.front()));
+                }
+                if (on_batch_) {
+                    on_batch_(std::move(snapshot));
+                }
+                timespec nap{};
+                clock_gettime(CLOCK_MONOTONIC, &nap);
+                sleep_until_monotonic(add_seconds(nap, 0.02));
+                clock_gettime(CLOCK_MONOTONIC, &deadline);
+                window_wall_start = to_seconds(deadline);
+                window_steps      = 0;
+                measured_rtf_.store(0.0, std::memory_order_relaxed);
+                continue;
+            }
+            const double rtf    = rtf_.load(std::memory_order_acquire);
+            const bool free_run = rtf <= 0.0;
+            const double period = free_run ? 0.0 : dt / rtf;
             {
                 std::lock_guard<std::mutex> lock(mutex_);
                 advance_locked();

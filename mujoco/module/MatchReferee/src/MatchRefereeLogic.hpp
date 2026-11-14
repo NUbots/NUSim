@@ -156,7 +156,7 @@ namespace k1sim::module::matchreferee {
             d_ = nullptr;
 
             // One step per update, so that the autoreferee sees Ready and places the ball.
-            if (cfg_.skip_kick_off_phases
+            if (cfg_.skip_kick_off_phases && !manual_set_play_
                 && !RoboCup::gc_apply(game_.get(),
                                       RoboCup::gc_action_wait_for_set_play(),
                                       RoboCup::ActionSource::autoreferee)) {
@@ -176,6 +176,26 @@ namespace k1sim::module::matchreferee {
             started_                 = true;
             const RoboCup::Side side = cfg_.kick_off_side;
             apply(RoboCup::gc_action_start_set_play(&side, RoboCup::SetPlay::kickOff));
+        }
+
+        // Calls a set play by hand (the viewer's Testing Room). It stays in force, instead of being
+        // waved straight through like a kick-off, until release_set_play().
+        bool call_set_play(RoboCup::Side side, RoboCup::SetPlay set_play) {
+            if (!apply(RoboCup::gc_action_start_set_play(&side, set_play))) {
+                return false;
+            }
+            manual_set_play_ = true;
+            return true;
+        }
+
+        // Ball free: ends a set play called by hand, as the referee's whistle would.
+        void release_set_play() {
+            if (!manual_set_play_) {
+                return;
+            }
+            manual_set_play_ = false;
+            apply(RoboCup::gc_action_wait_for_set_play());
+            apply(RoboCup::gc_action_free_set_play());
         }
 
         // What the panel's main button does: starts the game, or pauses and resumes it.
@@ -296,6 +316,19 @@ namespace k1sim::module::matchreferee {
                 text += message + "\n";
             }
             return text;
+        }
+
+        // The summary's facts as values. False until the first control message.
+        bool scoreboard(int& home, int& away, int& seconds, std::string& state, int& players) const {
+            if (!last_) {
+                return false;
+            }
+            home    = score(*last_, home_team_);
+            away    = score(*last_, away_team_);
+            seconds = last_->secs_remaining;
+            state   = last_->stopped != 0 ? "PAUSED" : gc::state_name(last_->state);
+            players = static_cast<int>(players_.size());
+            return true;
         }
 
         std::string summary(int connected) const {
@@ -505,6 +538,7 @@ namespace k1sim::module::matchreferee {
         Handle<RoboCup::Autoreferee, RoboCup::gc_autoreferee_destroy> autoreferee_;
 
         bool started_               = false;
+        bool manual_set_play_       = false;  // a set play called from the viewer is waiting for its release
         std::uint8_t packet_number_ = 0;
         std::optional<gc::GameControllerPacket> last_;
         std::vector<std::string> events_;

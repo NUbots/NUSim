@@ -78,6 +78,15 @@ namespace k1sim::message {
 
     // Emitted once by module::Locomotion at startup; consumed by module::Simulation,
     // whose physics thread drives controller->step() (see StepController).
+    // Playback control, emitted by module::Viewer and consumed by module::Simulation.
+    struct SimPauseRequest {
+        bool paused = false;
+    };
+
+    struct SimSpeedRequest {
+        double rtf = 1.0;  // real-time factor; <= 0 = free-run
+    };
+
     struct ControllerHandle {
         StepController* controller = nullptr;
         int robot_id               = 1;

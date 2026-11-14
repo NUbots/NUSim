@@ -15,6 +15,7 @@ namespace k1sim {
         bool on_field_positions = false;  // --game robots in kickoff positions, not on the touchlines
         std::string match_config;         // roster YAML, relative to config_dir unless absolute
         std::string config_dir;           // override for the config directory
+        std::string session;              // launcher's session directory (tools/match.py): setup in, restart requests out
         std::string keyframe;             // override for the startup keyframe (default "ready")
         double rtf = -1.0;                // override real-time factor; <0 = use config (0 = free-run)
         int robots = 1;                   // total K1s on the field; each robot has independent control
@@ -59,6 +60,9 @@ namespace k1sim {
             }
             else if (arg == "--match") {
                 opts.match_config = value("--match");
+            }
+            else if (arg == "--session") {
+                opts.session = value("--session");
             }
             else if (arg == "--config-dir") {
                 opts.config_dir = value("--config-dir");

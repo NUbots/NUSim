@@ -78,6 +78,7 @@ namespace k1sim::module {
             handles->data         = sim_->data();
             handles->mutex        = &sim_->mutex();
             handles->measured_rtf = &sim_->measured_rtf();
+            handles->paused       = &sim_->paused();
             handles->reset_world  = [this] { sim_->reset(); };
             handles->placed_robot = [this](int id) { sim_->placed_robot_locked(id); };
             emit(handles);
@@ -153,6 +154,12 @@ namespace k1sim::module {
                                          "dropped_deadlines",
                                          sim_->dropped_deadlines());
         });
+
+        on<Trigger<message::SimPauseRequest>>().then(
+            [this](const message::SimPauseRequest& request) { sim_->set_paused(request.paused); });
+
+        on<Trigger<message::SimSpeedRequest>>().then(
+            [this](const message::SimSpeedRequest& request) { sim_->set_rtf(request.rtf); });
 
         // Viewer Backspace restores the world and clears every controller.
         on<Trigger<message::SimResetRequest>>().then([this] {

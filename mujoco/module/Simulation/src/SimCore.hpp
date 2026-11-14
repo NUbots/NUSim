@@ -104,6 +104,18 @@ namespace k1sim {
         std::mutex& mutex() noexcept {
             return mutex_;
         }
+        // Pausing stops stepping; state snapshots keep flowing so consumers see a frozen world.
+        void set_paused(bool paused) noexcept {
+            paused_.store(paused, std::memory_order_release);
+        }
+        std::atomic<bool>& paused() noexcept {
+            return paused_;
+        }
+        // Real-time factor from now on; <= 0 free-runs.
+        void set_rtf(double rtf) noexcept {
+            rtf_.store(rtf, std::memory_order_release);
+        }
+
         std::atomic<double>& measured_rtf() noexcept {
             return measured_rtf_;
         }
@@ -197,6 +209,8 @@ namespace k1sim {
         std::array<char, 36> session_id_{};
         mutable std::mutex mutex_;
         std::atomic<double> measured_rtf_{0.0};
+        std::atomic<bool> paused_{false};
+        std::atomic<double> rtf_{1.0};  // live real-time factor; starts at config_.rtf
 
         std::atomic<bool> running_{false};
         std::thread thread_;

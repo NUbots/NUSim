@@ -18,7 +18,15 @@ mujoco/tools/install_game_controller_api.sh [path to GameController]   # needs c
 ./b match --game 3                                   # 1 to 3 a side; starts once every robot is connected
 ./b match --game 1 --away-role <role>                # a different NUbots role for each team
 ./b match --game 2 --headless                        # no window
+./b match --mode testing                             # you call the set plays from the window
+./b match --ground-truth                             # robots skip vision + localisation
 ```
+
+The window's Setup panel changes the mode, the robots a side, each team's NUbots role and perception; Apply and
+Restart closes the sim and `./b match` starts it again with the new setup. `--mode freeplay` runs `sim/soccer`, with no
+referee. `--ground-truth` gives each robot a `NUSimGroundTruth.yaml` that switches NUbots' `input::NUSimGroundTruth` on:
+it takes the robot's pose and the ball from `rt/nusim/gt/robot` and `rt/nusim/gt/ball` in place of vision and
+localisation, and the role must include that module.
 
 `./b match` starts `sim/match` and a hidden NUbots container per robot, and stops them all when the sim exits. Robot
 output is in `mujoco/build-docker/match/robot<id>/log`, and it warns if a robot stops. Roles that need a terminal, such
