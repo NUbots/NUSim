@@ -2445,7 +2445,16 @@ resize();
 
 const clock = new THREE.Clock();
 
-function tick() {
+// Drawn 60 times a second at most: a faster display would only load the GPU for a stream that updates at 25 Hz.
+const FRAME_INTERVAL = 1000 / 60;
+let nextFrameAt = 0;
+
+function tick(now) {
+  requestAnimationFrame(tick);
+  if (now < nextFrameAt - 1) return; // a millisecond's slack, so a 60 Hz display's jitter never drops a frame
+  // from the last due time rather than from now, so displays that aren't a multiple of 60 Hz still average 60
+  nextFrameAt = Math.max(nextFrameAt + FRAME_INTERVAL, now - FRAME_INTERVAL);
+
   const dt = Math.min(clock.getDelta(), 0.1);
 
   if (frames.length) {
@@ -2488,7 +2497,6 @@ function tick() {
   updateCamera(dt);
   renderer.render(scene, camera);
   drawOverlay(performance.now() / 1000);
-  requestAnimationFrame(tick);
 }
 
 setCameraMode('free');
@@ -2513,4 +2521,4 @@ if (replayUrl) {
   connect();
 }
 
-tick();
+requestAnimationFrame(tick);
