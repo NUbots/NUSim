@@ -250,8 +250,12 @@ namespace k1sim::web {
         std::ostringstream scene;
         scene << "{\"type\":\"scene\",\"id\":" << (scene_id_ + 1) << ",\"bodies\":[";
         for (int body = 0; body < m->nbody; ++body) {
+            // A robot's trunk or the ball: a root body on a free joint, which the page may pick up and move.
+            const int root       = m->body_rootid[body];
+            const bool free_root = root > 0 && m->body_jntnum[root] == 1
+                                   && m->jnt_type[m->body_jntadr[root]] == mjJNT_FREE;
             scene << (body > 0 ? "," : "") << "{\"name\":" << json_string(mj_id2name(m, mjOBJ_BODY, body))
-                  << ",\"root\":" << m->body_rootid[body] << "}";
+                  << ",\"root\":" << m->body_rootid[body] << ",\"free\":" << (free_root ? "true" : "false") << "}";
         }
         scene << "],\"geoms\":[";
 
@@ -314,30 +318,29 @@ namespace k1sim::web {
     }
 
     void WebStream::set_game(const std::string& json) {
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (json == game_json_) {
-                return;  // the GameController repeats its packet twice a second; only changes are worth sending
-            }
-            game_json_ = json;
-            game_      = std::make_shared<const std::string>(framed(0, json));
-        }
-        broadcast(game_, false);
+        set_state("game", json);  // the GameController repeats its packet twice a second; only changes are sent
     }
 
     void WebStream::set_referee(const std::string& json) {
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (json == referee_json_) {
-                return;
-            }
-            referee_json_ = json;
-            referee_      = std::make_shared<const std::string>(framed(0, json));
-        }
-        broadcast(referee_, false);
+        set_state("referee", json);
     }
 
-    void WebStream::set_command_handler(std::function<void(const std::string&)> handler) {
+    void WebStream::set_state(const std::string& key, const std::string& json) {
+        Message message;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            State& state = states_[key];
+            if (json == state.json) {
+                return;
+            }
+            state.json    = json;
+            state.message = std::make_shared<const std::string>(framed(0, json));
+            message       = state.message;
+        }
+        broadcast(message, false);
+    }
+
+    void WebStream::set_command_handler(std::function<void(const std::string&, const std::string&)> handler) {
         std::lock_guard<std::mutex> lock(mutex_);
         command_handler_ = std::move(handler);
     }
@@ -453,18 +456,18 @@ namespace k1sim::web {
         const std::string query    = question == std::string::npos ? "" : path.substr(question + 1);
         path                       = path.substr(0, question);
 
-        if (method == "POST" && path == "/referee") {
-            std::function<void(const std::string&)> handler;
+        if (method == "POST" && (path == "/referee" || path == "/sim")) {
+            std::function<void(const std::string&, const std::string&)> handler;
             {
                 std::lock_guard<std::mutex> lock(mutex_);
                 handler = command_handler_;
             }
             if (handler) {
-                handler(query);
+                handler(path, query);
                 send_response(fd, "200 OK", "text/plain", "ok");
             }
             else {
-                send_response(fd, "404 Not Found", "text/plain", "No referee here.");
+                send_response(fd, "404 Not Found", "text/plain", "No controls here.");
             }
         }
         else if (method != "GET") {
@@ -509,11 +512,8 @@ namespace k1sim::web {
                 return;
             }
             client->queue.insert(client->queue.end(), preamble_.begin(), preamble_.end());
-            if (game_) {
-                client->queue.push_back(game_);
-            }
-            if (referee_) {
-                client->queue.push_back(referee_);
+            for (const auto& state : states_) {
+                client->queue.push_back(state.second.message);
             }
             clients_.push_back(client);
         }

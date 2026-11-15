@@ -38,12 +38,14 @@
   @keyframes pulse { 50% { opacity: 0.25; } }
   @media (prefers-reduced-motion: reduce) { .chip.state.playing i { animation: none; } }
 
-  #status { position: fixed; top: 14px; left: 14px; padding: 7px 12px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; display: flex; align-items: center; gap: 7px; }
+  #status { align-self: flex-start; padding: 7px 12px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; display: flex; align-items: center; gap: 7px; }
   #status i { width: 8px; height: 8px; border-radius: 50%; background: #6b7280; }
   #status.live i { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
   #status.replay i { background: #f59e0b; }
 
-  #cams { position: fixed; top: 14px; right: 14px; padding: 4px; display: flex; gap: 2px; }
+  #cams { align-self: flex-end; padding: 4px; display: flex; gap: 2px; }
+  #cams button { padding: 6px 7px; }
+  #cams select { width: 112px; }
   button { font: inherit; color: var(--text); background: transparent; border: 0; border-radius: 8px; padding: 6px 10px; cursor: pointer; }
   button:hover { background: rgba(255, 255, 255, 0.10); }
   button.on { background: rgba(255, 255, 255, 0.18); }
@@ -56,29 +58,66 @@
   #play { width: 38px; font-size: 15px; }
   #golive.on { background: #ef4444; }
 
-  #referee { position: fixed; top: 100px; right: 14px; width: 264px; max-height: calc(100vh - 186px); overflow-y: auto; padding: 10px 12px 12px; font-size: 13px; }
-  #referee[hidden] { display: none; }
-  #referee header { display: flex; align-items: center; justify-content: space-between; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; font-size: 12px; color: var(--dim); }
-  #referee.collapsed > :not(header) { display: none; }
-  #referee h4 { margin: 12px 0 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim); }
-  #referee .row { display: flex; flex-wrap: wrap; gap: 6px; }
-  #referee .row > * { flex: 1 1 auto; }
-  #referee button { background: rgba(255, 255, 255, 0.10); border: 1px solid var(--line); padding: 7px 8px; font-weight: 600; white-space: nowrap; }
-  #referee button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.20); }
-  #referee button:disabled { opacity: 0.32; cursor: default; }
-  #referee button.go { background: #15803d; border-color: #16a34a; }
-  #referee button.go:hover:not(:disabled) { background: #16a34a; }
-  #referee button.halt { background: #b91c1c; border-color: #dc2626; }
-  #referee button.halt:hover:not(:disabled) { background: #dc2626; }
-  #referee button.home { border-left: 4px solid var(--left); }
-  #referee button.away { border-left: 4px solid var(--right); }
-  #referee select { width: 100%; font: inherit; color: var(--text); background: rgba(255, 255, 255, 0.08); border: 1px solid var(--line); border-radius: 8px; padding: 6px; }
-  #referee .players button { flex: 0 0 auto; min-width: 42px; font-variant-numeric: tabular-nums; }
-  #referee .players button.out { background: #b91c1c; border-color: #dc2626; }
-  #referee .team { margin: 8px 0 4px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Control panels: two columns down the sides, as in the simulator's own window. */
+  .column { position: fixed; top: 14px; bottom: 74px; width: 300px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; pointer-events: none; scrollbar-width: thin; }
+  .column > * { pointer-events: auto; flex: none; }
+  .column [hidden] { display: none !important; }
+  #left { left: 14px; }
+  #right { right: 14px; }
+  #overlay { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .ui { padding: 12px 14px 14px; font-size: 13px; }
+  .ui h3 { margin: 0 0 8px; font-size: 16px; font-weight: 700; }
+  .ui h4 { margin: 12px 0 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim); }
+  .ui .row { display: flex; gap: 6px; margin-top: 6px; }
+  .ui .row > button { flex: 1 1 0; min-width: 0; }
+  .ui button { background: rgba(255, 255, 255, 0.08); border: 1px solid var(--line); padding: 7px 8px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ui button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.16); }
+  .ui button:disabled { opacity: 0.35; cursor: default; }
+  .ui button.wide { display: block; width: 100%; margin-top: 6px; padding: 9px 8px; }
+  .ui button.primary { background: #2f7fe6; border-color: transparent; color: #fff; }
+  .ui button.primary:hover:not(:disabled) { background: #4a95f2; }
+  .ui button.selected { background: rgba(47, 127, 230, 0.26); border-color: #3b8ff5; color: #b8dbff; }
+  .ui button.home { border-left: 4px solid var(--left); }
+  .ui button.away { border-left: 4px solid var(--right); }
+  .ui button.out { background: #b91c1c; border-color: #dc2626; }
+  .ui select { width: 100%; margin-top: 6px; font: inherit; color: var(--text); background: rgba(255, 255, 255, 0.08); border: 1px solid var(--line); border-radius: 8px; padding: 6px; }
+  .ui select option { color: #111; }
+  #setupModes button { font-size: 12px; padding: 7px 2px; }
+  .ui .note { margin: 6px 0 0; font-size: 12px; color: var(--dim); }
+  .ui .note.warn { color: #fbbf24; }
+  .ui .note.text { color: var(--text); white-space: pre-line; }
+  .ui .note:empty { display: none; }
+  .ui .stat { display: flex; justify-content: space-between; gap: 8px; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .ui .stat span:first-child { color: var(--dim); }
+  .ui .title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .ui .title h3 { margin: 0; }
+  .ui .title button { flex: none; padding: 4px 12px; font-size: 12px; }
+  .ui .stepper { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+  .ui .stepper span:first-child { flex: 1; }
+  .ui .stepper button { width: 30px; padding: 5px 0; }
+  .ui .stepper b { width: 30px; text-align: center; font-variant-numeric: tabular-nums; }
+  .ui .label { margin: 8px 0 0; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; }
+  .ui .label.l { color: var(--left); }
+  .ui .label.r { color: var(--right); }
+  .ui .play { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+  .ui .play span { flex: 1; }
+  .ui .play button { width: 62px; padding: 5px 0; font-size: 12px; }
+  .ui .players { flex-wrap: wrap; }
+  .ui .players button { flex: 0 0 auto; min-width: 42px; font-variant-numeric: tabular-nums; }
+  .ui details { margin-top: 10px; }
+  .ui summary { cursor: pointer; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim); }
+  .ui .keys { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; font-size: 12px; }
+  .ui .keys span:nth-child(even) { color: var(--dim); }
+  #robotRows { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 10px; font-size: 12px; font-variant-numeric: tabular-nums; }
+  #robotRows .l { color: var(--left); font-weight: 600; }
+  #robotRows .r { color: var(--right); font-weight: 600; }
+  #robotRows .bad { color: #f87171; }
+  #robotRows .warn { color: #fbbf24; }
   #refToast { margin-top: 10px; padding: 6px 8px; border-radius: 8px; background: rgba(220, 38, 38, 0.25); border: 1px solid #dc2626; }
   #refToast:empty { display: none; }
-  #refState { margin-top: 8px; font-weight: 700; font-size: 15px; }
+  #scoreboard .team small { margin-left: 6px; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; color: var(--dim); }
+  #status.paused i { background: #f59e0b; }
+  body.aiming canvas#view { cursor: crosshair; }
 
   #hint { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
   #hint div { padding: 16px 22px; text-align: center; color: var(--dim); max-width: 420px; }
@@ -88,9 +127,10 @@
   #drop.on { display: flex; }
 
   @media (max-width: 640px) {
-    #referee { top: auto; bottom: 110px; left: 14px; right: 14px; width: auto; max-height: 46vh; }
-    #status { top: auto; bottom: 68px; }
-    #cams { top: auto; bottom: 68px; }
+    .column { width: 46vw; }
+    #left { left: 6px; }
+    #right { right: 6px; }
+    #cams { flex-wrap: wrap; }
     #bar .wide { display: none; }
   }
 </style>
@@ -113,20 +153,172 @@
 </div>
 <div id="mode" role="status"></div>
 
-<div id="status" class="panel"><i></i><span>CONNECTING</span></div>
+<canvas id="overlay"></canvas>
 
-<div id="cams" class="panel" role="group" aria-label="Camera">
-  <button data-cam="free" title="Free camera (1)">Free</button>
-  <button data-cam="follow" title="Follow the ball (2)">Ball</button>
-  <button data-cam="tv" title="Broadcast camera (3)">TV</button>
-  <button data-cam="top" title="Top-down camera (4)">Top</button>
-  <select id="venue" title="Venue" aria-label="Venue"><option value="village">Village Green</option><option value="stadium">Stadium</option></select>
+<div id="left" class="column">
+  <div id="status" class="panel"><i></i><span>CONNECTING</span></div>
+
+  <!-- What the launcher (./b match) started, and what it can start instead. -->
+  <aside id="setup" class="panel ui" hidden aria-label="Setup">
+    <div class="title"><h3 id="setupTitle">Game</h3><button id="setupToggle">Change</button></div>
+    <p class="note" id="setupSummary"></p>
+    <div id="setupForm" hidden>
+      <h4>Mode</h4>
+      <div class="row" id="setupModes">
+        <button data-mode="game">Game</button><button data-mode="testing">Testing Room</button><button data-mode="freeplay">Free Play</button>
+      </div>
+      <p class="note" id="setupAbout"></p>
+
+      <div id="setupTeams">
+        <h4>Teams</h4>
+        <div class="stepper"><span>Players a side</span><button id="gameLess" aria-label="Fewer players">−</button><b id="gameCount">1</b><button id="gameMore" aria-label="More players">+</button></div>
+        <p class="label l">HOME</p>
+        <select id="homeCodebase" aria-label="Home team's software"></select>
+        <p class="note warn" id="homeNote"></p>
+        <select id="homeRole" aria-label="Home team's role"></select>
+        <p class="label r">AWAY</p>
+        <select id="awayCodebase" aria-label="Away team's software"></select>
+        <p class="note warn" id="awayNote"></p>
+        <select id="awayRole" aria-label="Away team's role"></select>
+
+        <h4>Perception</h4>
+        <div class="row"><button id="useVision">Vision</button><button id="useTruth">Ground truth</button></div>
+        <p class="note" id="perceptionAbout"></p>
+      </div>
+
+      <h4>Environment</h4>
+      <div id="setupFree">
+        <select id="fieldChoice" aria-label="Field"></select>
+        <div class="stepper"><span>Robots</span><button id="robotsLess" aria-label="Fewer robots">−</button><b id="robotsCount">1</b><button id="robotsMore" aria-label="More robots">+</button></div>
+        <p class="note">Start a role yourself: <code>cd ~/NUbots</code> then <code>./b run &lt;role&gt;</code>. A GameController on the network is obeyed if one is running.</p>
+      </div>
+      <p class="note" id="setupFieldNote">Matches are played on the 14 x 9 m middle field.</p>
+      <button id="applyRestart" class="wide primary">Apply and Restart</button>
+    </div>
+  </aside>
+
+  <!-- Set plays called by hand: the call goes to the robots through the GameController, the ball goes where you click. -->
+  <aside id="setplays" class="panel ui" hidden aria-label="Set plays">
+    <h4 style="margin-top: 0">Set play · who takes it</h4>
+    <div id="setPlayRows"></div>
+    <p class="note" id="setPlayNote"></p>
+    <button id="setPlayResume" class="wide primary" hidden>Resume Play</button>
+    <button id="setPlayFree" class="wide primary" hidden>Ball Free</button>
+  </aside>
+</div>
+
+<div id="right" class="column">
+  <div id="cams" class="panel" role="group" aria-label="Camera">
+    <button data-cam="free" title="Free camera (1)">Free</button>
+    <button data-cam="follow" title="Follow the ball (2)">Ball</button>
+    <button data-cam="tv" title="Broadcast camera (3)">TV</button>
+    <button data-cam="top" title="Top-down camera (4)">Top</button>
+    <select id="venue" title="Venue" aria-label="Venue"><option value="village">Village Green</option><option value="stadium">Stadium</option></select>
+  </div>
+
+  <aside id="side" class="panel ui" hidden aria-label="Controls">
+    <!-- A refereed game (module::MatchReferee): one Start button, the referee does the rest. -->
+    <section id="matchPanel" hidden>
+      <h3>Match</h3>
+      <button id="matchStart" class="wide primary" style="margin-top: 0">Start Match</button>
+      <p class="note" id="matchNote"></p>
+      <button id="matchPrimary" class="wide">Pause Match</button>
+      <button id="matchNew" class="wide">New Game</button>
+      <div class="stat"><span>Robots online</span><span id="matchOnline">0 / 0</span></div>
+      <div id="matchMessagesBox"><h4>Referee</h4><p class="note text" id="matchMessages"></p></div>
+      <details>
+        <summary>Call by hand</summary>
+        <div class="row">
+          <button data-ref="action=kickoff&side=home" data-legal="kickoff:home" title="Ready: robots walk to their positions">Ready</button>
+          <button data-ref="action=kickoff&side=away" data-legal="kickoff:away" title="Ready: robots walk to their positions">Ready</button>
+          <button data-ref="action=set" data-legal="set" title="Set: everybody stands still">Set</button>
+          <button data-ref="action=play" data-legal="play" title="Whistle: play">Play</button>
+        </div>
+        <select id="matchSetPlay" aria-label="Set play">
+          <option value="direct_free_kick">Direct free kick</option><option value="indirect_free_kick">Indirect free kick</option>
+          <option value="penalty_kick">Penalty kick</option><option value="throw_in">Throw-in</option>
+          <option value="goal_kick">Goal kick</option><option value="corner_kick">Corner kick</option>
+        </select>
+        <div class="row">
+          <button class="home" data-ref="action=setplay&side=home" data-legal="setplay:home" data-arg="matchSetPlay">Home</button>
+          <button class="away" data-ref="action=setplay&side=away" data-legal="setplay:away" data-arg="matchSetPlay">Away</button>
+          <button data-ref="action=finish_set_play" data-legal="finish_set_play" title="Ball free">Done</button>
+        </div>
+      </details>
+    </section>
+
+    <!-- The Testing Room (module::Referee): you are the referee, nothing is called automatically. -->
+    <section id="refPanel" hidden>
+      <h3>Referee</h3>
+      <h4 style="margin-top: 0">Kick-off</h4>
+      <div class="row"><button id="kickHome">HOME</button><button id="kickAway">AWAY</button></div>
+      <p class="note" id="kickNote"></p>
+
+      <h4>Game state</h4>
+      <div class="row"><button id="stateInitial" disabled>INITIAL</button><button id="stateReady">READY</button></div>
+      <div class="row"><button id="stateSet" data-ref="action=set" data-legal="set">SET</button><button id="statePlaying" data-ref="action=play" data-legal="play">PLAYING</button></div>
+      <div class="row"><button data-ref="action=stop" data-legal="stop">Stop Play</button><button data-ref="action=resume" data-legal="resume">Resume Play</button></div>
+
+      <h4>Goal</h4>
+      <div class="row"><button data-ref="action=goal&side=home" data-legal="goal:home">Home scored</button><button data-ref="action=goal&side=away" data-legal="goal:away">Away scored</button></div>
+      <div class="row"><button data-ref="action=finish_half" data-legal="finish_half">Finish Half</button><button data-ref="action=undo" data-legal="undo" title="Take back the last decision">Undo</button></div>
+      <div class="row"><button data-ref="action=switch_half" data-legal="switch_half">Switch Half</button><button data-ref="action=stuck" data-legal="stuck" title="Global game stuck">Game Stuck</button></div>
+      <div class="row"><button data-ref="action=timeout&side=home" data-legal="timeout:home">Timeout Home</button><button data-ref="action=timeout&side=away" data-legal="timeout:away">Timeout Away</button></div>
+
+      <h4>Penalties</h4>
+      <button id="penaliseArm" class="wide" style="margin-top: 0">Penalise / Release a Robot</button>
+      <p class="note" id="penaliseNote"></p>
+      <select id="refCall" aria-label="Penalty call">
+        <option value="request_for_pick_up">Request for pick-up</option>
+        <option value="pushing">Pushing</option><option value="illegal_position">Illegal position</option>
+        <option value="motion_in_set">Motion in set</option><option value="motion_in_stop">Motion in stop</option>
+        <option value="ball_holding">Ball holding</option><option value="playing_with_arms_hands">Playing with arms / hands</option>
+        <option value="leaving_the_field">Leaving the field</option><option value="incapable_robot">Incapable robot</option>
+        <option value="local_game_stuck">Local game stuck</option>
+        <option value="caution">Caution (yellow card)</option><option value="send_off">Send off (red card)</option>
+      </select>
+      <div id="refPlayers"></div>
+      <div id="refToast" role="status"></div>
+    </section>
+
+    <section id="simPanel">
+      <h3 id="simTitle">Simulation</h3>
+      <h4 id="simHeading" hidden>Simulation</h4>
+      <button id="simPause" class="wide" style="margin-top: 0">Pause Simulation</button>
+      <button id="simReset" class="wide" title="Put everything back where it started (Backspace)">Reset Simulation</button>
+      <div id="simSpeedBox">
+        <h4>Speed</h4>
+        <div class="row" id="simSpeeds" style="margin-top: 0">
+          <button data-speed="0.25">0.25x</button><button data-speed="0.5">0.5x</button><button data-speed="1">1x</button><button data-speed="2">2x</button>
+        </div>
+      </div>
+      <div class="stat"><span>Sim time</span><span id="simTime">00:00.0</span></div>
+      <div class="stat" id="simMeasuredRow"><span>Measured speed</span><span id="simMeasured">-</span></div>
+    </section>
+
+    <section id="helpPanel" hidden>
+      <h4>Moving things</h4>
+      <div class="keys">
+        <span>Double-click</span><span>Show move handles</span>
+        <span>Drag arrow / ring</span><span>Slide / turn on the spot</span>
+        <span>Ctrl + drag</span><span>Carry it across the field</span>
+        <span>Ctrl + right-drag</span><span>Shove it (applies force)</span>
+        <span>F</span><span>Knock the first robot over</span>
+        <span>Space</span><span>Pause or resume</span>
+      </div>
+    </section>
+  </aside>
+
+  <aside id="robots" class="panel ui" hidden aria-label="Robots">
+    <h3>Robots</h3>
+    <div id="robotRows"></div>
+  </aside>
 </div>
 
 <div id="bar" class="panel">
   <button id="play" title="Play / pause (space)" aria-label="Play or pause">⏸</button>
   <span class="t" id="tnow">0:00.0</span>
-  <input id="seek" type="range" min="0" max="1" step="0.001" value="1" aria-label="Timeline">
+  <input id="seek" type="range" min="0" max="1" step="any" value="1" aria-label="Timeline">
   <span class="t" id="tend">0:00.0</span>
   <select id="speed" title="Playback speed" aria-label="Playback speed">
     <option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option>
@@ -136,66 +328,6 @@
   <button id="save" class="wide" title="Save what you have watched as a recording file">Save</button>
   <input id="file" type="file" hidden>
 </div>
-
-<aside id="referee" class="panel" hidden aria-label="Referee">
-  <header><span>Referee</span><button id="refToggle" title="Show or hide the referee panel" aria-label="Show or hide the referee panel">–</button></header>
-  <div id="refState"></div>
-
-  <h4>Game</h4>
-  <div class="row">
-    <button class="home" data-ref="action=kickoff&side=home" data-legal="kickoff:home" title="Ready: teams take their positions for the home team's kick-off">Kick-off <span data-team="0">Home</span></button>
-    <button class="away" data-ref="action=kickoff&side=away" data-legal="kickoff:away" title="Ready: teams take their positions for the away team's kick-off">Kick-off <span data-team="1">Away</span></button>
-  </div>
-  <div class="row" style="margin-top: 6px">
-    <button data-ref="action=set" data-legal="set" title="Set: everybody stands still">Set</button>
-    <button class="go" data-ref="action=play" data-legal="play" title="Whistle: play">Play</button>
-    <button class="halt" data-ref="action=stop" data-legal="stop" title="Stop play">Stop</button>
-    <button class="go" data-ref="action=resume" data-legal="resume" title="Resume play">Resume</button>
-  </div>
-  <div class="row" style="margin-top: 6px">
-    <button data-ref="action=finish_half" data-legal="finish_half">End half</button>
-    <button data-ref="action=switch_half" data-legal="switch_half">Second half</button>
-    <button data-ref="action=undo" data-legal="undo" title="Take back the last decision">Undo</button>
-  </div>
-
-  <h4>Goal</h4>
-  <div class="row">
-    <button class="home" data-ref="action=goal&side=home" data-legal="goal:home"><span data-team="0">Home</span></button>
-    <button class="away" data-ref="action=goal&side=away" data-legal="goal:away"><span data-team="1">Away</span></button>
-  </div>
-
-  <h4>Set play for</h4>
-  <select id="refSetPlay" aria-label="Set play">
-    <option value="direct_free_kick">Direct free kick</option><option value="indirect_free_kick">Indirect free kick</option>
-    <option value="penalty_kick">Penalty kick</option><option value="throw_in">Throw-in</option>
-    <option value="goal_kick">Goal kick</option><option value="corner_kick">Corner kick</option>
-  </select>
-  <div class="row" style="margin-top: 6px">
-    <button class="home" data-ref="action=setplay&side=home" data-legal="setplay:home" data-arg="refSetPlay"><span data-team="0">Home</span></button>
-    <button class="away" data-ref="action=setplay&side=away" data-legal="setplay:away" data-arg="refSetPlay"><span data-team="1">Away</span></button>
-    <button data-ref="action=finish_set_play" data-legal="finish_set_play">Done</button>
-  </div>
-
-  <h4>Players · click to penalise or release</h4>
-  <select id="refCall" aria-label="Penalty">
-    <option value="pushing">Pushing</option><option value="illegal_position">Illegal position</option>
-    <option value="motion_in_set">Motion in set</option><option value="motion_in_stop">Motion in stop</option>
-    <option value="ball_holding">Ball holding</option><option value="playing_with_arms_hands">Playing with arms / hands</option>
-    <option value="leaving_the_field">Leaving the field</option><option value="incapable_robot">Incapable robot</option>
-    <option value="request_for_pick_up">Request for pick-up</option><option value="local_game_stuck">Local game stuck</option>
-    <option value="caution">Caution (yellow card)</option><option value="send_off">Send off (red card)</option>
-  </select>
-  <div id="refPlayers"></div>
-
-  <h4>Timeout</h4>
-  <div class="row">
-    <button class="home" data-ref="action=timeout&side=home" data-legal="timeout:home"><span data-team="0">Home</span></button>
-    <button class="away" data-ref="action=timeout&side=away" data-legal="timeout:away"><span data-team="1">Away</span></button>
-    <button data-ref="action=timeout" data-legal="timeout:none">Referee</button>
-    <button data-ref="action=stuck" data-legal="stuck" title="Global game stuck">Stuck</button>
-  </div>
-  <div id="refToast" role="status"></div>
-</aside>
 
 <div id="hint"><div class="panel"><b>Waiting for the simulation</b>Start the simulator with <code>--web</code>, or drop a recording file here.</div></div>
 <div id="drop">Drop recording to replay</div>

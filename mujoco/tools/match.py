@@ -3,6 +3,7 @@
     ./b match --game 3                              3 a side, nusim/behaviour on every robot
     ./b match --game 1 --away-role <role>           a different stack for each team
     ./b match --game 2 --headless --rtf 1           no window; the game starts by itself
+    ./b match --game 2 --headless --web             no window; watch and run it all from the browser
 
 NUbots_K1 must be built first (./b target generic, ./b build there). Each robot runs in its own
 container, with its output in mujoco/<build dir>/match/robot<id>/log. Stock NUbots joins DDS domain 0
@@ -110,8 +111,14 @@ def register(command):
     command.add_argument("--vision-device", default="auto", choices=["auto", "gpu", "cpu"],
                          help="where NUbots' Yolo runs. auto uses the GPU unless NUbots' image can't drive it")
     command.add_argument("--replace", action="store_true", help="stop a ./b match that is already running first")
-    command.add_argument("--headless", action="store_true", help="no window; the game starts by itself")
+    command.add_argument("--headless", action="store_true",
+                         help="no window; the game starts by itself, unless --web is there to start it from")
     command.add_argument("--rtf", help="real-time factor")
+    command.add_argument("--web", action="store_true",
+                         help="also serve the browser viewer (http://127.0.0.1:8080/), which has the window's "
+                         "panels and controls")
+    command.add_argument("--web-host", help="address the browser viewer listens on (0.0.0.0 for other machines)")
+    command.add_argument("--web-port", type=int, help="port the browser viewer listens on")
 
 
 def available_roles(nubots_target):
@@ -292,7 +299,7 @@ def interrupt(signum, frame):
     raise KeyboardInterrupt
 
 
-def run_once(setup, session, nubots_target, headless, rtf):
+def run_once(setup, session, nubots_target, headless, rtf, web_args):
     """One sim session with its robots. Returns the window's next setup, or None once the sim just exits."""
     mode = setup["mode"]
     stop_containers(roster(3))  # from a run that didn't finish, whatever its size
@@ -327,6 +334,7 @@ def run_once(setup, session, nubots_target, headless, rtf):
     sim_args += ["--session", f"{build_dir()}/match"]
     sim_args += ["--headless"] if headless else []
     sim_args += ["--rtf", rtf] if rtf else []
+    sim_args += web_args
 
     robots = roster(setup["game"]) if roles else []
     sim = subprocess.Popen([str(MUJOCO / "docker/k1sim.sh"), "run", role, *sim_args],
@@ -376,7 +384,7 @@ def run_once(setup, session, nubots_target, headless, rtf):
 
 
 def run(game, home_role, away_role, nubots_target, mode, ground_truth, vision, vision_device, replace, headless,
-        rtf, **kwargs):
+        rtf, web, web_host, web_port, **kwargs):
     # Only one match fits on a machine: the containers, DDS domains and camera segments are shared names.
     # Starting a second would silently kill the first one's sim and robots.
     running = subprocess.run(["docker", "ps", "--quiet", "--filter", f"name=^{SIM_CONTAINER}$"],
@@ -398,6 +406,10 @@ def run(game, home_role, away_role, nubots_target, mode, ground_truth, vision, v
     signal.signal(signal.SIGTERM, interrupt)
     signal.signal(signal.SIGHUP, interrupt)
 
+    web_args = ["--web"] if web or web_host or web_port else []
+    web_args += ["--web-host", web_host] if web_host else []
+    web_args += ["--web-port", str(web_port)] if web_port else []
+
     roles = available_roles(nubots_target)
     game_role = next((role for role in NUBOTS_GAME_ROLES if role in roles), "nusim/behaviour")
     setup = dict(game=game, mode=mode, home_role=home_role or game_role, away_role=away_role or game_role,
@@ -406,7 +418,7 @@ def run(game, home_role, away_role, nubots_target, mode, ground_truth, vision, v
                  roles=roles, codebases=CODEBASES, fields=FIELDS)
     try:
         while setup is not None:
-            setup = run_once(setup, session, nubots_target, headless, rtf)
+            setup = run_once(setup, session, nubots_target, headless, rtf, web_args)
     except KeyboardInterrupt:
         pass
     finally:

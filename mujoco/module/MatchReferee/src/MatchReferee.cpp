@@ -84,8 +84,8 @@ namespace k1sim::module {
         if (cli().game == 0) {
             throw std::runtime_error("sim/match needs --game <n> (see --help)");
         }
-        // Nothing can press Start without a window.
-        if (cli().headless && cfg_->auto_start_after < 0.0) {
+        // Nothing can press Start without a window or the browser viewer.
+        if (cli().headless && !cli().web && cfg_->auto_start_after < 0.0) {
             cfg_->auto_start_after = 30.0;
         }
 
@@ -169,8 +169,9 @@ namespace k1sim::module {
                         custom_robots_.insert(robot.identity.robot_id);
                     }
                 }
-                // With a window, its Start button decides; without one the game starts by itself.
-                if (cfg_->auto_start_when_connected && cli().headless
+                // With a window or the browser viewer, its Start button decides; without either the game
+                // starts by itself.
+                if (cfg_->auto_start_when_connected && cli().headless && !cli().web
                     && connected_ == static_cast<int>(states.robots.size())) {
                     logic_->start_kick_off();
                 }
