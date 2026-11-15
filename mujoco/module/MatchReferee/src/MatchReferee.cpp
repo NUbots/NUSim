@@ -47,7 +47,7 @@ namespace k1sim::module {
             std::ifstream file(path);
             if (!file) {
                 throw std::runtime_error("MatchReferee: can't read " + path
-                                         + " (see tools/install_game_controller_api.sh)");
+                                         + " (see mujoco/tools/install_game_controller_api.sh)");
             }
             std::stringstream content;
             content << file.rdbuf();

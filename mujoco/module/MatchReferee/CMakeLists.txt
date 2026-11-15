@@ -14,7 +14,7 @@ find_library(
 if(NOT GC_API_LIBRARY OR NOT EXISTS "${GC_API_PREFIX}/include/GameController.h")
   unset(GC_API_LIBRARY CACHE)
   message(STATUS "GameController API not staged: skipping MatchReferee and sim/match "
-                 "(run tools/install_game_controller_api.sh to enable them)"
+                 "(run mujoco/tools/install_game_controller_api.sh to enable them)"
   )
   return()
 endif()

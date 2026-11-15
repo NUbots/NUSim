@@ -346,7 +346,7 @@ def run(game, home_role, away_role, nubots_target, mode, ground_truth, vision, v
         sys.exit("error: a ./b match is already running on this machine. Close its window first, or pass --replace")
 
     if not (MUJOCO / build_dir() / "bin/sim/match").exists():
-        sys.exit("error: no bin/sim/match. Run tools/install_game_controller_api.sh, ./b configure and ./b build")
+        sys.exit("error: no bin/sim/match. Run mujoco/tools/install_game_controller_api.sh, ./b configure and ./b build")
 
     session = MUJOCO / build_dir() / "match"
     session.mkdir(parents=True, exist_ok=True)
