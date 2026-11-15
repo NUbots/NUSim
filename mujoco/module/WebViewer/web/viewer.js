@@ -2374,7 +2374,10 @@ $('seek').addEventListener('input', () => {
   const first = frames[0].t, last = frames[frames.length - 1].t;
   playhead = first + Number($('seek').value) * (last - first);
 });
-$('seek').addEventListener('change', () => { seeking = false; });
+// let go: the arrow keys step frames again rather than nudging the focused slider as well
+const seekDone = () => { seeking = false; $('seek').blur(); };
+$('seek').addEventListener('change', seekDone);
+$('seek').addEventListener('pointerup', seekDone); // no "change" when the dot was pressed but not moved
 $('venue').value = venue;
 $('venue').addEventListener('change', () => {
   venue = $('venue').value;
@@ -2480,7 +2483,9 @@ function tick(now) {
     updateCeremony(frame ? frame.game : null, performance.now() / 1000);
     $('simTime').textContent = formatTime(last); // the panels always act on the live game, wherever the playhead is
 
-    if (!seeking) $('seek').value = last > first ? (playhead - first) / (last - first) : 1;
+    // Live, the dot sits at the end: the playhead trails the newest frame by a fixed moment, and placing it
+    // by that ratio made it tremble as each frame arrived.
+    if (!seeking) $('seek').value = live || last <= first ? 1 : (playhead - first) / (last - first);
     $('tnow').textContent = formatTime(playhead);
     $('tend').textContent = formatTime(last);
     $('golive').classList.toggle('on', live);
