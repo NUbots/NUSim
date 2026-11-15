@@ -132,12 +132,20 @@ def yolo_config(choice, nubots_target, session):
     and fails on it ("Unsupported SM: 0xc00"), leaving the robots blind. Those GPUs fall back to the CPU.
     """
     if choice == "auto":
-        gpu = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
-                             capture_output=True, text=True).stdout
-        choice = "cpu" if re.search(r"RTX 50\d\d", gpu) else "gpu"
-        if choice == "cpu":
-            print(f"Vision: {gpu.strip()} is too new for the TensorRT in NUbots' image, so Yolo runs on the CPU "
+        try:
+            gpu = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+                                 capture_output=True, text=True).stdout.strip()
+        except FileNotFoundError:
+            gpu = ""
+        if not gpu:
+            choice = "cpu"
+            print("Vision: no NVIDIA GPU found, so Yolo runs on the CPU (--vision-device gpu overrides)", flush=True)
+        elif re.search(r"RTX 50\d\d", gpu):
+            choice = "cpu"
+            print(f"Vision: {gpu} is too new for the TensorRT in NUbots' image, so Yolo runs on the CPU "
                   "(--vision-device gpu overrides)", flush=True)
+        else:
+            choice = "gpu"
     if choice == "gpu":
         return None
     user = getpass.getuser()
@@ -291,7 +299,7 @@ def run_once(setup, session, nubots_target, headless, rtf):
 
     robots = roster(setup["game"]) if roles else []
     sim = subprocess.Popen([str(MUJOCO / "docker/k1sim.sh"), "run", role, *sim_args],
-                           env=dict(os.environ, K1SIM_RUN_FLAGS=run_flags))
+                           env=dict(os.environ, K1SIM_RUN_FLAGS=run_flags, K1SIM_DOCKER_TTY="-i"))  # -i: a tty would eat ^C
 
     try:
         time.sleep(SIM_STARTUP_SECONDS)
