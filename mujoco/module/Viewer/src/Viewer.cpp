@@ -81,6 +81,13 @@ namespace k1sim::module {
         message::MatchStatus g_match_status;
         std::vector<std::string> g_legal;  // module::Referee: decisions the rules allow now
         std::vector<viewer::UIState::Robot> g_robots;
+        // Every robot's latest state (RobotStatesUpdate, 50 Hz), for the Robots panel.
+        struct RobotMode {
+            RobotIdentity identity;
+            int mode       = -1;
+            int fall_state = 0;
+        };
+        std::vector<RobotMode> g_robot_modes;
         // Set by the mouse callback when a robot is clicked with "Penalise" armed: (side, player, penalised).
         std::optional<viewer::UIState::Robot> g_penalise_pick;
 
@@ -210,6 +217,15 @@ namespace k1sim::module {
                 case booster::CUSTOM: return "CUSTOM";
                 case booster::SOCCER: return "SOCCER";
                 default: return "?";
+            }
+        }
+
+        const char* fall_name(int fall_state) {
+            switch (fall_state) {
+                case booster::IS_FALLING: return "FALLING";
+                case booster::HAS_FALLEN: return "FALLEN";
+                case booster::IS_GETTING_UP: return "GETTING UP";
+                default: return "";
             }
         }
 
@@ -897,6 +913,14 @@ namespace k1sim::module {
             g_legal = status.legal;
         });
 
+        on<Trigger<message::RobotStatesUpdate>>().then([](const message::RobotStatesUpdate& states) {
+            std::lock_guard<std::mutex> lock(g_match_mutex);
+            g_robot_modes.clear();
+            for (const auto& robot : states.robots) {
+                g_robot_modes.push_back({robot.identity, robot.mode, robot.fall_state});
+            }
+        });
+
         on<Trigger<message::SimStateUpdate>>().then([](const message::SimStateUpdate& state) {
             g_sim_time.store(state.sim_time, std::memory_order_relaxed);
             g_mode.store(state.mode, std::memory_order_relaxed);
@@ -986,6 +1010,22 @@ namespace k1sim::module {
                         ui.match = g_match_status;
                         ui.legal  = g_legal;
                         ui.robots = g_robots;
+                        // Teams only mean something when a game is on; Free Play's robots are just numbered.
+                        const bool teams = ui.match.has_game || (ui.launcher && ui.running.mode != viewer::MODE_FREEPLAY);
+                        ui.robot_status.clear();
+                        for (const auto& robot : g_robot_modes) {
+                            viewer::UIState::RobotStatus status;
+                            status.robot_id = robot.identity.robot_id;
+                            status.player   = robot.identity.player_id;
+                            status.side     = !teams ? -1 : robot.identity.team_id == g_robot_modes.front().identity.team_id ? 0 : 1;
+                            status.mode     = mode_name(robot.mode);
+                            status.fall     = fall_name(robot.fall_state);
+                            const std::string body = robot.identity.body();
+                            for (const auto& governed : g_robots) {
+                                status.penalised = status.penalised || (governed.body == body && governed.penalised);
+                            }
+                            ui.robot_status.push_back(status);
+                        }
                     }
                     const bool hand_referee = ui.launcher && ui.running.mode == viewer::MODE_TESTING;
                     const viewer::UIActions actions = g_ui->render(ui);
