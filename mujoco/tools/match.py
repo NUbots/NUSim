@@ -57,12 +57,14 @@ cameras:
 
 # NUbots' FieldDescription.yaml preset keys, and where match.yaml's field has each value.
 # Read by NUbots' input::NUSimGroundTruth, which takes NUSim's rt/nusim/gt topics in place of vision + localisation.
-GROUND_TRUTH = """log_level: {log_level}
-ground_truth: true
+# Used only when the NUbots build has no NUSimGroundTruth.yaml of its own to start from (see ground_truth_config).
+GROUND_TRUTH = """log_level: INFO
+ground_truth: false
 robot_topic: rt/nusim/gt/robot
 ball_topic: rt/nusim/gt/ball
-world_to_field_yaw: {yaw}
+world_to_field_yaw: 0.0
 timeout: 0.5
+warning_period: 5.0
 """
 
 MODES = ["game", "testing", "freeplay"]
@@ -187,6 +189,31 @@ def field_description(nubots_target):
     return text.replace("presets:\n", f"presets:\n  nusim:\n{preset}", 1)
 
 
+def ground_truth_config(nubots_target):
+    """The NUbots build's own NUSimGroundTruth.yaml, for start_robot to change per robot.
+
+    Starting from the build's file keeps every key its module reads. A file written from scratch here goes stale
+    whenever NUbots adds a key: the module's config then fails to load and it listens on no topic at all, so the
+    robots quietly fall back to vision and localisation.
+    """
+    user = getpass.getuser()
+    stock = subprocess.run(
+        ["docker", "run", "--rm", "--entrypoint", "cat",
+         "--volume", f"nubots_{nubots_target}_{user}_build:{CONTAINER_BUILD}",
+         f"{user}/nubots:{nubots_target}", f"{CONTAINER_BUILD}/config/NUSimGroundTruth.yaml"],
+        capture_output=True, text=True,
+    )  # fmt: skip
+    return stock.stdout if stock.returncode == 0 and "ground_truth:" in stock.stdout else GROUND_TRUTH
+
+
+def set_key(text, key, value):
+    """A config file's text with one top-level key set, added if the file doesn't have it."""
+    line = f"{key}: {value}"
+    if re.search(rf"^{key}:", text, flags=re.M):
+        return re.sub(rf"^{key}:.*$", line, text, flags=re.M)
+    return f"{text.rstrip()}\n{line}\n"
+
+
 def roster(game):
     """The default roster, as config::robot_roster() builds it."""
     first_domain = int(config_value("dds.yaml", "domain"))
@@ -214,7 +241,11 @@ def start_robot(robot, role, session, nubots_target, ground_truth, first_team):
     (directory / "NUSimCamera.yaml").write_text(CAMERA.format(segment=segment))
     # NUbots' field frame has its own goal on +x. The first team defends the sim's -x goal.
     yaw = math.pi if first_team else 0.0
-    (directory / "NUSimGroundTruth.yaml").write_text(GROUND_TRUTH.format(yaw=yaw, log_level=os.environ.get("K1SIM_GROUND_TRUTH_LOG", "INFO")))
+    truth = (session / "NUSimGroundTruth.yaml").read_text()
+    for key, value in (("ground_truth", "true"), ("world_to_field_yaw", yaw),
+                       ("log_level", os.environ.get("K1SIM_GROUND_TRUTH_LOG", "INFO"))):
+        truth = set_key(truth, key, value)
+    (directory / "NUSimGroundTruth.yaml").write_text(truth)
     truth_config = f"{CONTAINER_BUILD}/config/NUSimGroundTruth.yaml"
     truth_mount = ["--volume", f"{directory}/NUSimGroundTruth.yaml:{truth_config}:ro"] if ground_truth else []
 
@@ -359,6 +390,7 @@ def run(game, home_role, away_role, nubots_target, mode, ground_truth, vision, v
     session = MUJOCO / build_dir() / "match"
     session.mkdir(parents=True, exist_ok=True)
     (session / "FieldDescription.yaml").write_text(field_description(nubots_target))
+    (session / "NUSimGroundTruth.yaml").write_text(ground_truth_config(nubots_target))
     (session / "Yolo.yaml").unlink(missing_ok=True)
     yolo_config(vision_device, nubots_target, session)
 
