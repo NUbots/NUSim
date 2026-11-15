@@ -10,5 +10,6 @@ if(TARGET k1sim_module_matchreferee)
     MatchCameras
     MatchReferee
     Viewer
+    WebViewer
   )
 endif()

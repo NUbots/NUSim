@@ -69,6 +69,7 @@ mujoco/tools/install_game_controller_api.sh   # or pass the path to a GameContro
 ./b match --game 3                            # 1 to 3 a side; starts once every robot connects
 ./b match --game 1 --away-role <role>         # a different NUbots role for one team
 ./b match --game 2 --headless                 # no window
+./b match --game 2 --headless --web             # no window, watch in the browser at http://127.0.0.1:8080/
 ```
 
 Robots run `nusim/behaviour` unless told otherwise, and use their own vision and localisation, not ground truth. Their
