@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <deque>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mujoco/mujoco.h>
 #include <mutex>
@@ -56,9 +57,13 @@ namespace k1sim::web {
         // latest one. Repeats are dropped.
         void set_referee(const std::string& json);
 
-        // Called (on a connection thread) with the query string of every POST /referee, e.g.
-        // "action=goal&side=home": a button pressed on the viewer's referee panel.
-        void set_command_handler(std::function<void(const std::string&)> handler);
+        // Publishes any other piece of state the page shows: a JSON object {"type":"<key>", ...}. New viewers get
+        // the latest one of every key. Repeats are dropped.
+        void set_state(const std::string& key, const std::string& json);
+
+        // Called (on a connection thread) with the path and query string of every POST /referee and POST /sim,
+        // e.g. ("/referee", "action=goal&side=home"): a button pressed, or a body dragged, on the viewer's page.
+        void set_command_handler(std::function<void(const std::string&, const std::string&)> handler);
 
         // Quotes and escapes a string for use in JSON.
         static std::string quote(const std::string& text);
@@ -97,11 +102,12 @@ namespace k1sim::web {
         std::vector<std::shared_ptr<Client>> clients_;
         std::vector<Message> preamble_;                 // mesh + scene messages every new viewer needs first
         std::vector<std::string> mesh_keys_;            // meshes already part of the preamble
-        Message game_;                                  // latest game state, sent to new viewers after the preamble
-        std::string game_json_;                         // its payload, to publish changes only
-        Message referee_;                               // latest referee status, likewise
-        std::string referee_json_;
-        std::function<void(const std::string&)> command_handler_;
+        struct State {
+            std::string json;  // the payload, to publish changes only
+            Message message;
+        };
+        std::map<std::string, State> states_;           // latest of each state, sent to new viewers after the preamble
+        std::function<void(const std::string&, const std::string&)> command_handler_;
     };
 
 }  // namespace k1sim::web

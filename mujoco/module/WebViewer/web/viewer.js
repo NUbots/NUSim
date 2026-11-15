@@ -1,5 +1,6 @@
 // Browser viewer of NUSim (module::WebViewer): renders the streamed scene, replays recordings and operates the
-// built-in referee.
+// simulator the way its own window does (setup, match and referee controls, pause / reset / speed, set plays,
+// moving robots and the ball by hand).
 // MuJoCo conventions are kept throughout: z is up, quaternions arrive as (w, x, y, z).
 
 import * as THREE from 'three';
@@ -854,6 +855,8 @@ let shownSceneId = -1;
 let bodyObjects = [];      // body id -> Object3D
 let robotLabels = [];      // {sprite, body}
 let ballObject = null;     // the object whose position the ball cameras follow
+let ballBody = -1;         // the ball's body id
+let pickMeshes = [];       // every mesh of the simulated scene (not the venue), for picking bodies with the mouse
 let fieldHalf = { x: 11, y: 7 };
 let decorReach = 20;               // radius the shadows must cover for the venue dressing
 let stadiumHalf = { x: 11, y: 7 }; // extent of the ground the surroundings are built around
@@ -1002,6 +1005,11 @@ function buildScene(description) {
   bodyObjects = [];
   robotLabels = [];
   ballObject = null;
+  ballBody = -1;
+  pickMeshes = [];
+  gizmo.body = -1; // body ids belong to the scene that was shown
+  gizmo.drag = null;
+  selectedBody = -1;
 
   // Bodies with dedicated visual geoms (robots) use their colliding geoms as collision shapes only.
   const hasVisual = new Set(description.geoms.filter((geom) => geom.collide === false).map((geom) => geom.body));
@@ -1025,7 +1033,9 @@ function buildScene(description) {
 
     const body = description.bodies[geom.body];
     const mesh = new THREE.Mesh(geometry, materialFor(geom, isCollision));
-    if (isBall) ballObject = mesh;
+    if (isBall) { ballObject = mesh; ballBody = geom.body; }
+    mesh.userData.body = geom.body;
+    pickMeshes.push(mesh);
     mesh.position.fromArray(geom.pos);
     mesh.quaternion.set(geom.quat[1], geom.quat[2], geom.quat[3], geom.quat[0]);
 
@@ -1100,8 +1110,9 @@ function handleText(text) {
     sceneDescriptions.set(message.id, message);
   } else if (message.type === 'game') {
     latestGame = message;
-  } else if (message.type === 'referee') {
-    showReferee(message);
+    panelsDirty = true;
+  } else {
+    handleControl(message);
   }
 }
 
@@ -1115,7 +1126,11 @@ function handleBinary(buffer) {
   // the simulation time went backwards: a new simulation started, so the old timeline is void
   if (frames.length && time < frames[frames.length - 1].t) frames.length = 0;
 
-  frames.push({ t: time, scene: view.getUint32(4, true), poses, game: latestGame });
+  const frame = { t: time, scene: view.getUint32(4, true), poses, game: latestGame };
+  // the simulation is paused: the same instant again, with whatever was moved by hand since
+  const last = frames[frames.length - 1];
+  if (last && last.t === time && last.scene === frame.scene) frames[frames.length - 1] = frame;
+  else frames.push(frame);
   if (frames.length > MAX_FRAMES) frames.splice(0, 1000);
   $('hint').classList.add('hidden');
 }
@@ -1171,6 +1186,17 @@ async function connect() {
     streamAbort = new AbortController();
     const response = await fetch('/stream', { signal: streamAbort.signal, cache: 'no-store' });
     if (!response.ok || !response.body) throw new Error('no stream');
+    // a new stream may be a new simulator (after "Apply and Restart"): nothing of the last one carries over
+    frames.length = 0;
+    sceneDescriptions.clear();
+    shownSceneId = -1;
+    latestGame = shownGame = null;
+    $('scoreboard').hidden = true;
+    $('mode').textContent = '';
+    forgetStream();
+    streamOpen = true;
+    live = true;
+    paused = false;
     setStatus('live', 'LIVE');
     const parser = new RecordParser();
     const reader = response.body.getReader();
@@ -1181,6 +1207,8 @@ async function connect() {
   } catch (error) {
     // fall through to the retry below
   }
+  streamOpen = false;
+  panelsDirty = true;
   if (replayMode) return;
   setStatus('', 'DISCONNECTED');
   setTimeout(connect, 2000);
@@ -1194,7 +1222,8 @@ function loadRecording(buffer, label) {
   }
 
   replayMode = true;
-  $('referee').hidden = true;
+  streamOpen = false;
+  forgetStream();
   if (streamAbort) streamAbort.abort();
   frames.length = 0;
   latestGame = null;
@@ -1354,8 +1383,14 @@ function showGame(game) {
   if (!game || game === shownGame) return;
   shownGame = game;
   $('scoreboard').hidden = false;
-  $('teamL').textContent = game.left;
-  $('teamR').textContent = game.right;
+  // Under the launcher the teams are known by their software, as on the window's scoreboard.
+  const named = !replayMode && session?.launcher && session.mode !== 'freeplay';
+  const showTeam = (element, name, tag) => {
+    element.textContent = name;
+    if (named) element.append(Object.assign(document.createElement('small'), { textContent: tag }));
+  };
+  showTeam($('teamL'), named ? session.homeCodebase : game.left, 'HOME');
+  showTeam($('teamR'), named ? session.awayCodebase : game.right, 'AWAY');
   $('teamL').style.borderLeftColor = cssColour(teamColour(game, 0));
   $('teamR').style.borderRightColor = cssColour(teamColour(game, 1));
   $('score').textContent = `${game.scoreLeft} : ${game.scoreRight}`;
@@ -1409,76 +1444,861 @@ function modeText(mode) {
   return String(mode).split('|').map((part) => part.trim()).filter((part) => part && !/^(False|True|none|-?\d+(\.\d+)?)$/.test(part)).map((part) => part.replace(/_/g, ' ')).join('  ·  ');
 }
 
-// ---------------------------------------------------------------- referee panel
-// With a simulator that runs the GameController itself (NUSim --referee), the panel operates it: each button
-// posts a decision, and the simulator reports back which decisions the rules allow at the moment.
+// ---------------------------------------------------------------- control panels
+// What the simulator's own window offers, for a live stream: the launcher's setup, the match and referee
+// controls, pause / reset / speed, the robots' modes and set plays. Each button posts a request to the simulator
+// (POST /referee for a referee's decision, POST /sim for everything else), which reports back what it now shows.
 
-let refereeStatus = null;
+let session = null;        // what the launcher started, and whether things may be moved by hand
+let simStatus = null;      // pause state, speed and every robot's mode
+let matchStatus = null;    // the automatic referee's panel (module::MatchReferee)
+let refereeStatus = null;  // which decisions the rules allow right now
+let streamOpen = false;
+let panelsDirty = true;
 let refereeToastTimer = 0;
 
-function sendReferee(query) {
-  fetch(`/referee?${query}`, { method: 'POST' }).catch(() => {});
+const SIDE = ['home', 'away'];
+const TEAM_TAG = ['HOME', 'AWAY'];
+
+const sendReferee = (query) => fetch(`/referee?${query}`, { method: 'POST' }).catch(() => {});
+const sendSim = (query) => fetch(`/sim?${query}`, { method: 'POST' }).catch(() => {});
+
+// The page can operate the simulation: it is a live stream from a simulator that reports its state.
+const interactive = () => !replayMode && streamOpen && simStatus !== null;
+// Robots and the ball can be moved by hand everywhere except in a refereed game, and only where they are now.
+const handsOn = () => interactive() && live && session?.handsOn !== false;
+// The GameController operated by hand (module::Referee), rather than the automatic referee.
+const handReferee = () => refereeStatus !== null && refereeStatus.source !== 'match';
+// An empty list means "not known yet": offer everything, as the window does.
+const allowed = (decision) => !refereeStatus || !refereeStatus.legal.length || refereeStatus.legal.includes(decision);
+
+function forgetStream() {
+  session = simStatus = matchStatus = refereeStatus = null;
+  wanted = null;
+  setupOpen = false;
+  penaliseArmed = false;
+  Object.assign(setPlay, { play: null, placing: false, stage: 'idle' });
+  gizmo.body = -1; gizmo.drag = null; selectedBody = -1; pushing.active = false;
+  panelsDirty = true;
 }
 
-function showReferee(status) {
-  const answered = refereeStatus && status.seq !== refereeStatus.seq;
-  refereeStatus = status;
-  $('referee').hidden = replayMode;
-  const legal = new Set(status.legal);
-  for (const button of document.querySelectorAll('#referee [data-legal]')) button.disabled = !legal.has(button.dataset.legal);
-  // only one of stop / resume applies at a time
-  document.querySelector('#referee [data-legal=stop]').hidden = legal.has('resume');
-  document.querySelector('#referee [data-legal=resume]').hidden = !legal.has('resume');
-  if (answered) {
-    $('refToast').textContent = status.ok ? '' : status.text.replace(/_/g, ' ');
-    clearTimeout(refereeToastTimer);
-    refereeToastTimer = setTimeout(() => { $('refToast').textContent = ''; }, 3500);
+function handleControl(message) {
+  if (replayMode) return; // a recording has nothing to operate
+  if (message.type === 'session') {
+    session = message;
+    wanted = null;
+    shownGame = null; // the scoreboard names the teams' software
+    fillSetup();
+  } else if (message.type === 'sim') {
+    simStatus = message;
+  } else if (message.type === 'match') {
+    matchStatus = message;
+  } else if (message.type === 'referee') {
+    const answered = refereeStatus && message.seq !== refereeStatus.seq;
+    refereeStatus = message;
+    if (answered) {
+      $('refToast').textContent = message.ok ? '' : message.text.replace(/_/g, ' ');
+      clearTimeout(refereeToastTimer);
+      refereeToastTimer = setTimeout(() => { $('refToast').textContent = ''; }, 3500);
+    }
+  }
+  panelsDirty = true;
+}
+
+function refreshPanels() {
+  const on = interactive();
+  const launcher = on && Boolean(session?.launcher);
+  const freeplay = launcher && session.mode === 'freeplay';
+  const referee = on && handReferee();
+  const match = on && !referee && matchStatus !== null && !freeplay;
+
+  $('setup').hidden = !launcher;
+  $('setplays').hidden = !(referee && latestGame && !setupOpen);
+  $('side').hidden = !on;
+  $('matchPanel').hidden = !match;
+  $('refPanel').hidden = !referee;
+  $('simTitle').hidden = match || referee;
+  $('simHeading').hidden = !(match || referee);
+  $('simSpeedBox').hidden = $('simMeasuredRow').hidden = freeplay; // Free Play is the bare simulator
+  $('helpPanel').hidden = !on || session?.handsOn === false;
+  $('robots').hidden = !(on && simStatus.robots.length);
+  document.body.classList.toggle('aiming', on && (penaliseArmed || setPlay.placing));
+  if (!on) return;
+
+  for (const button of document.querySelectorAll('.ui [data-legal]')) button.disabled = !allowed(button.dataset.legal);
+  if (launcher) showSetup();
+  if (match) showMatch();
+  if (referee) { showRefereePanel(); showSetPlays(); }
+  showSim();
+  showRobots();
+}
+
+// ---- Simulation: pause, reset, speed
+
+function showSim() {
+  const paused = simStatus.paused;
+  $('simPause').textContent = paused ? 'Resume Simulation' : 'Pause Simulation';
+  $('simPause').classList.toggle('primary', paused);
+  for (const button of document.querySelectorAll('#simSpeeds button')) button.classList.toggle('selected', Number(button.dataset.speed) === simStatus.speed);
+  $('simMeasured').textContent = paused ? 'paused' : `${simStatus.rtf.toFixed(2)}x`;
+  setStatus(paused ? 'paused' : 'live', paused ? 'PAUSED' : 'LIVE');
+}
+
+function resetSimulation() {
+  if (!interactive()) return;
+  gizmo.body = -1; gizmo.drag = null; selectedBody = -1; pushing.active = false;
+  sendSim('action=reset');
+}
+
+// Space and the play button: pause the simulation itself while watching it live, else the playback.
+function togglePause() {
+  if (interactive() && live) sendSim(`action=pause&paused=${simStatus.paused ? 0 : 1}`);
+  else setPaused(!paused);
+}
+
+$('simPause').addEventListener('click', () => sendSim(`action=pause&paused=${simStatus?.paused ? 0 : 1}`));
+$('simReset').addEventListener('click', resetSimulation);
+for (const button of document.querySelectorAll('#simSpeeds button')) {
+  button.addEventListener('click', () => {
+    if (simStatus) simStatus.speed = Number(button.dataset.speed);
+    sendSim(`action=speed&rtf=${button.dataset.speed}`);
+    panelsDirty = true;
+  });
+}
+
+// ---- Robots: one row per robot with its Booster mode and whether it is down or penalised
+
+let robotsKey = '';
+function showRobots() {
+  // Teams only mean something when a game is on; Free Play's robots are just numbered.
+  const teams = Boolean(latestGame) || (session?.launcher && session.mode !== 'freeplay');
+  const penalised = new Set((latestGame?.robots || []).filter((robot) => robot.penalty).map((robot) => robot.body));
+  const rows = simStatus.robots.map((robot) => ({
+    tag: teams ? `${TEAM_TAG[robot.side]} ${robot.player}` : `Robot ${robot.id}`,
+    team: teams ? (robot.side === 0 ? 'l' : 'r') : '',
+    mode: robot.mode,
+    note: penalised.has(robot.body) ? 'PENALISED' : robot.fall,
+    noteClass: penalised.has(robot.body) ? 'warn' : 'bad',
+  }));
+  const key = JSON.stringify(rows);
+  if (key === robotsKey) return;
+  robotsKey = key;
+  const box = $('robotRows');
+  box.textContent = '';
+  for (const row of rows) {
+    for (const [text, className] of [[row.tag, row.team], [row.mode, ''], [row.note, row.noteClass]]) {
+      const cell = document.createElement('span');
+      cell.textContent = text;
+      cell.className = className;
+      box.append(cell);
+    }
   }
 }
 
-// Team names, the game state and one button per player, from the game state.
-let refereePlayersKey = '';
-function showRefereeGame(game) {
-  if (!refereeStatus) return;
-  for (const span of document.querySelectorAll('#referee [data-team]')) span.textContent = span.dataset.team === '0' ? game.left : game.right;
-  $('refState').textContent = `${game.state || ''}${game.secondaryTime > 0 ? ` · ${game.secondaryTime}s` : ''}`;
-  $('referee').style.setProperty('--left', cssColour(teamColour(game, 0)));
-  $('referee').style.setProperty('--right', cssColour(teamColour(game, 1)));
+// ---- Match: a refereed game. One Start button: robots walk on from the touchlines (Ready); once they have
+// stopped it is Set and the ball goes to the centre mark; two seconds later it is Playing and the clock runs.
 
-  const robots = game.robots || [];
-  const key = robots.map((robot) => `${robot.side}${robot.player}${robot.penalty}${robot.penaltySecs}`).join('|') + game.left + game.right;
+function showMatch() {
+  const phase = matchStatus.state;
+  const initial = !phase || phase === 'INITIAL';
+  const primary = matchStatus.primary;
+  $('matchStart').hidden = !initial;
+  $('matchNote').textContent = initial ? 'Robots walk to their positions, then the referee calls Set and Playing by itself.'
+    : phase === 'READY' ? 'READY: robots are moving to their positions. Set follows once they stop.'
+    : phase === 'SET' ? 'SET: ball on the centre mark. Playing in two seconds.' : '';
+  $('matchNote').classList.toggle('warn', !initial);
+  $('matchPrimary').hidden = initial || !(primary === 'Pause' || primary === 'Resume');
+  $('matchPrimary').textContent = `${primary} Match`;
+  $('matchPrimary').classList.toggle('primary', primary === 'Resume');
+  $('matchNew').hidden = initial;
+  $('matchOnline').textContent = `${matchStatus.connected} / ${matchStatus.players}`;
+  $('matchMessagesBox').hidden = !matchStatus.messages;
+  $('matchMessages').textContent = matchStatus.messages.trim();
+}
+
+$('matchStart').addEventListener('click', () => sendReferee('action=primary'));
+$('matchPrimary').addEventListener('click', () => sendReferee('action=primary'));
+$('matchNew').addEventListener('click', () => sendReferee('action=new_game'));
+
+// ---- Referee: the Testing Room. Every button is a decision for the built-in GameController, enabled when the
+// rules allow it; nothing is called automatically.
+
+let kickOffTeam = 0;
+let penaliseArmed = false; // the next robot clicked on the field is penalised (or let back on)
+let refereePlayersKey = '';
+
+function showRefereePanel() {
+  // The GameController decides who may kick off (referee.yaml's kick_off at the start, then the team that
+  // conceded). Follow it, and say so, rather than offer a call it would refuse.
+  const known = refereeStatus.legal.length > 0;
+  const may = [allowed('kickoff:home'), allowed('kickoff:away')];
+  if (known && !may[kickOffTeam] && may[1 - kickOffTeam]) kickOffTeam = 1 - kickOffTeam;
+  [$('kickHome'), $('kickAway')].forEach((button, team) => {
+    button.classList.toggle('selected', kickOffTeam === team);
+    button.disabled = known && !may[team] && may[1 - team];
+  });
+  $('kickNote').textContent = !known || may[0] === may[1] ? 'Who takes the next kick-off. The first one is kick_off in config/referee.yaml.'
+    : `The rules give this kick-off to ${may[0] ? 'Home' : 'Away'} (kick_off in config/referee.yaml sets the first one).`;
+
+  const phase = latestGame?.state || '';
+  for (const [id, name] of [['stateInitial', 'INITIAL'], ['stateReady', 'READY'], ['stateSet', 'SET'], ['statePlaying', 'PLAYING']]) $(id).classList.toggle('selected', phase === name);
+  $('stateReady').disabled = !allowed(`kickoff:${SIDE[kickOffTeam]}`);
+
+  const robots = latestGame?.robots || [];
+  const out = robots.filter((robot) => robot.penalty).length;
+  $('penaliseArm').textContent = penaliseArmed ? 'Click a robot on the field...' : 'Penalise / Release a Robot';
+  $('penaliseArm').classList.toggle('selected', penaliseArmed);
+  $('penaliseNote').textContent = penaliseArmed ? 'It goes back to the touchline. Click a penalised robot to let it back on.' : `${out} robot${out === 1 ? '' : 's'} penalised.`;
+  $('penaliseNote').classList.toggle('warn', penaliseArmed);
+
+  // one button per player as well, for a call without finding the robot on the field
+  const key = robots.map((robot) => `${robot.side}${robot.player}${robot.penalty}${robot.penaltySecs}`).join('|');
   if (key === refereePlayersKey) return;
   refereePlayersKey = key;
   const box = $('refPlayers');
   box.textContent = '';
   for (const side of [0, 1]) {
-    const team = document.createElement('div');
-    team.className = 'team';
-    team.textContent = side === 0 ? game.left : game.right;
     const row = document.createElement('div');
     row.className = 'row players';
     for (const robot of robots.filter((r) => r.side === side)) {
       const button = document.createElement('button');
-      const sideName = side === 0 ? 'home' : 'away';
-      button.className = `${sideName}${robot.penalty ? ' out' : ''}`;
+      button.className = `${SIDE[side]}${robot.penalty ? ' out' : ''}`;
       button.textContent = robot.penalty ? `${robot.player} ✕${secondsLeft(robot)}` : String(robot.player);
       button.title = robot.penalty ? `${robot.penalty.toLowerCase().replace(/_/g, ' ')} - click to release` : 'Click to penalise with the selected call';
-      button.addEventListener('click', () => sendReferee(robot.penalty
-        ? `action=unpenalize&side=${sideName}&player=${robot.player}&arg=force`
-        : `action=penalize&side=${sideName}&player=${robot.player}&arg=${$('refCall').value}`));
+      button.addEventListener('click', () => penalise(robot));
       row.append(button);
     }
-    box.append(team, row);
+    box.append(row);
   }
 }
 
-for (const button of document.querySelectorAll('#referee [data-ref]')) {
+function penalise(robot) {
+  sendReferee(robot.penalty
+    ? `action=unpenalize&side=${SIDE[robot.side]}&player=${robot.player}&arg=force`
+    : `action=penalize&side=${SIDE[robot.side]}&player=${robot.player}&arg=${$('refCall').value}`);
+}
+
+for (const button of document.querySelectorAll('.ui [data-ref]')) {
   button.addEventListener('click', () => sendReferee(button.dataset.ref + (button.dataset.arg ? `&arg=${$(button.dataset.arg).value}` : '')));
 }
-$('refToggle').addEventListener('click', () => {
-  const collapsed = $('referee').classList.toggle('collapsed');
-  $('refToggle').textContent = collapsed ? '+' : '–';
+[$('kickHome'), $('kickAway')].forEach((button, team) => button.addEventListener('click', () => { kickOffTeam = team; panelsDirty = true; }));
+$('stateReady').addEventListener('click', () => sendReferee(`action=kickoff&side=${SIDE[kickOffTeam]}`));
+$('penaliseArm').addEventListener('click', () => { penaliseArmed = !penaliseArmed; panelsDirty = true; });
+
+// ---- Set plays, called by hand: 1. the call stops play and you place the ball; 2. Resume Play lets the robots
+// take up their positions and the kicking team take the kick; 3. the ball is free for everyone once it has been
+// kicked (noticed here) or when you say so.
+
+const SET_PLAYS = [['Corner kick', 'corner_kick'], ['Goal kick', 'goal_kick'], ['Free kick', 'direct_free_kick'], ['Throw-in', 'throw_in'], ['Penalty kick', 'penalty_kick']];
+const setPlay = { play: null, team: 0, placing: false, stage: 'idle', spot: [0, 0], hot: null };
+
+for (const [name, play] of SET_PLAYS) {
+  const row = document.createElement('div');
+  row.className = 'play';
+  const label = document.createElement('span');
+  label.textContent = name;
+  row.append(label);
+  SIDE.forEach((side, team) => {
+    const button = document.createElement('button');
+    button.textContent = TEAM_TAG[team];
+    button.dataset.play = play;
+    button.dataset.team = team;
+    button.addEventListener('click', () => {
+      Object.assign(setPlay, { play, team, placing: true, stage: 'idle' });
+      penaliseArmed = false;
+      sendReferee(`action=setplay&side=${side}&arg=${play}`);
+      panelsDirty = true;
+    });
+    row.append(button);
+  });
+  $('setPlayRows').append(row);
+}
+
+function showSetPlays() {
+  for (const button of document.querySelectorAll('#setPlayRows button')) {
+    const team = Number(button.dataset.team);
+    const active = setPlay.play === button.dataset.play && setPlay.team === team;
+    button.classList.toggle('selected', active);
+    // Enabled whenever the GameController's rules allow a set play for that team.
+    button.disabled = !allowed(`setplay:${SIDE[team]}`) && !active;
+  }
+  const note = $('setPlayNote');
+  const placed = !setPlay.placing && setPlay.stage === 'placed', inForce = !setPlay.placing && setPlay.stage === 'inforce';
+  note.classList.toggle('warn', setPlay.placing);
+  note.textContent = setPlay.placing ? 'Play is stopped. Click a highlighted spot on the field to place the ball.'
+    : placed ? 'Ball placed, play still stopped. Resume Play sends the robots to their positions.'
+    : inForce ? `${setPlay.team === 0 ? 'Home' : 'Away'}'s kick. Opponents must keep back until the ball is kicked; it is set free when it moves.`
+    : !allowed('setplay:home') && !allowed('setplay:away') ? 'The rules allow set plays once the game is Playing: press READY, SET, PLAYING first.' : '';
+  $('setPlayResume').hidden = !placed;
+  $('setPlayResume').disabled = !allowed('resume');
+  $('setPlayFree').hidden = !inForce;
+}
+
+function freeSetPlay() {
+  sendReferee('action=finish_set_play');
+  Object.assign(setPlay, { play: null, stage: 'idle' });
+  panelsDirty = true;
+}
+$('setPlayResume').addEventListener('click', () => { sendReferee('action=resume'); setPlay.stage = 'inforce'; panelsDirty = true; });
+$('setPlayFree').addEventListener('click', freeSetPlay);
+
+// Where the ball is now (the newest frame, not the playhead), or null.
+function ballNow() {
+  const frame = frames[frames.length - 1];
+  if (!frame || ballBody < 0 || frame.scene !== shownSceneId || frame.poses.length < 7 * (ballBody + 1)) return null;
+  return [frame.poses[7 * ballBody], frame.poses[7 * ballBody + 1]];
+}
+
+function watchSetPlay() {
+  if (!interactive() || setPlay.placing || setPlay.stage !== 'inforce') return;
+  const ball = ballNow();
+  if (ball && Math.hypot(ball[0] - setPlay.spot[0], ball[1] - setPlay.spot[1]) > 0.25) freeSetPlay(); // kicked
+}
+
+function placeBall(x, y) {
+  sendSim(`action=place_ball&x=${x}&y=${y}`);
+  Object.assign(setPlay, { placing: false, stage: 'placed', spot: [x, y] });
+  panelsDirty = true;
+}
+
+// ---- Setup: what tools/match.py launched (mode, teams, perception, environment). Changing it needs a restart,
+// because the robot count is baked into the model and each robot's code runs in its own container.
+
+const MODE_NAMES = { game: 'Game', testing: 'Testing Room', freeplay: 'Free Play' };
+const MODE_ABOUT = {
+  game: 'A refereed match. You start each kick-off; the automatic referee counts goals and calls restarts.',
+  testing: 'You are the referee. Robots obey the built-in GameController, and nothing is called automatically.',
+  freeplay: 'Just the simulator. Run your own role from a terminal.',
+};
+let setupOpen = false; // the Setup panel is expanded for editing
+let wanted = null;     // the setup being edited; null = what is running
+
+const runningSetup = () => ({
+  mode: session.mode, game: session.game, robots: session.robots, groundTruth: session.groundTruth, field: session.field,
+  homeCodebase: session.homeCodebase, awayCodebase: session.awayCodebase, homeRole: session.homeRole, awayRole: session.awayRole,
 });
+
+function fillSetup() {
+  if (!session.launcher) return;
+  const fill = (id, items) => {
+    const select = $(id);
+    select.textContent = '';
+    for (const item of items) select.append(new Option(item, item));
+  };
+  const withRunning = (list, ...running) => [...list, ...running.filter((item, i) => !list.includes(item) && running.indexOf(item) === i)];
+  const codebases = withRunning(session.codebases.map((codebase) => codebase.name), session.homeCodebase, session.awayCodebase);
+  const roles = withRunning(session.roles, session.homeRole, session.awayRole);
+  fill('homeCodebase', codebases); fill('awayCodebase', codebases);
+  fill('homeRole', roles); fill('awayRole', roles);
+  fill('fieldChoice', withRunning(session.fields, session.field));
+}
+
+function showSetup() {
+  if (!wanted) wanted = runningSetup();
+  const run = runningSetup();
+  $('setupTitle').textContent = MODE_NAMES[run.mode] || run.mode;
+  $('setupToggle').textContent = setupOpen ? 'Close' : 'Change';
+  $('setupSummary').textContent = run.mode === 'freeplay'
+    ? `${run.robots} robot${run.robots === 1 ? '' : 's'}. Run your own role from a terminal.`
+    : `${run.game} v ${run.game}  ·  ${run.groundTruth ? 'ground truth' : 'vision'}`;
+  $('setupForm').hidden = !setupOpen;
+  if (!setupOpen) return;
+
+  for (const button of document.querySelectorAll('#setupModes button')) button.classList.toggle('selected', button.dataset.mode === wanted.mode);
+  $('setupAbout').textContent = MODE_ABOUT[wanted.mode];
+  const freeplay = wanted.mode === 'freeplay';
+  $('setupTeams').hidden = freeplay;
+  $('setupFree').hidden = !freeplay;
+  $('setupFieldNote').hidden = freeplay;
+
+  let canApply = true;
+  $('gameCount').textContent = wanted.game;
+  $('gameLess').disabled = wanted.game <= 1;
+  $('gameMore').disabled = wanted.game >= 3;
+  for (const team of ['home', 'away']) {
+    const name = wanted[`${team}Codebase`];
+    const codebase = session.codebases.find((entry) => entry.name === name);
+    const unavailable = codebase && codebase.available === false;
+    $(`${team}Codebase`).value = name;
+    $(`${team}Note`).textContent = unavailable ? codebase.note : '';
+    if (unavailable && !freeplay) canApply = false;
+    // a game always runs the match role; only the first codebase (NUbots) has roles to pick from
+    $(`${team}Role`).hidden = unavailable || wanted.mode !== 'testing' || name !== session.codebases[0]?.name;
+    $(`${team}Role`).value = wanted[`${team}Role`];
+  }
+  $('useVision').classList.toggle('selected', !wanted.groundTruth);
+  $('useTruth').classList.toggle('selected', wanted.groundTruth);
+  $('perceptionAbout').textContent = wanted.groundTruth ? "Robots are given their true position and the ball's." : 'Robots find themselves and the ball with their own camera.';
+  $('fieldChoice').value = wanted.field;
+  $('robotsCount').textContent = wanted.robots;
+  $('robotsLess').disabled = wanted.robots <= 1;
+  $('robotsMore').disabled = wanted.robots >= 6;
+
+  const changed = JSON.stringify(wanted) !== JSON.stringify(run);
+  $('applyRestart').disabled = !changed || !canApply;
+}
+
+const editSetup = (change) => () => { if (wanted) { change(); panelsDirty = true; } };
+$('setupToggle').addEventListener('click', () => {
+  setupOpen = !setupOpen;
+  wanted = null; // abandon unapplied edits
+  panelsDirty = true;
+});
+for (const button of document.querySelectorAll('#setupModes button')) {
+  button.addEventListener('click', editSetup(() => {
+    if (wanted.mode === button.dataset.mode) return;
+    wanted.mode = button.dataset.mode;
+    wanted.groundTruth = wanted.mode === 'game'; // a game defaults to ground truth
+  }));
+}
+$('gameLess').addEventListener('click', editSetup(() => { wanted.game = Math.max(1, wanted.game - 1); }));
+$('gameMore').addEventListener('click', editSetup(() => { wanted.game = Math.min(3, wanted.game + 1); }));
+$('robotsLess').addEventListener('click', editSetup(() => { wanted.robots = Math.max(1, wanted.robots - 1); }));
+$('robotsMore').addEventListener('click', editSetup(() => { wanted.robots = Math.min(6, wanted.robots + 1); }));
+$('useVision').addEventListener('click', editSetup(() => { wanted.groundTruth = false; }));
+$('useTruth').addEventListener('click', editSetup(() => { wanted.groundTruth = true; }));
+for (const [id, key] of [['homeCodebase', 'homeCodebase'], ['awayCodebase', 'awayCodebase'], ['homeRole', 'homeRole'], ['awayRole', 'awayRole'], ['fieldChoice', 'field']]) {
+  $(id).addEventListener('change', editSetup(() => { wanted[key] = $(id).value; }));
+}
+$('applyRestart').addEventListener('click', () => {
+  if (!wanted) return;
+  const query = new URLSearchParams({
+    action: 'restart', mode: wanted.mode, game: wanted.game, robots: wanted.robots, ground_truth: wanted.groundTruth ? 1 : 0,
+    home_codebase: wanted.homeCodebase, away_codebase: wanted.awayCodebase, field: wanted.field,
+    home_role: wanted.homeRole, away_role: wanted.awayRole,
+  });
+  sendSim(query.toString());
+  streamOpen = false; // the simulator closes; connect() picks up the next one
+  setStatus('', 'RESTARTING');
+  panelsDirty = true;
+});
+
+// a panel button keeps the keyboard focus after a click, and Space would then press it again instead of pausing
+document.addEventListener('click', (event) => { if (event.detail > 0 && event.target instanceof HTMLButtonElement) event.target.blur(); });
+
+// ---------------------------------------------------------------- moving things by hand
+// As in the window: double-click a robot or the ball for its move handles (three arrows and a turning ring),
+// Ctrl + drag to carry it across the field, Ctrl + right-drag to shove the selected body with a force. While a
+// handle is held the simulator pins the body to the pose sent from here.
+
+const overlay = $('overlay');
+const mouse = { x: 0, y: 0, onView: false };
+const raycaster = new THREE.Raycaster();
+const pointerNdc = new THREE.Vector2();
+const groundPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+const planeHit = new THREE.Vector3();
+const projected = new THREE.Vector3();
+
+const gizmo = {
+  body: -1,          // free-floating root body, or -1 = nothing selected
+  drag: null,        // 0, 1, 2 = an axis arrow, 'ring', 'carry'
+  pos: new THREE.Vector3(), quat: new THREE.Quaternion(), // drag target
+  grab: [0, 0],      // carry: body position minus the grabbed ground point
+  planeZ: 0,         // carry: height of the grabbed point
+  floorZ: 0,         // height at the start of the drag; the body cannot be pushed below it
+  lastAngle: 0,      // ring: bearing of the cursor at the previous mouse event
+  // the handles as last drawn (window coordinates), for hit-testing
+  drawn: false, centre: null, tips: [null, null, null], ring: [], length: 0.6,
+};
+let selectedBody = -1;                      // the body a shove acts on (any body of a robot, or the ball)
+const selectedLocal = new THREE.Vector3();  // where on it, in its own frame
+const pushing = { active: false, target: new THREE.Vector3(), plane: new THREE.Plane() };
+let pointerJob = null;                      // what the held mouse button is doing: 'gizmo', 'push' or 'click'
+
+// World point -> window coordinates, or null when it is behind the camera or (with `clip`) outside the view.
+function project(x, y, z, clip = true) {
+  projected.set(x, y, z).applyMatrix4(camera.matrixWorldInverse);
+  if (projected.z > -camera.near) return null;
+  projected.applyMatrix4(camera.projectionMatrix);
+  if (clip && (Math.abs(projected.x) > 1 || Math.abs(projected.y) > 1)) return null;
+  return { x: (projected.x * 0.5 + 0.5) * window.innerWidth, y: (0.5 - projected.y * 0.5) * window.innerHeight };
+}
+
+function aimRay(x, y) {
+  pointerNdc.set(x / window.innerWidth * 2 - 1, 1 - y / window.innerHeight * 2);
+  raycaster.setFromCamera(pointerNdc, camera);
+}
+
+// Window coordinates -> the point under the cursor on the horizontal plane z = planeZ, or null.
+function groundPoint(x, y, planeZ) {
+  aimRay(x, y);
+  groundPlane.constant = -planeZ;
+  return raycaster.ray.intersectPlane(groundPlane, planeHit) ? [planeHit.x, planeHit.y] : null;
+}
+
+// The body under the cursor and where it was hit, or null.
+function pick(x, y) {
+  aimRay(x, y);
+  const hit = raycaster.intersectObjects(pickMeshes.filter((mesh) => mesh.visible), false)[0];
+  return hit ? { body: hit.object.userData.body, point: hit.point } : null;
+}
+
+// The free-floating body (robot trunk, ball) that `body` belongs to, or -1.
+function freeRoot(body) {
+  const entry = sceneDescriptions.get(shownSceneId)?.bodies[body];
+  return entry && entry.free ? entry.root : -1;
+}
+
+function segmentDistance(p, a, b) {
+  const vx = b.x - a.x, vy = b.y - a.y;
+  const l2 = vx * vx + vy * vy;
+  const t = l2 > 0 ? THREE.MathUtils.clamp(((p.x - a.x) * vx + (p.y - a.y) * vy) / l2, 0, 1) : 0;
+  return Math.hypot(p.x - (a.x + t * vx), p.y - (a.y + t * vy));
+}
+
+// Which handle is under the cursor. Arrows win over the ring where they overlap.
+function gizmoHit(x, y) {
+  if (gizmo.body < 0 || !gizmo.drawn) return null;
+  const p = { x, y };
+  const reach = Math.max(9, window.innerHeight * 0.011);
+  for (let axis = 0; axis < 3; axis++) {
+    const tip = gizmo.tips[axis];
+    if (!tip) continue;
+    // skip the stretch near the origin, where all three arrows meet
+    const from = { x: gizmo.centre.x + 0.3 * (tip.x - gizmo.centre.x), y: gizmo.centre.y + 0.3 * (tip.y - gizmo.centre.y) };
+    if (segmentDistance(p, from, tip) < reach) return axis;
+  }
+  for (let i = 0; i + 1 < gizmo.ring.length; i++) if (segmentDistance(p, gizmo.ring[i], gizmo.ring[i + 1]) < reach) return 'ring';
+  return null;
+}
+
+// Seeds the drag target from the body's pose as shown.
+function gizmoBegin(handle) {
+  const object = bodyObjects[gizmo.body];
+  gizmo.pos.copy(object.position);
+  gizmo.quat.copy(object.quaternion);
+  gizmo.floorZ = gizmo.pos.z;
+  gizmo.drag = handle;
+}
+
+const turn = new THREE.Quaternion(), zAxis = new THREE.Vector3(0, 0, 1);
+function gizmoMove(x, y, dx, dy) {
+  if (typeof gizmo.drag === 'number') {
+    // cursor travel along the arrow as drawn -> metres along that axis
+    const tip = gizmo.tips[gizmo.drag];
+    if (tip) {
+      const sx = tip.x - gizmo.centre.x, sy = tip.y - gizmo.centre.y;
+      const len2 = sx * sx + sy * sy;
+      if (len2 > 16) gizmo.pos.setComponent(gizmo.drag, gizmo.pos.getComponent(gizmo.drag) + (dx * sx + dy * sy) / len2 * gizmo.length);
+    }
+  } else if (gizmo.drag === 'ring') {
+    const ground = groundPoint(x, y, gizmo.pos.z);
+    if (ground) {
+      const angle = Math.atan2(ground[1] - gizmo.pos.y, ground[0] - gizmo.pos.x);
+      const delta = Math.atan2(Math.sin(angle - gizmo.lastAngle), Math.cos(angle - gizmo.lastAngle));
+      gizmo.lastAngle = angle;
+      gizmo.quat.premultiply(turn.setFromAxisAngle(zAxis, delta)).normalize();
+    }
+  } else if (gizmo.drag === 'carry') {
+    const ground = groundPoint(x, y, gizmo.planeZ);
+    if (ground) { gizmo.pos.x = ground[0] + gizmo.grab[0]; gizmo.pos.y = ground[1] + gizmo.grab[1]; }
+  }
+  // stay on the modelled floor and above it
+  gizmo.pos.x = THREE.MathUtils.clamp(gizmo.pos.x, -8, 8);
+  gizmo.pos.y = THREE.MathUtils.clamp(gizmo.pos.y, -6, 6);
+  gizmo.pos.z = THREE.MathUtils.clamp(gizmo.pos.z, gizmo.floorZ, gizmo.floorZ + 2.5);
+}
+
+// The simulator lets go of a body it has not heard about for half a second, so keep saying where it is; one
+// request at a time, and the release only after the last of them.
+let handsRequest = Promise.resolve(), handsBusy = false;
+function sendHands() {
+  if (handsBusy) return;
+  let query = '';
+  if (gizmo.drag !== null && gizmo.body >= 0) {
+    const p = gizmo.pos, q = gizmo.quat;
+    query = `action=move&body=${gizmo.body}&x=${p.x}&y=${p.y}&z=${p.z}&qw=${q.w}&qx=${q.x}&qy=${q.y}&qz=${q.z}`;
+  } else if (pushing.active && selectedBody > 0) {
+    const l = selectedLocal, t = pushing.target;
+    query = `action=push&body=${selectedBody}&lx=${l.x}&ly=${l.y}&lz=${l.z}&tx=${t.x}&ty=${t.y}&tz=${t.z}`;
+  }
+  if (!query) return;
+  handsBusy = true;
+  handsRequest = sendSim(query).finally(() => { handsBusy = false; });
+}
+setInterval(sendHands, 33);
+
+function releaseHands() {
+  gizmo.drag = null;
+  pushing.active = false;
+  handsRequest.then(() => sendSim('action=release'));
+}
+
+function deselect() {
+  if (gizmo.drag !== null || pushing.active) releaseHands();
+  gizmo.body = -1;
+  selectedBody = -1;
+}
+
+// In the capture phase on the window, so a click that moves something never also reaches the orbit camera.
+window.addEventListener('pointerdown', (event) => {
+  if (event.target !== renderer.domElement || !interactive() || !live) return;
+  const x = event.clientX, y = event.clientY;
+  Object.assign(mouse, { x, y, onView: true });
+  const take = (job) => {
+    pointerJob = job;
+    controls.enabled = false;
+    event.stopPropagation();
+    event.preventDefault();
+  };
+
+  // Testing Room, "Penalise" armed: the robot under this click is penalised or let back on.
+  if (penaliseArmed && event.button === 0) {
+    const hit = pick(x, y);
+    const name = hit ? bodyObjects[freeRoot(hit.body)]?.name : undefined;
+    const robot = name && (latestGame?.robots || []).find((entry) => entry.body === name);
+    if (robot) {
+      penalise(robot);
+      penaliseArmed = false;
+      panelsDirty = true;
+    }
+    take('click');
+    return;
+  }
+  // Ball placement for a set play owns left clicks on the field.
+  if (setPlay.placing && event.button === 0) {
+    if (setPlay.hot) placeBall(setPlay.hot[0], setPlay.hot[1]);
+    take('click');
+    return;
+  }
+  // A refereed game: the mouse only moves the camera.
+  if (!handsOn()) return;
+
+  if (event.button === 0) {
+    if (event.ctrlKey) {
+      // Ctrl + drag: pick up whatever is under the cursor and carry it over the field.
+      const hit = pick(x, y);
+      const root = hit ? freeRoot(hit.body) : -1;
+      if (root >= 0) {
+        gizmo.body = selectedBody = root;
+        selectedLocal.set(0, 0, 0);
+        gizmoBegin('carry');
+        gizmo.planeZ = hit.point.z;
+        gizmo.grab = [gizmo.pos.x - hit.point.x, gizmo.pos.y - hit.point.y];
+        take('gizmo');
+      } else {
+        take('click');
+      }
+      return;
+    }
+    const handle = gizmoHit(x, y);
+    if (handle !== null) {
+      gizmoBegin(handle);
+      if (handle === 'ring') {
+        const ground = groundPoint(x, y, gizmo.pos.z);
+        if (ground) gizmo.lastAngle = Math.atan2(ground[1] - gizmo.pos.y, ground[0] - gizmo.pos.x);
+        else gizmo.drag = null;
+      }
+      take('gizmo');
+      return;
+    }
+  }
+  // Ctrl + right-drag on the selected body: pull it with a force (push and fall testing).
+  if (event.ctrlKey && event.button === 2 && selectedBody > 0 && bodyObjects[selectedBody]) {
+    bodyObjects[selectedBody].localToWorld(pushing.target.copy(selectedLocal));
+    pushing.plane.setFromNormalAndCoplanarPoint(camera.getWorldDirection(new THREE.Vector3()), pushing.target);
+    pushing.active = true;
+    take('push');
+    return;
+  }
+  if (event.ctrlKey) take('click'); // Ctrl is for moving things, never the camera
+}, true);
+
+window.addEventListener('pointermove', (event) => {
+  const dx = event.clientX - mouse.x, dy = event.clientY - mouse.y;
+  Object.assign(mouse, { x: event.clientX, y: event.clientY, onView: event.target === renderer.domElement });
+  if (pointerJob === 'gizmo' && gizmo.drag !== null) {
+    gizmoMove(mouse.x, mouse.y, dx, dy);
+  } else if (pointerJob === 'push' && pushing.active) {
+    aimRay(mouse.x, mouse.y);
+    raycaster.ray.intersectPlane(pushing.plane, pushing.target);
+  }
+});
+
+function pointerDone() {
+  if (pointerJob === null) return;
+  if (pointerJob !== 'click') releaseHands(); // wherever the cursor ended up, a release always drops the body
+  pointerJob = null;
+  controls.enabled = cameraMode === 'free' || cameraMode === 'follow';
+}
+window.addEventListener('pointerup', pointerDone);
+window.addEventListener('pointercancel', pointerDone);
+window.addEventListener('blur', pointerDone);
+renderer.domElement.addEventListener('contextmenu', (event) => event.preventDefault());
+
+// Double-click: select the body under the cursor (its handles appear if it can be moved), or nothing.
+renderer.domElement.addEventListener('dblclick', (event) => {
+  if (!handsOn() || penaliseArmed || setPlay.placing) return;
+  const hit = pick(event.clientX, event.clientY);
+  if (hit && hit.body > 0 && bodyObjects[hit.body]) {
+    selectedBody = hit.body;
+    bodyObjects[hit.body].worldToLocal(selectedLocal.copy(hit.point));
+    gizmo.body = freeRoot(hit.body);
+  } else {
+    deselect();
+  }
+});
+
+// ---- what is drawn over the scene: the move handles, a shove's pull, and where a set play's ball may go
+
+function drawGizmo(ctx) {
+  gizmo.drawn = false;
+  gizmo.ring = [];
+  const object = gizmo.body >= 0 ? bodyObjects[gizmo.body] : null;
+  if (!object || !handsOn()) return;
+  const c = gizmo.drag !== null ? gizmo.pos : object.position;
+  gizmo.centre = project(c.x, c.y, c.z, false);
+  if (!gizmo.centre) return;
+
+  // keep the handles a constant size on screen (about 80 px), however far the camera is
+  let length = 0.6;
+  const right = projected.clone().setFromMatrixColumn(camera.matrixWorld, 0);
+  const beside = project(c.x + right.x, c.y + right.y, c.z + right.z, false);
+  if (beside) {
+    const pixelsPerMetre = Math.hypot(beside.x - gizmo.centre.x, beside.y - gizmo.centre.y);
+    if (pixelsPerMetre > 1) length = THREE.MathUtils.clamp(Math.max(80, window.innerHeight * 0.09) / pixelsPerMetre, 0.15, 6);
+  }
+  gizmo.length = length;
+  for (let axis = 0; axis < 3; axis++) {
+    const tip = [c.x, c.y, c.z];
+    tip[axis] += length;
+    gizmo.tips[axis] = project(tip[0], tip[1], tip[2], false);
+  }
+  for (let i = 0; i <= 48; i++) {
+    const a = 2 * Math.PI * i / 48;
+    const at = project(c.x + 0.72 * length * Math.cos(a), c.y + 0.72 * length * Math.sin(a), c.z, false);
+    if (!at) { gizmo.ring = []; break; }
+    gizmo.ring.push(at);
+  }
+  gizmo.drawn = true;
+
+  const hot = gizmo.drag !== null ? gizmo.drag : mouse.onView && pointerJob === null ? gizmoHit(mouse.x, mouse.y) : null;
+  const thick = Math.max(3, window.innerHeight * 0.0042);
+  const shadow = 'rgba(0, 0, 0, 0.6)';
+  const ink = (handle, colour) => (hot === handle ? '#ffffff' : colour);
+  const stroke = (points, colour, width) => {
+    ctx.beginPath();
+    points.forEach((point, i) => (i ? ctx.lineTo(point.x, point.y) : ctx.moveTo(point.x, point.y)));
+    ctx.strokeStyle = colour; ctx.lineWidth = width; ctx.stroke();
+  };
+  ctx.lineCap = ctx.lineJoin = 'round';
+
+  if (gizmo.ring.length > 1) {
+    const width = hot === 'ring' ? thick * 1.5 : thick;
+    stroke(gizmo.ring, shadow, width + 3);
+    stroke(gizmo.ring, ink('ring', '#ffc83c'), width);
+  }
+  const colours = ['#f04c4c', '#50d664', '#5496ff'];
+  for (let axis = 0; axis < 3; axis++) {
+    const a = gizmo.centre, b = gizmo.tips[axis];
+    if (!b) continue;
+    const l = Math.hypot(b.x - a.x, b.y - a.y);
+    if (l < 4) continue; // looking straight down this axis
+    const width = hot === axis ? thick * 1.5 : thick;
+    const head = Math.min(width * 4, l * 0.6);
+    const d = { x: (b.x - a.x) / l, y: (b.y - a.y) / l };
+    const neck = { x: b.x - d.x * head, y: b.y - d.y * head };
+    stroke([a, neck], shadow, width + 3);
+    stroke([a, neck], ink(axis, colours[axis]), width);
+    const half = head * 0.55;
+    ctx.beginPath();
+    ctx.moveTo(b.x, b.y);
+    ctx.lineTo(neck.x - d.y * half, neck.y + d.x * half);
+    ctx.lineTo(neck.x + d.y * half, neck.y - d.x * half);
+    ctx.closePath();
+    ctx.fillStyle = ink(axis, colours[axis]); ctx.fill();
+    ctx.strokeStyle = shadow; ctx.lineWidth = 1.5; ctx.stroke();
+  }
+  ctx.beginPath(); ctx.arc(gizmo.centre.x, gizmo.centre.y, thick * 1.3, 0, 2 * Math.PI);
+  ctx.fillStyle = '#ffffff'; ctx.fill();
+  ctx.strokeStyle = shadow; ctx.lineWidth = 1.5; ctx.stroke();
+}
+
+function drawPush(ctx) {
+  if (!pushing.active || !bodyObjects[selectedBody]) return;
+  const from = bodyObjects[selectedBody].localToWorld(projected.clone().copy(selectedLocal));
+  const a = project(from.x, from.y, from.z, false), b = project(pushing.target.x, pushing.target.y, pushing.target.z, false);
+  if (!a || !b) return;
+  ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+  ctx.strokeStyle = '#ffc83c'; ctx.lineWidth = 3; ctx.stroke();
+  ctx.beginPath(); ctx.arc(b.x, b.y, 6, 0, 2 * Math.PI);
+  ctx.fillStyle = '#ffffff'; ctx.fill();
+}
+
+// Highlights where the ball may go for the chosen set play; the click that puts it there is in pointerdown.
+function drawPlacement(ctx, seconds) {
+  setPlay.hot = null;
+  if (!setPlay.placing || !interactive() || !live) return;
+  const dims = session?.dims || { length: 14, width: 9, goalAreaLength: 1, goalAreaWidth: 4, penaltyMarkDistance: 2 };
+  const attack = setPlay.team === 0 ? 1 : -1; // Home attacks the +x goal
+  const tint = new THREE.Color(teamColour(latestGame, setPlay.team));
+  const rgba = (alpha) => `rgba(${Math.round(tint.r * 255)}, ${Math.round(tint.g * 255)}, ${Math.round(tint.b * 255)}, ${alpha})`;
+  const pulse = 0.5 + 0.5 * Math.sin(seconds * 5);
+  const canClick = mouse.onView;
+
+  const outline = (x0, y0, x1, y1) => {
+    const points = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]].map(([x, y]) => project(x, y, 0.01));
+    if (points.some((point) => !point)) return;
+    ctx.beginPath();
+    points.forEach((point, i) => (i ? ctx.lineTo(point.x, point.y) : ctx.moveTo(point.x, point.y)));
+    ctx.closePath();
+    ctx.fillStyle = rgba(0.16); ctx.fill();
+    ctx.strokeStyle = rgba(0.9); ctx.lineWidth = 2.5; ctx.stroke();
+  };
+  const marker = (at, hot) => {
+    const r = (hot ? 17 : 13) + 3 * pulse;
+    ctx.beginPath(); ctx.arc(at.x, at.y, r, 0, 2 * Math.PI);
+    ctx.fillStyle = rgba(hot ? 0.55 : 0.30); ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)'; ctx.lineWidth = 2.5; ctx.stroke();
+    ctx.beginPath(); ctx.arc(at.x, at.y, 4, 0, 2 * Math.PI);
+    ctx.fillStyle = '#ffffff'; ctx.fill();
+  };
+
+  const L = dims.length / 2, W = dims.width / 2;
+  const box = L - dims.goalAreaLength; // front line of a goal area
+  const gw = dims.goalAreaWidth / 2;
+  let spots = [];
+  if (setPlay.play === 'corner_kick') {
+    spots = [[attack * L, W], [attack * L, -W]];
+  } else if (setPlay.play === 'goal_kick') { // anywhere along the front of its own goal area; offer three spots
+    outline(-attack * L, -gw, -attack * box, gw);
+    spots = [[-attack * box, gw], [-attack * box, 0], [-attack * box, -gw]];
+  } else if (setPlay.play === 'penalty_kick') {
+    spots = [[attack * (L - dims.penaltyMarkDistance), 0]];
+  }
+
+  if (spots.length) {
+    for (const spot of spots) {
+      const at = project(spot[0], spot[1], 0.02);
+      if (!at) continue;
+      const hot = canClick && Math.hypot(mouse.x - at.x, mouse.y - at.y) < 22;
+      marker(at, hot);
+      if (hot) setPlay.hot = spot;
+    }
+    return;
+  }
+
+  // Free kick: anywhere on the field. Throw-in: anywhere along the nearer touchline.
+  const ground = canClick ? groundPoint(mouse.x, mouse.y, 0) : null;
+  if (!ground) return;
+  const x = THREE.MathUtils.clamp(ground[0], -L, L);
+  const y = setPlay.play === 'throw_in' ? (ground[1] >= 0 ? W : -W) : THREE.MathUtils.clamp(ground[1], -W, W);
+  const at = project(x, y, 0.02);
+  if (at) {
+    marker(at, true);
+    setPlay.hot = [x, y];
+  }
+}
+
+function drawOverlay(seconds) {
+  const ctx = overlay.getContext('2d');
+  const ratio = overlay.width / Math.max(1, window.innerWidth);
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+  drawPlacement(ctx, seconds);
+  drawGizmo(ctx);
+  drawPush(ctx);
+}
 
 // ---------------------------------------------------------------- cameras
 
@@ -1530,7 +2350,6 @@ function updateCamera(dt) {
 function setPaused(value) {
   paused = value;
   if (paused) live = false;
-  $('play').textContent = paused ? '▶' : '⏸';
 }
 
 function goLive() {
@@ -1562,7 +2381,7 @@ $('venue').addEventListener('change', () => {
   try { localStorage.setItem('nusim-venue', venue); } catch (error) { /* storage unavailable */ }
   shownSceneId = -1; // rebuild the scene with the other venue
 });
-$('play').addEventListener('click', () => setPaused(!paused));
+$('play').addEventListener('click', togglePause);
 $('golive').addEventListener('click', goLive);
 $('save').addEventListener('click', saveRecording);
 $('open').addEventListener('click', () => $('file').click());
@@ -1574,8 +2393,14 @@ for (const button of document.querySelectorAll('#cams button')) button.addEventL
 
 window.addEventListener('keydown', (event) => {
   if (event.target instanceof HTMLSelectElement || event.metaKey || event.ctrlKey) return;
+  if (event.key === ' ' && event.target instanceof HTMLButtonElement) return; // Space presses the focused button
   switch (event.key) {
-    case ' ': event.preventDefault(); setPaused(!paused); break;
+    case ' ': event.preventDefault(); togglePause(); break;
+    case 'Backspace': resetSimulation(); break; // MuJoCo simulate's convention
+    case 'f': case 'F': if (handsOn()) sendSim('action=shove'); break; // knock the first robot over
+    case 'Escape':
+      if (penaliseArmed) { penaliseArmed = false; panelsDirty = true; } else deselect();
+      break;
     case 'ArrowLeft': stepFrames(event.shiftKey ? -25 : -1); break;
     case 'ArrowRight': stepFrames(event.shiftKey ? 25 : 1); break;
     case 'l': case 'L': goLive(); break;
@@ -1607,6 +2432,9 @@ window.addEventListener('drop', async (event) => {
 function resize() {
   const width = window.innerWidth, height = window.innerHeight;
   renderer.setSize(width, height, false);
+  const ratio = Math.min(window.devicePixelRatio, 2);
+  overlay.width = Math.round(width * ratio);
+  overlay.height = Math.round(height * ratio);
   camera.aspect = width / height;
   camera.updateProjectionMatrix();
 }
@@ -1641,7 +2469,7 @@ function tick() {
     const frame = showFrameAt(playhead);
     if (frame) showGame(frame.game);
     updateCeremony(frame ? frame.game : null, performance.now() / 1000);
-    if (latestGame) showRefereeGame(latestGame); // the panel always acts on the live game, wherever the playhead is
+    $('simTime').textContent = formatTime(last); // the panels always act on the live game, wherever the playhead is
 
     if (!seeking) $('seek').value = last > first ? (playhead - first) / (last - first) : 1;
     $('tnow').textContent = formatTime(playhead);
@@ -1650,8 +2478,16 @@ function tick() {
     $('golive').style.display = replayMode ? 'none' : '';
   }
 
+  watchSetPlay();
+  if (panelsDirty) {
+    panelsDirty = false;
+    refreshPanels();
+  }
+  $('play').textContent = (interactive() && live ? simStatus.paused : paused) ? '▶' : '⏸';
+
   updateCamera(dt);
   renderer.render(scene, camera);
+  drawOverlay(performance.now() / 1000);
   requestAnimationFrame(tick);
 }
 
@@ -1659,7 +2495,11 @@ setCameraMode('free');
 drawScoreboard(null);
 
 // handle for the browser console and automated checks
-window.nusimViewer = { camera, controls, scene, frames, bodies: () => bodyObjects };
+window.nusimViewer = {
+  camera, controls, scene, frames, bodies: () => bodyObjects,
+  feed: (message) => handleText(JSON.stringify(message)), // a state message, as if the simulator had sent it
+  debug: () => ({ selected: selectedBody, gizmo: gizmo.body, drag: gizmo.drag, centre: gizmo.centre, tips: gizmo.tips, live, pointerJob }),
+};
 
 const replayUrl = new URLSearchParams(location.search).get('replay');
 if (replayUrl) {

@@ -3,6 +3,7 @@
     ./b match --game 3                              3 a side, nusim/behaviour on every robot
     ./b match --game 1 --away-role <role>           a different stack for each team
     ./b match --game 2 --headless --rtf 1           no window; the game starts by itself
+    ./b match --game 2 --headless --web             no window; watch and run it all from the browser
 
 NUbots_K1 must be built first (./b target generic, ./b build there). Each robot runs in its own
 container, with its output in mujoco/<build dir>/match/robot<id>/log. Stock NUbots joins DDS domain 0
@@ -110,9 +111,12 @@ def register(command):
     command.add_argument("--vision-device", default="auto", choices=["auto", "gpu", "cpu"],
                          help="where NUbots' Yolo runs. auto uses the GPU unless NUbots' image can't drive it")
     command.add_argument("--replace", action="store_true", help="stop a ./b match that is already running first")
-    command.add_argument("--headless", action="store_true", help="no window; the game starts by itself")
+    command.add_argument("--headless", action="store_true",
+                         help="no window; the game starts by itself, unless --web is there to start it from")
     command.add_argument("--rtf", help="real-time factor")
-    command.add_argument("--web", action="store_true", help="also serve the browser viewer (http://127.0.0.1:8080/)")
+    command.add_argument("--web", action="store_true",
+                         help="also serve the browser viewer (http://127.0.0.1:8080/), which has the window's "
+                         "panels and controls")
     command.add_argument("--web-host", help="address the browser viewer listens on (0.0.0.0 for other machines)")
     command.add_argument("--web-port", type=int, help="port the browser viewer listens on")
 

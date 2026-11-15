@@ -69,7 +69,7 @@ mujoco/tools/install_game_controller_api.sh   # or pass the path to a GameContro
 ./b match --game 3                            # 1 to 3 a side; starts once every robot connects
 ./b match --game 1 --away-role <role>         # a different NUbots role for one team
 ./b match --game 2 --headless                 # no window
-./b match --game 2 --headless --web             # no window, watch in the browser at http://127.0.0.1:8080/
+./b match --game 2 --headless --web             # no window: watch and run it from the browser at http://127.0.0.1:8080/
 ```
 
 Robots run `nusim/behaviour` unless told otherwise, and use their own vision and localisation, not ground truth. Their
@@ -167,7 +167,7 @@ Parsed in [`mujoco/shared/CliOptions.hpp`](mujoco/shared/CliOptions.hpp); `--hel
 | `--rtf <factor>` | `simulation.yaml`'s `real_time_factor` | Real-time factor; `0` = free-run (uncapped, for tests/sweeps). |
 | `--robots <n>` | `1` | **Total** K1s on the field, 1–20. `n−1` extra copies are attached via MuJoCo's `mjSpec` attach API with `subNN_` name prefixes, so the main robot's unprefixed joint/sensor names — and every DDS and shared-memory contract — are untouched. Extras spawn standing on a 5×4 grid clear of the `y = 0` main-robot/ball lane. Each has its own controller and DDS endpoint, holding `ready` until commanded. Sim resets re-place them; `--keyframe` does not apply to them. |
 | `--robots <n>` | `1` | **Total** K1s on the field, 1–20. `n−1` extra copies are attached via MuJoCo's `mjSpec` attach API with `subNN_` name prefixes, so the main robot's unprefixed joint/sensor names — and every DDS and shared-memory contract — are untouched. Extras spawn standing on a 5×4 grid clear of the `y = 0` main-robot/ball lane and are PD-held at the `ready` pose: uncontrolled obstacles for dribbling and navigation practice, not extra DDS endpoints. Sim resets re-place them; `--keyframe` does not apply to them. |
-| `--web` | off | Serve the browser 3D viewer at `http://127.0.0.1:8080/` (shadows, sky, timeline with pause/scrub/replay, broadcast and follow-ball cameras). Needs no GL context, so it works together with `--headless`; the page loads three.js from a CDN on first use. |
+| `--web` | off | Serve the browser 3D viewer at `http://127.0.0.1:8080/` (shadows, sky, timeline with pause/scrub/replay, broadcast and follow-ball cameras). The page has the window's panels and controls too: the launcher's setup (mode, teams, perception, Apply and Restart), the match or referee controls, pause / reset / speed, every robot's mode, set plays with ball placement, and moving robots and the ball by hand (double-click for move handles, Ctrl + drag to carry, Ctrl + right-drag to shove; not in a refereed game). Needs no GL context, so it works together with `--headless`; the page loads three.js from a CDN on first use. Anyone who can reach the port can operate the sim, so think before `--web-host 0.0.0.0`. |
 | `--web-host <addr>` | `127.0.0.1` | Address the browser viewer listens on (`0.0.0.0` to watch from another machine). |
 | `--web-port <port>` | `8080` | Port the browser viewer listens on. |
 | `--record <file>` | none | Record the match to a file. Replay it with `./b replay <file>`, or drop the file onto a running browser viewer. Works without `--web`. |
