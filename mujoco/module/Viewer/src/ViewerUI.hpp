@@ -78,6 +78,17 @@ struct UIState {
     bool penalise_armed = false;  // the next robot clicked on the field is penalised (or let back on)
     std::vector<Robot> robots;  // the robots the GameController governs
 
+    // Every simulated robot's state, for the Robots panel. Written by the Viewer every frame.
+    struct RobotStatus {
+        int robot_id = 1;  // match-wide, starting at 1
+        int side     = 0;  // 0 = home, 1 = away, -1 = no teams (Free Play)
+        int player   = 1;
+        const char* mode = "?";      // Booster mode: DAMPING, PREPARE, WALKING, CUSTOM or SOCCER
+        const char* fall = "";       // FALLING, FALLEN or GETTING UP; empty while upright
+        bool penalised   = false;
+    };
+    std::vector<RobotStatus> robot_status;
+
     // A set play called by hand. `placing` = waiting for a click on the field.
     int set_play      = SP_NONE;
     int set_play_team = 0;
@@ -137,6 +148,7 @@ public:
 private:
     void render_scoreboard(const UIState& state);
     void render_side_panel(UIState& state);
+    void render_robots_panel(const UIState& state);
     void render_game_controls(UIState& state);
     void render_testing_controls(UIState& state);
     void render_setup_panel(UIState& state);
@@ -146,6 +158,7 @@ private:
 
     UIActions pending_;
     bool setup_open_ = false;  // the Setup panel is expanded for editing
+    float side_bottom_ = 0.0f;  // where the right-hand panel ended this frame, for the Robots panel under it
     ImFont* font_small_ = nullptr;
     ImFont* font_body_  = nullptr;
     ImFont* font_title_ = nullptr;

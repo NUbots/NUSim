@@ -290,6 +290,7 @@ UIActions ViewerUI::render(UIState& state) {
         render_setup_panel(state);
     }
     render_side_panel(state);
+    render_robots_panel(state);
     render_playbar(state);
 
     ImGui::Render();
@@ -370,7 +371,9 @@ void ViewerUI::render_simulation_controls(UIState& state) {
     stat_row("Sim time", clock_text(state.sim_time, true).c_str());
     std::snprintf(buf, sizeof(buf), "%.2fx", state.measured_rtf);
     stat_row("Measured speed", state.paused ? "paused" : buf);
-    stat_row("Robot mode", state.robot_mode);
+    if (state.robot_status.empty()) {
+        stat_row("Robot mode", state.robot_mode);  // otherwise the Robots panel lists every robot's
+    }
 }
 
 namespace {
@@ -583,10 +586,12 @@ void ViewerUI::render_side_panel(UIState& state) {
             pending_.pause     = false;
         }
         stat_row("Sim time", clock_text(state.sim_time, true).c_str());
+        side_bottom_ = ImGui::GetCursorScreenPos().y + ImGui::GetStyle().WindowPadding.y;
         ImGui::End();
         return;
     }
     render_simulation_controls(state);
+    side_bottom_ = ImGui::GetCursorScreenPos().y + ImGui::GetStyle().WindowPadding.y;
     if (testing) {
         ImGui::End();
         return;  // the referee's buttons need the room
@@ -609,6 +614,47 @@ void ViewerUI::render_side_panel(UIState& state) {
         ImGui::TextUnformatted(row[0]);
         ImGui::SameLine(dp(128));
         ImGui::TextColored(C_MUTED, "%s", row[1]);
+    }
+    ImGui::PopFont();
+    side_bottom_ = ImGui::GetCursorScreenPos().y + ImGui::GetStyle().WindowPadding.y;
+    ImGui::End();
+}
+
+// Under the right-hand panel: one row per robot with its Booster mode and whether it is down or penalised.
+void ViewerUI::render_robots_panel(const UIState& state) {
+    if (state.robot_status.empty()) {
+        return;
+    }
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    const ImGuiStyle& st = ImGui::GetStyle();
+    const float row_h    = font_px(font_small_) + st.ItemSpacing.y;
+    const float height   = 2.0f * st.WindowPadding.y + font_px(font_title_) + st.ItemSpacing.y + dp(2)
+                           + static_cast<float>(state.robot_status.size()) * row_h;
+    // Beside the right-hand panel instead when there is no room left under it.
+    if (side_bottom_ + dp(8) + height <= display.y - dp(14)) {
+        begin_panel("##robots", {display.x - dp(14), side_bottom_ + dp(8)}, {1.0f, 0.0f}, {dp(290), height});
+    }
+    else {
+        begin_panel("##robots", {display.x - dp(14 + 290 + 8), display.y - dp(14)}, {1.0f, 1.0f}, {dp(290), height});
+    }
+    heading(font_title_, "Robots");
+    ImGui::PushFont(font_small_);
+    for (const UIState::RobotStatus& robot : state.robot_status) {
+        char tag[32];
+        if (robot.side < 0) {
+            std::snprintf(tag, sizeof(tag), "Robot %d", robot.robot_id);
+            ImGui::TextUnformatted(tag);
+        }
+        else {
+            std::snprintf(tag, sizeof(tag), "%s %d", TEAM_TAG[robot.side], robot.player);
+            ImGui::TextColored(team_colour(robot.side), "%s", tag);
+        }
+        ImGui::SameLine(dp(84));
+        ImGui::TextUnformatted(robot.mode);
+        const char* note   = robot.penalised ? "PENALISED" : robot.fall;
+        const float right  = ImGui::GetWindowContentRegionMax().x;
+        ImGui::SameLine(right - ImGui::CalcTextSize(note).x);
+        ImGui::TextColored(robot.penalised ? C_WARN : C_BAD, "%s", note);
     }
     ImGui::PopFont();
     ImGui::End();
