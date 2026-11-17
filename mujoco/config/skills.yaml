@@ -1,0 +1,133 @@
+# Keyboard play with the mjlab policies (module::SkillPlayer, role sim/skills).
+#
+#   W A S D  without the ball: walk. W/S forward/back, A/D turn (Shift: faster). Walking up to a
+#            ball picks it up (receive).
+#   X        release the ball and go back to walking
+#   Q        roll the ball at the robot from wherever it is; it receives it, standing or walking
+#   E        put a ball at rest at the robot's feet
+#   W A S D  with the ball at its feet: dribble away from / left of / towards / right of the camera
+#            (Shift: faster); nothing held = hold the ball still
+#   Space    hold to wind up a shot: the longer, the harder, and W A S D swing the aim. Release to kick.
+#   R        stand the robot back up at its start
+#   P        pause (Space is taken)
+#
+# The interface these settings follow is mjlab's policies/CONTROLLER_INTERFACE.md (2026-11-17).
+
+# Exported policies (ONNX -> `actions` [1, 22]), relative to mujoco/. Joint order, default pose,
+# action scale and PD gains are read from each file's metadata. Refresh them from an mjlab checkout
+# with `./b skills sync`, which copies the files the spec names.
+policies:
+  walk: policies/skills/walk.onnx # 75 inputs, its own gains; empty = no walking
+  receive: policies/skills/receive.onnx # the walking version: works from standing and walking
+  dribble: policies/skills/dribble.onnx
+  kick: policies/skills/kick.onnx # from standing and out of a dribble
+  # Used instead of `kick` when the ball is rolling as the shot is called. Empty = `kick` for
+  # everything, which is what the spec now says (the kick is trained out of a dribble too).
+  kick_moving: ""
+
+# PD gains for the ball skills (receive, dribble, kick), JointIndexK1 order, from the spec's section
+# 4. Used only for a policy file whose own metadata gains are placeholders (kp 1, kd 0), as the
+# exports with the motor torque-speed model have. Walk always uses its file's own gains.
+ball_skill_gains:
+  kp: [3.948, 3.948, 3.948, 3.948, 3.948, 3.948, 3.948, 3.948, 3.948, 3.948,
+       30.201, 21.448, 17.846, 60.402, 35.692, 35.692, 30.201, 21.448, 17.846, 60.402, 35.692, 35.692]
+  kd: [0.251, 0.251, 0.251, 0.251, 0.251, 0.251, 0.251, 0.251, 0.251, 0.251,
+       3.605, 2.560, 2.130, 4.807, 4.260, 4.260, 3.605, 2.560, 2.130, 4.807, 4.260, 4.260]
+
+# Seconds between a ball skill's step and its joint targets reaching the servos. They were trained
+# with 10 to 40 ms here; with none they over-correct and the gait is visibly jittery.
+action_delay: 0.025
+
+# Seconds spent easing from the spawn pose to the pose of the starting policy, before it takes over.
+blend_time: 0.5
+
+# No policy gets the robot up. Seconds on the ground before it is stood back up at its start; 0 = wait for R.
+fall_reset_after: 3.0
+
+walk:
+  # Start standing in the walk policy (W walks, Q passes) rather than waiting for a pass in receive.
+  start_walking: true
+  # In the robot's own frame, whatever the camera: W forward at `speed` (Shift: `fast_speed`), S back
+  # at `back_speed` (m/s). A/D turn at `turn_rate` rad/s, or with side_keys: strafe step sideways at
+  # `side_speed` m/s. A speed or rate of 0 turns that key off.
+  # The spec trained this walk forward up to 1 m/s and found turning and sideways barely respond in
+  # mjlab, asking that they are not offered until its author confirms its ranges. In NUSim it turns
+  # at about the rate asked; backward and sideways are measured in docs/SKILL_KEYBOARD.md.
+  speed: 0.6
+  fast_speed: 1.0
+  back_speed: 0.3
+  turn_rate: 0.8
+  side_keys: turn # turn | strafe
+  side_speed: 0.3
+  turn_creep: 0.3 # m/s forward added to A/D on their own: the walk does not turn standing still
+  # Walking with a ball within this distance ahead hands over to receive (m; 0 = never). After X,
+  # the ball has to get 0.4 m further away than this before it is picked up again.
+  pickup_distance: 0.8
+  # Seconds before walk targets reach the servos. mjlab ran it with none.
+  action_delay: 0.0
+
+dribble:
+  speed: 0.8 # m/s asked of the ball while a direction is held (trained 0.4 to 1.5; it tops out near 1.2)
+  fast_speed: 1.3 # with Shift
+  # view:  W/A/S/D send the ball away from / left of / towards / right of the viewer's camera, so
+  #        they match what is on screen however the view is turned. Headless, the view looks along +y.
+  # field: towards +x / +y / -x / -y of the field.
+  # robot: relative to the robot's heading (W = straight ahead of it).
+  frame: view
+
+shoot:
+  # Speed asked of the ball (trained 2 to 8 m/s; it leaves about 1.2x faster): min_speed for a tap of
+  # Space, rising to max_speed once it has been held for charge_time seconds. The spec: shots above
+  # about 5 m/s squash the ball into the soft simulated ground and spring out too fast, so do not
+  # expect them on the real robot.
+  min_speed: 2.0
+  max_speed: 8.0
+  charge_time: 2.0
+  # The aim starts at the point below (`goal`) or straight ahead of the robot (`heading`), and swings
+  # towards the W/A/S/D direction held at aim_rate rad/s. It stays within 135 degrees of the robot's
+  # heading, and within 45 degrees once the power is above 5 m/s.
+  aim: goal
+  aim_rate: 2.0
+  goal: [7.0, 0.0] # centre of the +x goal on the middle field
+  # Space does nothing unless the ball is within `reach` m of the robot and within `cone_deg` of its
+  # heading (the kick was trained with the ball in front).
+  reach: 1.0
+  cone_deg: 60.0
+
+receive:
+  # Receive hands over to dribble once the ball has sat still at the robot's feet for this long.
+  settle_time: 0.5
+  # A direction key takes over from receive straight away if the ball is within this distance (m) and
+  # slower than takeover_speed (m/s). Beyond that distance, W walks instead.
+  takeover_distance: 1.0
+  takeover_speed: 0.8
+
+# The pass Q rolls at the robot, each value drawn from its range. Trained: up to 4 m away, within
+# 0.79 rad of straight ahead, arriving at up to 3.5 m/s, up to 0.45 m to the side (passes 0.5 m or
+# more to the side fail more than half the time). A pass from outside that range is still played,
+# with a warning on the status line.
+pass:
+  # ball:  roll it from wherever the ball is now (nothing happens if it is within min_distance m).
+  # spawn: first put it `distance` m away at `bearing` rad off the robot's heading.
+  from: ball
+  min_distance: 1.0
+  distance: [2.5, 3.5] # spawn only
+  bearing: [-0.5, 0.5] # spawn only
+  offset: [-0.25, 0.25] # m to the side of the robot the pass is aimed at
+  arrival_speed: [1.5, 2.5] # m/s as it reaches the robot
+  rolling_decel: 0.9 # m/s^2 the ball loses rolling on this field; sets the launch speed
+
+# The head camera the ball observation imitates (ground truth cut to a field of view, no noise).
+camera:
+  offset: [0.06, 0.0, 0.07] # m, in the Head_2 body frame
+  hfov_deg: 90.0
+  vfov_deg: 60.0
+  range: 5.0
+
+# Key presses at given sim times, for running without a keyboard (e.g. --headless):
+#   script:
+#     - [3.0, tap, Q]
+#     - [9.0, press, W]
+#     - [13.0, release, W]
+#     - [13.5, tap, space]
+script: []

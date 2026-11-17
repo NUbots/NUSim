@@ -74,6 +74,7 @@ add_subdirectory(module/MatchCameras)
 add_subdirectory(module/MatchReferee) # Optional: skipped unless the GameController API is staged
 add_subdirectory(module/WebViewer)
 add_subdirectory(module/Referee)
+add_subdirectory(module/SkillPlayer) # Keyboard play with the mjlab skill policies; fetches ONNX Runtime
 
 # --- Roles → bin/<role_path>/<role_name> (see cmake/K1SimRole.cmake) ---
 set(K1SIM_ROLE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/cmake)

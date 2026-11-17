@@ -31,6 +31,13 @@ modes: **Game** (an automatic referee; you press Start), **Testing Room** (you r
 penalties) and **Free Play** (just the sim, for roles you run yourself). See [docs/MATCH_WINDOW.md](docs/MATCH_WINDOW.md)
 for setup and how each mode works.
 
+## Keyboard play
+
+`./b skills` puts one K1 on the field and plays it from the keyboard with the walk, receive, dribble and kick policies
+from mjlab, run inside the sim with no NUbots role: `W` `A` `S` `D` walk and dribble, `X` lets go of the ball, `Q` rolls
+the ball at the robot and holding `Space` winds up a shot. `./b skills sync` refreshes the policies from mjlab. See
+[docs/SKILL_KEYBOARD.md](docs/SKILL_KEYBOARD.md).
+
 ## Refereed matches (`layton/sim-match`)
 
 This branch adds `./b match`, which plays a 1v1, 2v2 or 3v3 game with one command: the GameController and an automatic

@@ -20,11 +20,13 @@
 #include <mujoco/mujoco.h>
 #include <mutex>
 
+#include "Confetti.hpp"
 #include "MatchPanel.hpp"
 #include "VideoRecorder.hpp"
 #include "shared/CliOptions.hpp"
 #include "shared/k1/BoosterApi.hpp"
 #include "shared/message/Commands.hpp"
+#include "shared/message/InputMessages.hpp"
 #include "shared/message/SimMessages.hpp"
 #include "shared/util/RobotRoster.hpp"
 
@@ -68,6 +70,49 @@ namespace k1sim::module {
         // Set by the Viewer constructor; lets the plain-C GLFW key callback emit a
         // NUClear message (SimResetRequest) without holding a Reactor pointer here.
         std::function<void()> g_request_reset;
+
+        // Keyboard play (module::SkillPlayer): every key press and release is forwarded, and the
+        // module's status line is drawn over the scene. Once a status has arrived Space is the
+        // module's (shoot), so it no longer pauses; P always does.
+        std::function<void(int, bool)> g_send_key;
+        std::function<void(double)> g_send_view;
+        double g_sent_azimuth = 1e9;  // camera azimuth (deg) last sent as a ViewDirection
+        std::atomic<bool> g_skill_keys{false};
+        // Keyboard play's goal celebration. g_goals is filled by the GoalScored reaction and drained
+        // by the render loop, which owns g_confetti.
+        std::mutex g_goal_mutex;
+        std::vector<message::GoalScored> g_goals;
+        viewer::Confetti g_confetti;
+        std::chrono::steady_clock::time_point g_confetti_last{}, g_goal_banner_until{};
+        // Refereed games: the score last seen, to celebrate when it goes up (-1 = not seen yet).
+        int g_seen_home = -1, g_seen_away = -1;
+        // Where the ball last was away from the centre spot (field x, m). When a goal is given the referee
+        // puts the ball back on the spot, possibly before the new score reaches us, so the goal it went in
+        // is worked out from here rather than from where the ball is now.
+        double g_ball_x_in_play = 0.0;
+
+        // A goal mouth in the scene (bodies goal_pos_x / goal_neg_x with _post1 and _bar geoms), as
+        // the celebration wants it; false if the field has no such goal.
+        bool goal_mouth(const mjModel* m, const char* name, message::GoalScored& out) {
+            const int body = mj_name2id(m, mjOBJ_BODY, name);
+            const int post = mj_name2id(m, mjOBJ_GEOM, (std::string(name) + "_post1").c_str());
+            const int bar  = mj_name2id(m, mjOBJ_GEOM, (std::string(name) + "_bar").c_str());
+            if (body < 0 || post < 0 || bar < 0) {
+                return false;
+            }
+            const double radius = m->geom_size[3 * post];
+            out.x      = m->body_pos[3 * body];
+            out.y      = m->body_pos[3 * body + 1];
+            out.width  = 2.0 * (std::abs(m->geom_pos[3 * post + 1]) - radius);
+            out.height = m->geom_pos[3 * bar + 2] - radius;
+            out.dir    = out.x >= 0.0 ? 1 : -1;
+            return true;
+        }
+        // Keyboard play starts with the camera behind the robot, where W means forward for walking
+        // and dribbling alike. Set when its first status arrives; the render loop applies it once.
+        std::atomic<bool> g_camera_behind_pending{false};
+        std::mutex g_skill_mutex;
+        message::SkillStatus g_skill_status;
 
         MatchPanel match_panel;
         std::function<void(const message::MatchCommand&)> g_send_match_command;
@@ -508,7 +553,47 @@ namespace k1sim::module {
                               1.0 - last_y / height, &scn, selpnt, &geomid, &flexid, skinid);
         }
 
+        // The Simulation panel's camera buttons. Free leaves the camera where the mouse put it.
+        // Follow keeps it on the main robot while the mouse still turns and zooms it. Behind also
+        // swings it round to look along the robot's heading, eased so the gait's sway does not
+        // shake the view. Caller holds the sim mutex.
+        void apply_camera_mode() {
+            static int applied = viewer::CAMERA_FREE;
+            const int mode     = g_ui_state.camera_mode;
+            const int trunk    = mj_name2id(g_model, mjOBJ_BODY, "Trunk");
+            if (mode == viewer::CAMERA_FREE || trunk < 0) {
+                cam.type = mjCAMERA_FREE;  // lookat stays where tracking left it
+                applied  = viewer::CAMERA_FREE;
+                return;
+            }
+            cam.type        = mjCAMERA_TRACKING;
+            cam.trackbodyid = trunk;
+            if (mode != applied) {
+                if (applied == viewer::CAMERA_FREE) {
+                    cam.distance = std::min(cam.distance, 5.0);  // close enough to see the robot
+                }
+                if (mode == viewer::CAMERA_BEHIND) {
+                    cam.elevation = -25.0;
+                    cam.distance  = std::min(cam.distance, 4.0);
+                }
+                applied = mode;
+            }
+            if (mode == viewer::CAMERA_BEHIND) {
+                const mjtNum* q    = g_data->xquat + 4 * trunk;
+                const double yaw   = std::atan2(2.0 * (q[0] * q[3] + q[1] * q[2]), 1.0 - 2.0 * (q[2] * q[2] + q[3] * q[3]));
+                const double want  = yaw * 180.0 / 3.14159265358979323846;
+                const double error = std::remainder(want - cam.azimuth, 360.0);
+                cam.azimuth += 0.03 * error;  // per 16 ms frame: about half a second to catch up
+            }
+        }
+
         void keyboard_cb(GLFWwindow* w, int key, int /*scancode*/, int act, int /*mods*/) {
+            // Not while typing into a panel's text box. Releases always go through, so a key held
+            // when a text box takes focus is not left stuck down.
+            const bool typing = g_ui != nullptr && ImGui::GetIO().WantTextInput;
+            if (g_send_key && (act == GLFW_RELEASE || (act == GLFW_PRESS && !typing))) {
+                g_send_key(key, act == GLFW_PRESS);
+            }
             if (act != GLFW_PRESS) {
                 return;
             }
@@ -530,7 +615,8 @@ namespace k1sim::module {
                     g_data->qvel[dof + 4] += 6.0;  // pitch rate — guarantees a topple
                 }
             }
-            if (key == GLFW_KEY_SPACE && g_ui != nullptr) {
+            const bool skill_keys = g_skill_keys.load(std::memory_order_relaxed);
+            if (((key == GLFW_KEY_SPACE && !skill_keys) || (key == GLFW_KEY_P && !typing)) && g_ui != nullptr) {
                 g_ui->toggle_pause(g_ui_state);
             }
         }
@@ -768,6 +854,10 @@ namespace k1sim::module {
         // thread-safe, and the callback only ever runs on the MainThread glfwPollEvents pump.
         g_request_reset = [this] { emit(std::make_unique<message::SimResetRequest>()); };
 
+        g_send_key = [this](int key, bool down) { emit(std::make_unique<message::KeyEvent>(message::KeyEvent{key, down})); };
+
+        g_send_view = [this](double yaw) { emit(std::make_unique<message::ViewDirection>(message::ViewDirection{yaw})); };
+
         g_send_match_command = [this](const message::MatchCommand& command) {
             emit(std::make_unique<message::MatchCommand>(command));
         };
@@ -913,6 +1003,19 @@ namespace k1sim::module {
             g_legal = status.legal;
         });
 
+        on<Trigger<message::GoalScored>>().then([](const message::GoalScored& goal) {
+            std::lock_guard<std::mutex> lock(g_goal_mutex);
+            g_goals.push_back(goal);
+        });
+
+        on<Trigger<message::SkillStatus>>().then([](const message::SkillStatus& status) {
+            std::lock_guard<std::mutex> lock(g_skill_mutex);
+            g_skill_status = status;
+            if (!g_skill_keys.exchange(true, std::memory_order_relaxed)) {
+                g_camera_behind_pending.store(true, std::memory_order_relaxed);
+            }
+        });
+
         on<Trigger<message::RobotStatesUpdate>>().then([](const message::RobotStatesUpdate& states) {
             std::lock_guard<std::mutex> lock(g_match_mutex);
             g_robot_modes.clear();
@@ -939,6 +1042,19 @@ namespace k1sim::module {
             glfwPollEvents();
             glfwGetWindowSize(window, &g_win_w, &g_win_h);
 
+            // A refereed game (./b match, or the Testing Room's GameController): a score going up sets
+            // off the same celebration as keyboard play, at the goal the ball is nearest.
+            bool scored = false;
+            {
+                std::lock_guard<std::mutex> match_lock(g_match_mutex);
+                if (g_match_status.has_game) {
+                    const int home = g_match_status.home_score, away = g_match_status.away_score;
+                    scored      = g_seen_home >= 0 && (home > g_seen_home || away > g_seen_away);
+                    g_seen_home = home;
+                    g_seen_away = away;
+                }
+            }
+
             if (scene_ready && g_data != nullptr && g_mutex != nullptr) {
                 // Lock only around the mjData touch points: applying the perturb
                 // force/clearing it, and mjv_updateScene's read of mjData. Both
@@ -960,9 +1076,59 @@ namespace k1sim::module {
                         mju_zero(g_data->xfrc_applied + 6 * pert.select, 6);
                     }
                 }
+                if (g_camera_behind_pending.exchange(false, std::memory_order_relaxed)) {
+                    g_ui_state.camera_mode = viewer::CAMERA_BEHIND;
+                }
+                apply_camera_mode();
                 mjv_updateScene(g_model, g_data, &opt, &pert, &cam, mjCAT_ALL, &scn);
                 if (!video) {
                     match_panel.add_labels(g_model, g_data, &scn);
+                }
+                // A goal sets off confetti and fireworks from the goal mouth.
+                {
+                    const auto now = std::chrono::steady_clock::now();
+                    std::lock_guard<std::mutex> goal_lock(g_goal_mutex);
+                    if (const int ball = mj_name2id(g_model, mjOBJ_GEOM, "ball"); ball >= 0) {
+                        const double x = g_data->geom_xpos[3 * ball], y = g_data->geom_xpos[3 * ball + 1];
+                        if (std::hypot(x, y) > 1.0) {
+                            g_ball_x_in_play = x;
+                        }
+                    }
+                    message::GoalScored pos_x, neg_x;
+                    if (scored && goal_mouth(g_model, "goal_pos_x", pos_x) && goal_mouth(g_model, "goal_neg_x", neg_x)) {
+                        g_goals.push_back(g_ball_x_in_play >= 0.0 ? pos_x : neg_x);
+                    }
+                    for (const auto& goal : g_goals) {
+                        g_confetti.celebrate(goal.x, goal.y, goal.width, goal.height, goal.dir);
+                        g_goal_banner_until = now + std::chrono::milliseconds(2500);
+                    }
+                    g_goals.clear();
+                    if (g_confetti.active()) {
+                        g_confetti.step(std::chrono::duration<double>(now - g_confetti_last).count());
+                        g_confetti.draw(&scn);
+                    }
+                    g_confetti_last = now;
+                }
+                // Keyboard play: the shot being wound up, as an arrow from the ball.
+                if (g_skill_keys.load(std::memory_order_relaxed) && scn.ngeom < scn.maxgeom) {
+                    std::lock_guard<std::mutex> skill_lock(g_skill_mutex);
+                    if (g_skill_status.aiming) {
+                        const double length = 0.5 + 1.5 * g_skill_status.charge;
+                        const mjtNum from[3] = {g_skill_status.ball_x, g_skill_status.ball_y, 0.1};
+                        const mjtNum to[3]   = {from[0] + length * std::cos(g_skill_status.aim_angle),
+                                                from[1] + length * std::sin(g_skill_status.aim_angle),
+                                                0.1};
+                        const float charge  = static_cast<float>(g_skill_status.charge);
+                        const float rgba[4] = {1.f, 0.9f - 0.7f * charge, 0.1f, 0.9f};
+                        mjvGeom& arrow = scn.geoms[scn.ngeom++];
+                        mjv_initGeom(&arrow, mjGEOM_ARROW, nullptr, nullptr, nullptr, rgba);
+                        mjv_connector(&arrow, mjGEOM_ARROW, 0.03, from, to);
+                    }
+                }
+                // Tell keyboard play which way the camera faces, so its direction keys follow the view.
+                if (g_send_view && std::abs(cam.azimuth - g_sent_azimuth) > 0.5) {
+                    g_sent_azimuth = cam.azimuth;
+                    g_send_view(cam.azimuth * 3.14159265358979323846 / 180.0);
                 }
                 if (video) {
                     for (const auto& robot : video_roster) {
@@ -995,11 +1161,27 @@ namespace k1sim::module {
             if (scene_ready) {
                 mjr_render(viewport, &scn, &con);
 
+                if (g_skill_keys.load(std::memory_order_relaxed)) {
+                    std::string text;
+                    {
+                        std::lock_guard<std::mutex> lock(g_skill_mutex);
+                        text = g_skill_status.skill + ": " + g_skill_status.detail + "\n" + g_skill_status.keys;
+                    }
+                    mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, viewport, text.c_str(), nullptr, &con);
+                }
+                if (std::chrono::steady_clock::now() < g_goal_banner_until) {
+                    // A banner in the middle of the view: the overlay is laid out in a box a little
+                    // above the centre.
+                    const mjrRect banner{viewport.left, viewport.bottom + viewport.height * 3 / 5, viewport.width, viewport.height / 5};
+                    mjr_overlay(mjFONT_BIG, mjGRID_TOP, banner, "G O A L !", nullptr, &con);
+                }
+
                 if (g_ui != nullptr) {
                     viewer::UIState& ui = g_ui_state;
                     ui.sim_time     = g_sim_time.load(std::memory_order_relaxed);
                     ui.measured_rtf = g_measured_rtf != nullptr ? g_measured_rtf->load(std::memory_order_relaxed) : 0.0;
                     ui.robot_mode   = mode_name(g_mode.load(std::memory_order_relaxed));
+                    ui.skill_keys   = g_skill_keys.load(std::memory_order_relaxed);
                     ui.paused       = g_paused != nullptr && g_paused->load(std::memory_order_relaxed);
                     if (const int ball = mj_name2id(g_model, mjOBJ_GEOM, "ball"); ball >= 0 && g_mutex != nullptr) {
                         std::lock_guard<std::mutex> lock(*g_mutex);

@@ -45,6 +45,8 @@ struct Codebase {
     std::string note;
 };
 
+inline constexpr int CAMERA_FREE = 0, CAMERA_FOLLOW = 1, CAMERA_BEHIND = 2;
+
 struct UIState {
     // Telemetry, written by the Viewer every frame before render().
     double sim_time        = 0.0;
@@ -52,6 +54,13 @@ struct UIState {
     const char* robot_mode = "?";
     bool paused            = false;
     float speed            = 1.0f;
+
+    // How the camera moves, chosen with the Simulation panel's buttons. CAMERA_FREE: wherever the
+    // mouse leaves it. CAMERA_FOLLOW: it stays on the main robot and the mouse still turns and zooms
+    // it. CAMERA_BEHIND: it stays behind the main robot, turning with it.
+    int camera_mode = 0;
+    // Keyboard play is running (module::SkillPlayer): Space is its shoot key, so P pauses.
+    bool skill_keys = false;
 
     // Latest report from module::MatchReferee; has_game stays false in roles without it.
     message::MatchStatus match;

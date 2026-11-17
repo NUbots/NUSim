@@ -1,0 +1,5 @@
+Copied by ./b skills sync from /home/seb/mjlab/policies/CONTROLLER_INTERFACE.md
+walk.onnx <- /home/seb/mjlab/policies/k1_walk_booster_mjlab/booster_mjlab_walk.onnx (2026-11-16 21:51)
+receive.onnx <- /home/seb/mjlab/policies/k1_receive_walk_v1/2026-11-17_02-11-11.onnx (2026-11-17 04:11)
+dribble.onnx <- /home/seb/mjlab/policies/k1_dribble_v6_curves/2026-11-17_08-13-51.onnx (2026-11-17 10:58)
+kick.onnx <- /home/seb/mjlab/policies/k1_kick_latest_backup/k1_kick_iter27500.onnx (2026-11-17 17:50)

@@ -366,6 +366,18 @@ void ViewerUI::render_simulation_controls(UIState& state) {
         }
     }
 
+    section(font_small_, "CAMERA");
+    static constexpr const char* cameras[3] = {"Free", "Follow", "Behind"};
+    const float cw = std::floor((ImGui::GetContentRegionAvail().x - 2 * gap) / 3.0f);
+    for (int i = 0; i < 3; ++i) {
+        if (i > 0) {
+            ImGui::SameLine(0.0f, gap);
+        }
+        if (button(cameras[i], cw, dp(30), state.camera_mode == i ? Kind::Selected : Kind::Secondary)) {
+            state.camera_mode = i;
+        }
+    }
+
     ImGui::Dummy({0.0f, dp(4)});
     char buf[32];
     stat_row("Sim time", clock_text(state.sim_time, true).c_str());
@@ -602,12 +614,12 @@ void ViewerUI::render_side_panel(UIState& state) {
         return;  // hands off during a refereed game
     }
     section(font_small_, "MOVING THINGS");
-    static constexpr const char* help[][2] = {
+    const char* const help[][2] = {
         {"Double-click", "Show move handles"},
         {"Drag arrow / ring", "Slide / turn on the spot"},
         {"Ctrl + drag", "Carry it across the field"},
         {"Ctrl + right-drag", "Shove it (applies force)"},
-        {"Space", "Pause or resume"},
+        {state.skill_keys ? "P" : "Space", "Pause or resume"},
     };
     ImGui::PushFont(font_small_);
     for (const auto& row : help) {

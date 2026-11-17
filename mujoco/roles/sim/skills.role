@@ -1,0 +1,12 @@
+# One K1 played from the keyboard with the mjlab skill policies (receive, dribble, kick), run inside the sim.
+# No NUbots process and no DDS: module::SkillPlayer reads the sim state, runs the policy and sends the servo targets
+# to Locomotion itself. Supervisor is here only to place the ball (it stays off the GameController by default).
+k1sim_role(
+  ConsoleLog
+  Simulation
+  Locomotion
+  Supervisor
+  SkillPlayer
+  Viewer
+  WebViewer
+)
