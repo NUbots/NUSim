@@ -62,6 +62,10 @@ penalises robots; the Referee box says why each time. Every kick-off after a goa
 Playing steps. A robot that lies on the ground for 10 seconds is stood back on the touchline and walks on again.
 With one robot a side nobody is goalkeeper; with more, each team's second robot is.
 
+When a goal is given, "GOAL!" comes up in the middle of the window and confetti and fireworks go off from the goal
+the ball went in. That happens in any mode with a scoreboard, so a goal awarded by hand in the Testing Room gets it
+too. It is only for show, drawn by the window and not part of the physics, and isn't in the browser viewer.
+
 You can't move robots or the ball by hand in this mode. Ground truth is on by default.
 
 ### Testing Room
