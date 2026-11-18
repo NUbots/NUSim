@@ -244,10 +244,10 @@ int main() {
         Keys forward;
         forward.forward = true;
         d               = logic.tick(forward, far, DT);
-        check(near(d.twist[0], 0.6) && d.twist[1] == 0.0 && d.twist[2] == 0.0, "G: W walks forward at walk_speed");
+        check(near(d.twist[0], 1.0) && d.twist[1] == 0.0 && d.twist[2] == 0.0, "G: W walks forward at walk_speed");
         Keys fast = forward;
         fast.fast = true;
-        check(near(logic.tick(fast, far, DT).twist[0], 1.0), "G: Shift walks at walk_fast_speed");
+        check(near(logic.tick(fast, far, DT).twist[0], 2.0), "G: Shift walks at walk_fast_speed");
         Keys left;
         left.left = true;
         check(near(logic.tick(left, far, DT).twist[2], 0.8), "G: A turns left");

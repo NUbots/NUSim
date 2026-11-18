@@ -20,13 +20,13 @@ means forward for walking and dribbling alike.
 
 | Key | What it does |
 | --- | --- |
-| `W` `A` `S` `D` | Without the ball (over a metre away, or none rolling in): walk. `W` forward at 0.6 m/s, `S` back at 0.3 m/s, `A`/`D` turn at 0.8 rad/s. Walking up to a ball picks it up. With the ball: dribble away from / left of / towards / right of the camera at 0.8 m/s; release everything to hold it still. |
+| `W` `A` `S` `D` | Without the ball (over a metre away, or none rolling in): walk. `W` forward at 1 m/s, `S` back at 0.3 m/s, `A`/`D` turn at 0.8 rad/s. Walking up to a ball picks it up. With the ball: dribble away from / left of / towards / right of the camera at 0.8 m/s; release everything to hold it still. |
 | `Q` | Call for a pass: the ball is rolled at the robot from wherever it is. See [Passes](#passes) for what you can do as it comes. |
 | `Space` | With a pass rolling in: shoot it first time (see [Passes](#passes)). With the ball in front of the robot: hold to wind up a shot, release to kick. A tap is 2 m/s, rising to 7 m/s over 2 s. An arrow from the ball shows the aim (it starts at the +x goal) and grows and reddens with the power; `W` `A` `S` `D` swing it while the key is held. |
 | `C` | The same for an air shot: the ball lifts at about 30 degrees. |
 | `X` | Let go of the ball and walk. |
 | `E` | Puts a ball at rest half a metre in front of the robot. |
-| `Shift` | Faster: walk at 1.0 m/s, dribble at 1.8 m/s, first touch at 1.2 m/s, first-time pass at 4 m/s. |
+| `Shift` | Faster: walk at 2 m/s (past the 1 m/s its author reports; it tracks 1.9 m/s here without falling), dribble at 1.8 m/s, first touch at 1.2 m/s, first-time pass at 4 m/s. |
 | `R` | Stands the robot back up where it started. This also happens by itself 3 s after a fall. |
 | `P` | Pause. (`Space` pauses in the other roles; here it shoots.) |
 

@@ -62,8 +62,8 @@ walk:
   # The spec trained this walk forward up to 1 m/s and found turning and sideways barely respond in
   # mjlab, asking that they are not offered until its author confirms its ranges. In NUSim it turns
   # at about the rate asked; backward and sideways are measured in docs/SKILL_KEYBOARD.md.
-  speed: 0.6
-  fast_speed: 1.0
+  speed: 1.0
+  fast_speed: 2.0 # past the 1 m/s its author reports; it tracks 2.0 asked at 1.88 here without falling
   back_speed: 0.3
   turn_rate: 0.8
   side_keys: turn # turn | strafe

@@ -63,8 +63,8 @@ namespace k1sim::skill {
         // Walk, in the robot's own frame whatever the view: W forward at walk_speed (Shift:
         // walk_fast_speed), S back at walk_back_speed. A/D turn at walk_turn_rate rad/s, or with
         // walk_side_keys = STRAFE step sideways at walk_side_speed.
-        double walk_speed      = 0.6;
-        double walk_fast_speed = 1.0;
+        double walk_speed      = 1.0;
+        double walk_fast_speed = 2.0;
         double walk_back_speed = 0.3;
         double walk_turn_rate  = 0.8;
         double walk_side_speed = 0.3;
@@ -130,7 +130,8 @@ namespace k1sim::skill {
     inline constexpr double DRIBBLE_SPEED_MAX     = 1.8;
     inline constexpr double KICK_SPEED_MIN        = 2.0;
     inline constexpr double KICK_SPEED_MAX        = 7.0;
-    inline constexpr double WALK_SPEED_MAX        = 1.0;
+    // Its author reports the walk to about 1 m/s; in simulation it tracks to 2 m/s without falling.
+    inline constexpr double WALK_SPEED_MAX        = 2.0;
     inline constexpr double FIRST_TOUCH_SPEED_MIN = 0.5;
     inline constexpr double FIRST_TOUCH_SPEED_MAX = 1.2;
     inline constexpr double FIRST_PASS_SPEED_MIN  = 2.0;
