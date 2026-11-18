@@ -3,7 +3,9 @@
 
 Keys, in the sim window: W = walk to a ball / dribble, Q = pass at the robot, E = ball at its feet,
 W/A/S/D = dribble (Shift faster), Space = hold to charge a shot and release to kick, R = stand the
-robot back up, P = pause. Settings are in mujoco/config/skills.yaml.
+robot back up, P = pause. The viewer's Training buttons switch between free play and the rondo
+(three robots passing round a fourth); four robots are spawned for it unless --robots is given.
+Settings are in mujoco/config/skills.yaml.
 """
 
 import argparse
@@ -89,4 +91,8 @@ def run(mjlab, args, **kwargs):
     if args[:1] == ["sync"]:
         _sync(mjlab)
     else:
+        # Four robots, for the rondo (the viewer's Training buttons): in free play the other three
+        # stand on the touchline. --robots 1 gives the old single-robot scene.
+        if "--robots" not in args and "--game" not in args:
+            args = [*args, "--robots", "4"]
         k1sim("run", "bin/sim/skills", *args)

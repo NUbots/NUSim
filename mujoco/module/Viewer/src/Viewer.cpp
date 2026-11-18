@@ -1,6 +1,7 @@
 #include "module/Viewer/src/Viewer.hpp"
 
 #include <algorithm>
+#include <optional>
 #include <cmath>
 #include <imgui.h>
 #include <filesystem>
@@ -113,6 +114,8 @@ namespace k1sim::module {
         std::atomic<bool> g_camera_behind_pending{false};
         std::mutex g_skill_mutex;
         message::SkillStatus g_skill_status;
+        // A camera change keyboard play asked for (a drill starting), applied by the render loop.
+        std::optional<message::CameraRequest> g_camera_request;
 
         MatchPanel match_panel;
         std::function<void(const message::MatchCommand&)> g_send_match_command;
@@ -554,13 +557,13 @@ namespace k1sim::module {
         }
 
         // The Simulation panel's camera buttons. Free leaves the camera where the mouse put it.
-        // Follow keeps it on the main robot while the mouse still turns and zooms it. Behind also
+        // Follow keeps it on `body` (the main robot, or the one keyboard play is playing) while the mouse still turns and zooms it. Behind also
         // swings it round to look along the robot's heading, eased so the gait's sway does not
         // shake the view. Caller holds the sim mutex.
-        void apply_camera_mode() {
+        void apply_camera_mode(const std::string& body) {
             static int applied = viewer::CAMERA_FREE;
             const int mode     = g_ui_state.camera_mode;
-            const int trunk    = mj_name2id(g_model, mjOBJ_BODY, "Trunk");
+            const int trunk    = mj_name2id(g_model, mjOBJ_BODY, body.c_str());
             if (mode == viewer::CAMERA_FREE || trunk < 0) {
                 cam.type = mjCAMERA_FREE;  // lookat stays where tracking left it
                 applied  = viewer::CAMERA_FREE;
@@ -1008,6 +1011,11 @@ namespace k1sim::module {
             g_goals.push_back(goal);
         });
 
+        on<Trigger<message::CameraRequest>>().then([](const message::CameraRequest& request) {
+            std::lock_guard<std::mutex> lock(g_skill_mutex);
+            g_camera_request = request;
+        });
+
         on<Trigger<message::SkillStatus>>().then([](const message::SkillStatus& status) {
             std::lock_guard<std::mutex> lock(g_skill_mutex);
             g_skill_status = status;
@@ -1055,6 +1063,16 @@ namespace k1sim::module {
                 }
             }
 
+            // Keyboard play: the robot the keys play (the camera follows it) and any camera change it
+            // asked for, taken before the sim lock.
+            std::string tracked_body = "Trunk";
+            std::optional<message::CameraRequest> camera_request;
+            if (g_skill_keys.load(std::memory_order_relaxed)) {
+                std::lock_guard<std::mutex> skill_lock(g_skill_mutex);
+                tracked_body = g_skill_status.robot_body;
+                camera_request.swap(g_camera_request);
+            }
+
             if (scene_ready && g_data != nullptr && g_mutex != nullptr) {
                 // Lock only around the mjData touch points: applying the perturb
                 // force/clearing it, and mjv_updateScene's read of mjData. Both
@@ -1079,7 +1097,19 @@ namespace k1sim::module {
                 if (g_camera_behind_pending.exchange(false, std::memory_order_relaxed)) {
                     g_ui_state.camera_mode = viewer::CAMERA_BEHIND;
                 }
-                apply_camera_mode();
+                if (camera_request) {
+                    g_ui_state.camera_mode = std::clamp(camera_request->mode, 0, 2);
+                    if (camera_request->place) {
+                        cam.type      = mjCAMERA_FREE;
+                        cam.lookat[0] = camera_request->x;
+                        cam.lookat[1] = camera_request->y;
+                        cam.lookat[2] = 0.3;
+                        cam.distance  = camera_request->distance;
+                        cam.azimuth   = camera_request->azimuth;
+                        cam.elevation = camera_request->elevation;
+                    }
+                }
+                apply_camera_mode(tracked_body);
                 mjv_updateScene(g_model, g_data, &opt, &pert, &cam, mjCAT_ALL, &scn);
                 if (!video) {
                     match_panel.add_labels(g_model, g_data, &scn);
@@ -1123,6 +1153,17 @@ namespace k1sim::module {
                         mjvGeom& arrow = scn.geoms[scn.ngeom++];
                         mjv_initGeom(&arrow, mjGEOM_ARROW, nullptr, nullptr, nullptr, rgba);
                         mjv_connector(&arrow, mjGEOM_ARROW, 0.03, from, to);
+                    }
+                    // In a drill, an arrow hanging over the robot the keys play.
+                    const int body = g_skill_status.marker ? mj_name2id(g_model, mjOBJ_BODY, g_skill_status.robot_body.c_str()) : -1;
+                    if (body >= 0 && scn.ngeom < scn.maxgeom) {
+                        const mjtNum* p     = g_data->xpos + 3 * body;
+                        const mjtNum from[3] = {p[0], p[1], 1.55};
+                        const mjtNum to[3]   = {p[0], p[1], 1.2};
+                        const float rgba[4]  = {0.2f, 0.85f, 1.f, 0.9f};
+                        mjvGeom& marker      = scn.geoms[scn.ngeom++];
+                        mjv_initGeom(&marker, mjGEOM_ARROW, nullptr, nullptr, nullptr, rgba);
+                        mjv_connector(&marker, mjGEOM_ARROW, 0.05, from, to);
                     }
                 }
                 // Tell keyboard play which way the camera faces, so its direction keys follow the view.
@@ -1182,6 +1223,10 @@ namespace k1sim::module {
                     ui.measured_rtf = g_measured_rtf != nullptr ? g_measured_rtf->load(std::memory_order_relaxed) : 0.0;
                     ui.robot_mode   = mode_name(g_mode.load(std::memory_order_relaxed));
                     ui.skill_keys   = g_skill_keys.load(std::memory_order_relaxed);
+                    if (ui.skill_keys) {
+                        std::lock_guard<std::mutex> skill_lock(g_skill_mutex);
+                        ui.skill_drill = g_skill_status.drill;
+                    }
                     ui.paused       = g_paused != nullptr && g_paused->load(std::memory_order_relaxed);
                     if (const int ball = mj_name2id(g_model, mjOBJ_GEOM, "ball"); ball >= 0 && g_mutex != nullptr) {
                         std::lock_guard<std::mutex> lock(*g_mutex);
@@ -1276,6 +1321,9 @@ namespace k1sim::module {
                     if (actions.place_ball && g_mutex != nullptr) {
                         std::lock_guard<std::mutex> lock(*g_mutex);
                         place_ball((*actions.place_ball)[0], (*actions.place_ball)[1]);
+                    }
+                    if (!actions.skill_drill.empty()) {
+                        emit(std::make_unique<message::SkillDrill>(message::SkillDrill{actions.skill_drill}));
                     }
                     if (actions.reset_sim) {
                         end_perturb();

@@ -4,6 +4,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mujoco/mujoco.h>
 #include <mutex>
@@ -24,7 +25,7 @@ namespace k1sim::skill {
 
 namespace k1sim::module {
 
-    // Plays the main robot from the keyboard with the mjlab policies (walk, receive, dribble, kick),
+    // Plays the robots from the keyboard with the mjlab policies (walk, receive, dribble, kick),
     // inside the sim: no NUbots process and no DDS. Each 50 Hz state update it reads the robot and
     // ball from mjData, builds the running policy's observation (234 numbers for a ball skill, 75 for
     // walk), runs it and hands the 22 joint targets, with that policy's PD gains, to
@@ -39,7 +40,12 @@ namespace k1sim::module {
     //   W A S D  dribble, away from / left of / towards / right of the camera (Shift: faster);
     //            nothing held = hold the ball
     //   Space    hold to wind up a shot (longer = harder, W A S D swing the aim), release to kick
-    //   R        stand the robot back up at its start
+    //   R        stand the robot back up at its start (rondo: start the round again)
+    //
+    // Training drills, from the viewer's Training buttons (SkillDrill): free play (the above, one
+    // robot; the others stand on the touchline) and the rondo: three teammates in a triangle pass
+    // the ball round while the fourth, in the middle, walks at it. The keys play whichever teammate
+    // the ball is going to, and a pass or shot aims at the most open teammate.
     //
     // Settings and the policy files are in config/skills.yaml; see docs/SKILL_KEYBOARD.md.
     class SkillPlayer : public NUClear::Reactor {
@@ -49,6 +55,11 @@ namespace k1sim::module {
 
     private:
         enum class Phase { WAITING, BLENDING, PLAYING, FALLEN };
+        enum class Drill { FREE, RONDO };
+        // PLAYER: free play's robot. TEAMMATE: one of the rondo's three passers, played whenever
+        // the ball is theirs. DEFENDER: the rondo's middle robot, walking at the ball by itself.
+        // PARKED: standing on the touchline out of the way (free play's other robots).
+        enum class Role { PLAYER, TEAMMATE, DEFENDER, PARKED };
 
         // One control step's measurements, read from mjData under the sim mutex.
         struct Sample {
@@ -77,18 +88,74 @@ namespace k1sim::module {
             double lo = 0.0, hi = 0.0;
         };
 
-        void tick(const message::SimStateUpdate& state);
-        void restart();
-        Sample read_state();
+        // Everything about one robot: its handles in the model and its policies' running state.
+        struct Agent {
+            int robot_id = 1;
+            std::string trunk = "Trunk";
+            ModelMap map{};
+            int head_body = -1;
+            Role role     = Role::PLAYER;
+            bool homed    = false;  // placed by a drill at `home`; a fall puts it back there
+            std::array<double, 3> home{};  // x, y, yaw
+
+            Phase phase        = Phase::WAITING;
+            bool have_state    = false;
+            uint64_t reset_seen = 0;
+            double mode_asked  = -1.0;  // sim time of the last CUSTOM request
+            double phase_start = 0.0;
+            double playing_since = 0.0;
+            bool start_with_ball = false;  // receive the ball at its feet once the policies take over
+            std::array<double, JOINT_COUNT> blend_from{};
+            std::array<Frame, 3> history{};
+            bool history_primed = false;
+            std::array<float, JOINT_COUNT> last_action{};       // the ball skills' previous raw output
+            std::array<float, JOINT_COUNT> walk_last_action{};  // walk's
+            std::array<double, JOINT_COUNT> last_target{};      // joint targets last sent, whichever policy
+            bool have_target = false;
+            const skill::SkillPolicy* running = nullptr;  // the policy that ran last step
+            std::array<double, 4> last_ball{0.5, 0.0, -0.8, 0.0};
+            std::array<double, 2> last_ball_vel{};  // for spotting a touch between control steps
+            skill::Logic logic;
+            skill::Decision decision{};
+            skill::Skill logged_skill = skill::Skill::RECEIVE;
+            double idle_since = -1.0;  // rondo: when the keys last left it
+            std::array<double, 2> support{};  // rondo, off the ball: where to stand to be passed to
+            bool repositioning = false, turning = false;  // support_twist's hysteresis
+            double log_next   = 0.0;   // sim time of its next SKILL line
+            double jitter_sum = 0.0;   // mean leg target change per step since the last log line
+            int jitter_count  = 0;
+            Sample sample{};
+        };
+
+        void tick(const message::RobotStatesUpdate& states);
+        void step_agent(Agent& agent, const message::SimStateUpdate& state);
+        void restart(Agent& agent);
+        Sample read_state(Agent& agent);
         void key(int code, bool down);
-        std::string launch_pass(const Sample& sample);
-        void play(const message::SimStateUpdate& state, const Sample& sample);
-        void send_targets(const std::array<double, JOINT_COUNT>& q, const skill::Gains& gains, double delay);
-        std::array<float, JOINT_COUNT> run_ball_skill(skill::SkillPolicy& policy, const Sample& sample);
-        std::array<float, JOINT_COUNT> run_walk(skill::SkillPolicy& policy, const Sample& sample);
-        void publish_status(double sim_time, bool force, const Sample* sample = nullptr);
+        skill::Keys held_keys() const;
+        std::string launch_pass(Agent& agent);
+        void apply_inputs(Agent& agent, double sim_time);
+        void run_policy(Agent& agent, const message::SimStateUpdate& state);
+        void send_targets(Agent& agent, const std::array<double, JOINT_COUNT>& q, const skill::Gains& gains, double delay);
+        std::array<float, JOINT_COUNT> run_ball_skill(Agent& agent, skill::SkillPolicy& policy);
+        std::array<float, JOINT_COUNT> run_walk(Agent& agent, skill::SkillPolicy& policy);
+        void publish_status(double sim_time, bool force);
         skill::SkillPolicy& policy_for(const skill::Decision& decision);
         double sample_range(const Range& range);
+        void note(const std::string& text, double sim_time, double seconds = 2.0);
+
+        // -- drills --
+        void start_drill(Drill drill, double sim_time);
+        void start_rondo_round(double sim_time);
+        void update_rondo(double sim_time);
+        void switch_control(std::size_t to, double pass_angle, double sim_time);
+        skill::Decision defender_decision(const Agent& agent, double sim_time);
+        std::array<double, 3> support_twist(Agent& agent);
+        std::array<double, 3> ease_twist(const std::array<double, 3>& was, const std::array<double, 3>& want) const;
+        // Caller holds the sim mutex. Stands a robot at (x, y) facing yaw, in the ready pose.
+        void place_locked(Agent& agent, double x, double y, double yaw);
+        void place_ball_locked(double x, double y);
+        std::array<double, 2> rondo_spot(int k) const;  // teammate k's corner of the triangle
 
         // -- policies --
         struct Policies;
@@ -98,8 +165,12 @@ namespace k1sim::module {
         const mjModel* model_ = nullptr;
         mjData* data_         = nullptr;
         std::mutex* mutex_    = nullptr;
-        ModelMap map_{};
-        int head_body_ = -1, ball_body_ = -1, ball_geom_ = -1;
+        std::function<void(int)> placed_robot_;
+        int ball_body_ = -1, ball_geom_ = -1;
+        std::array<double, JOINT_COUNT> ready_joints_{};  // the "ready" keyframe's pose
+        double ready_z_ = 0.555;
+        std::array<double, 3> start_pose_{};  // free play's robot as the scene starts it: x, y, yaw
+        std::array<double, 2> ball_start_{};  // and the ball
         // The scene's goals (bodies goal_pos_x / goal_neg_x with _post1 and _bar geoms), for goal
         // detection; empty on a field without them.
         struct Goal {
@@ -126,47 +197,60 @@ namespace k1sim::module {
         double action_delay_       = 0.025; // s between a ball skill's step and its targets reaching the servos
         double walk_action_delay_  = 0.0;   // the same for walk
         std::atomic<double>* rtf_  = nullptr;
-        // Mean change of a leg joint target between control steps (rad), since the last log line.
-        double jitter_sum_ = 0.0;
-        int jitter_count_  = 0;
         std::vector<ScriptEvent> script_;
+        skill::Config logic_config_{};
+        double touch_velocity_jump_ = 0.4;  // m/s change in one 20 ms step: more than rolling friction
+        bool match_ball_contact_     = true;
+        double ball_contact_friction_ = 0.3;
+        std::array<double, 2> ball_contact_solref_{0.02, 0.35};
+
+        struct Rondo {
+            std::array<double, 2> centre{0.0, 0.0};
+            double side            = 4.0;   // m between teammates
+            double defender_speed  = 2.0;   // m/s
+            double defender_turn   = 1.0;   // rad/s
+            double defender_delay  = 2.0;   // s after the round starts before the defender sets off
+            double defender_lead   = 1.0;   // s it looks ahead along the ball's roll, at most
+            double defender_accel  = 3.0;   // m/s^2 its walking speed changes at, at most
+            double defender_close_speed = 0.6;  // m/s at the ball, rising 1.5 m/s per metre away
+            double support_speed     = 0.8;  // m/s teammates off the ball walk to their spot at
+            double support_tolerance = 0.4;  // m from the spot before they set off again
+            double lane_clear        = 0.8;  // m the defender should be off a passing lane
+            double support_shift     = 1.2;  // m a teammate steps off its corner at most
+            double ball_ahead      = 0.3;   // m in front of the starting teammate the ball is put
+            double out_margin      = 2.0;   // m beyond the triangle's corners: the ball is lost
+            double next_round      = 1.5;   // s after an interception or a lost ball
+            double steal_distance  = 0.3;   // m from the defender's trunk: the ball is won
+            std::vector<std::array<double, 2>> park{{2.5, -5.0}, {3.5, -5.0}, {4.5, -5.0}};
+        } rondo_;
 
         // -- state (all touched only inside Sync<SkillPlayer> reactions) --
-        skill::Logic logic_;
+        std::vector<Agent> agents_;
+        std::size_t active_ = 0;  // the agent the keys play
+        Drill drill_        = Drill::FREE;
+        bool drill_pending_ = true;  // (re)start drill_ on the next control step
+        Drill drill_wanted_ = Drill::FREE;
+        int rondo_holder_   = 0;     // the teammate the next round starts with
+        int passes_ = 0, steals_ = 0, lost_ = 0;
+        bool pass_live_     = false;   // a pass between teammates is rolling, not yet touched
+        double round_over_at_ = -1.0;  // sim time the next round starts; < 0 = playing
+        bool defender_stopped_ = false;
+
         skill::Keys keys_{};
-        bool pass_pressed_ = false, drop_pressed_ = false, release_pressed_ = false;
+        skill::Keys masked_{};  // direction keys held as the control switched: ignored until released
+        bool pass_pressed_ = false, drop_pressed_ = false, release_pressed_ = false, reset_pressed_ = false;
         bool air_down_ = false, air_up_ = false;  // C edges since the last control step
         double pass_angle_ = 0.0;                 // the way the last pass rolls (world, rad)
         bool shoot_down_ = false, shoot_up_ = false;  // Space edges since the last control step
         double view_yaw_ = 1.5708;                    // the viewer camera's default direction
-        Phase phase_         = Phase::WAITING;
-        uint64_t last_step_  = 0;
-        uint64_t reset_seen_ = 0;
-        bool have_state_     = false;
-        double mode_asked_   = -1.0;  // sim time of the last CUSTOM request
-        double phase_start_  = 0.0;
-        std::array<double, JOINT_COUNT> blend_from_{};
-        std::array<Frame, 3> history_{};
-        bool history_primed_ = false;
-        std::array<float, JOINT_COUNT> last_action_{};       // the ball skills' previous raw output
-        std::array<float, JOINT_COUNT> walk_last_action_{};  // walk's
-        std::array<double, JOINT_COUNT> last_target_{};      // joint targets last sent, whichever policy
-        bool have_target_                  = false;
-        const skill::SkillPolicy* running_ = nullptr;        // the policy that ran last step
-        std::array<double, 4> last_ball_{0.5, 0.0, -0.8, 0.0};
-        std::array<double, 2> last_ball_vel_{};  // for spotting a touch between control steps
-        double touch_velocity_jump_ = 0.4;        // m/s change in one 20 ms step: more than rolling friction
-        bool match_ball_contact_     = true;
-        double ball_contact_friction_ = 0.3;
-        std::array<double, 2> ball_contact_solref_{0.02, 0.35};
-        skill::Decision decision_{};
-        skill::Skill logged_skill_ = skill::Skill::RECEIVE;  // last skill logged; first change is always logged
-        std::size_t script_next_   = 0;
+        uint64_t last_step_ = 0;
+        bool have_state_    = false;
+        double sim_time_    = 0.0;
+        std::size_t script_next_ = 0;
         std::string note_;  // a short message for the status line, e.g. why a key did nothing
         double note_until_  = 0.0;
         double status_sent_ = -1.0;
         std::string status_text_;
-        double log_next_ = 0.0;
         std::mt19937 rng_{std::random_device{}()};
     };
 

@@ -8,6 +8,8 @@
 //      the moving kick; the wind-up is dropped if the ball gets away
 //   E. after a kick, a direction key resumes dribbling only once the lockout has passed
 //   F. a new pass returns to receive
+//   J. passing to teammates: aimed and powered at the preferred one, re-aimed and locked on with
+//      the keys, and first-time passes to them
 #include <cmath>
 #include <cstdio>
 
@@ -422,6 +424,52 @@ int main() {
         forward.forward = true;
         check(logic.tick(forward, world_with_ball(0.6, 0.0, 2.0), DT).skill == Skill::RECEIVE,
               "H: no takeover while the ball still rolls in");
+    }
+
+    {  // J: passing to teammates (the rondo)
+        Config cfg;
+        cfg.first_pass_enabled = true;
+        cfg.frame              = Config::Frame::FIELD;
+        Keys none;
+        // The robot at the origin facing +x with the ball at its feet; teammates ahead-left and
+        // ahead-right, the preferred one (left) first.
+        const std::array<double, 2> left{3.0, 1.7}, right{3.0, -1.7};
+        Logic logic(cfg);
+        logic.set_pass_targets({left, right});
+        logic.on_drop();
+        const World w = world_with_ball(0.3, 0.0);
+        check(logic.on_shoot_press(w), "J: Space winds up a pass");
+        Decision d = logic.tick(none, w, DT);
+        check(near(d.aim_angle, std::atan2(1.7, 2.7), 1e-6), "J: aimed at the preferred teammate");
+        const double distance = std::hypot(2.7, 1.7);
+        const double tap = std::sqrt(cfg.pass_arrival_speed * cfg.pass_arrival_speed + 2.0 * cfg.rolling_decel * distance);
+        check(near(d.aim_speed, tap, 0.15), "J: a tap is powered to reach them");
+
+        // Swing towards the other one with D, then let go near them: it locks on.
+        Keys right_key;
+        right_key.right = true;
+        for (int i = 0; i < 100 && std::abs(d.aim_angle - std::atan2(-1.7, 2.7)) > 0.1; ++i) {
+            d = logic.tick(right_key, w, DT);
+        }
+        d = logic.tick(none, w, DT);
+        check(near(d.aim_angle, std::atan2(-1.7, 2.7), 1e-6), "J: let go near the other teammate, the aim locks onto them");
+
+        // First-time pass: no key = the preferred teammate; a key near the other picks them.
+        Logic first(cfg);
+        first.set_pass_targets({left, right});
+        World coming = world_with_ball(2.0, 0.0, 2.0);
+        first.on_pass(std::acos(-1.0));  // rolling towards -x, from the +x side
+        check(first.on_first_pass(none, coming), "J: Q with a pass coming");
+        d = first.tick(none, coming, DT);
+        check(near(d.aim_angle, std::atan2(1.7, 3.0), 1e-6), "J: first-time pass to the preferred teammate");
+        Logic keyed(cfg);
+        keyed.set_pass_targets({left, right});
+        keyed.on_pass(std::acos(-1.0));
+        Keys aim_right;  // forward-right: 45 degrees right of +x, within 30 degrees of the right teammate
+        aim_right.forward = aim_right.right = true;
+        check(keyed.on_first_pass(aim_right, coming), "J: Q with a direction held");
+        d = keyed.tick(aim_right, coming, DT);
+        check(near(d.aim_angle, std::atan2(-1.7, 3.0), 1e-6), "J: the direction held picks the teammate near it");
     }
 
     if (failures == 0) {

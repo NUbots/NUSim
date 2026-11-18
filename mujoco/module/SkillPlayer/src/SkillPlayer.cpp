@@ -13,10 +13,12 @@
 #include "shared/message/InputMessages.hpp"
 #include "shared/sim/FreeBody.hpp"
 #include "shared/util/Config.hpp"
+#include "shared/util/RobotRoster.hpp"
 
 namespace k1sim::module {
 
     using message::KeyEvent;
+    using message::RobotStatesUpdate;
     using message::SimHandles;
     using message::SimStateUpdate;
     using skill::Skill;
@@ -29,6 +31,12 @@ namespace k1sim::module {
             "No ball: W S walk, A D turn  |  Ball: W A S D dribble, X release  |  Shift faster\n"
             "Q call for a pass (as it comes: hold a direction = first touch, Q = first-time pass, Space = first-time shot)  |  E ball at feet\n"
             "Space hold to charge a shot, C an air shot, W A S D aim, release to kick  |  R stand up  |  P pause";
+        constexpr const char* RONDO_HELP =
+            "Rondo: pass it round the triangle, keep it from the robot in the middle. The keys play whoever the ball is going to\n"
+            "Space pass (aimed at the open teammate, tap = right power, hold = harder; W A S D re-aim)  |  As it comes: Q pass first time, Space hit it first time, hold a direction = first touch\n"
+            "W A S D dribble / walk  |  X release  |  E ball at feet  |  R new round  |  P pause";
+
+        constexpr double PI = 3.14159265358979323846;
 
         // Ball-skill PD gains from the controller spec (section 4), for files whose metadata gains
         // are placeholders. The same values as the earlier exports' metadata.
@@ -179,7 +187,41 @@ namespace k1sim::module {
         logic.settle_time       = trap["settle_time"].as<double>(logic.settle_time);
         logic.takeover_distance = trap["takeover_distance"].as<double>(logic.takeover_distance);
         logic.takeover_speed    = trap["takeover_speed"].as<double>(logic.takeover_speed);
-        logic_                  = skill::Logic(logic);
+        const auto rondo        = cfg["rondo"];
+        logic.pass_arrival_speed = rondo["arrival_speed"].as<double>(logic.pass_arrival_speed);
+        logic.rolling_decel      = cfg["pass"]["rolling_decel"].as<double>(logic.rolling_decel);
+        logic.target_snap        = rondo["snap_deg"].as<double>(10.0) * PI / 180.0;
+        logic.target_key_snap    = rondo["key_snap_deg"].as<double>(30.0) * PI / 180.0;
+        logic_config_            = logic;
+        if (rondo["centre"] && rondo["centre"].size() == 2) {
+            rondo_.centre = {rondo["centre"][0].as<double>(), rondo["centre"][1].as<double>()};
+        }
+        rondo_.side           = rondo["side"].as<double>(rondo_.side);
+        rondo_.defender_speed = rondo["defender_speed"].as<double>(rondo_.defender_speed);
+        rondo_.defender_turn  = rondo["defender_turn_rate"].as<double>(rondo_.defender_turn);
+        rondo_.defender_delay = rondo["defender_delay"].as<double>(rondo_.defender_delay);
+        rondo_.defender_lead  = rondo["defender_lead"].as<double>(rondo_.defender_lead);
+        rondo_.defender_accel = rondo["defender_accel"].as<double>(rondo_.defender_accel);
+        rondo_.defender_close_speed = rondo["defender_close_speed"].as<double>(rondo_.defender_close_speed);
+        rondo_.support_speed     = rondo["support_speed"].as<double>(rondo_.support_speed);
+        rondo_.support_tolerance = rondo["support_tolerance"].as<double>(rondo_.support_tolerance);
+        rondo_.lane_clear        = rondo["lane_clear"].as<double>(rondo_.lane_clear);
+        rondo_.support_shift     = rondo["support_shift"].as<double>(rondo_.support_shift);
+        rondo_.ball_ahead     = rondo["ball_ahead"].as<double>(rondo_.ball_ahead);
+        rondo_.out_margin     = rondo["out_margin"].as<double>(rondo_.out_margin);
+        rondo_.next_round     = rondo["next_round"].as<double>(rondo_.next_round);
+        rondo_.steal_distance = rondo["steal_distance"].as<double>(rondo_.steal_distance);
+        const std::string drill = cfg["drill"].as<std::string>("free");
+        if (drill != "free" && drill != "rondo") {
+            throw std::runtime_error("skills.yaml: drill is free or rondo");
+        }
+        drill_wanted_ = drill == "rondo" ? Drill::RONDO : Drill::FREE;
+        if (const auto park = cfg["park"]; park && park.IsSequence()) {
+            rondo_.park.clear();
+            for (const auto& spot : park) {
+                rondo_.park.push_back({spot[0].as<double>(), spot[1].as<double>()});
+            }
+        }
 
         const auto pass     = cfg["pass"];
         pass_distance_      = range(pass["distance"], pass_distance_);
@@ -234,48 +276,87 @@ namespace k1sim::module {
         });
 
         on<Trigger<SimHandles>, Sync<SkillPlayer>>().then([this](const SimHandles& handles) {
-            map_       = ModelMap::build(handles.model);
-            head_body_ = mj_name2id(handles.model, mjOBJ_BODY, "Head_2");
-            ball_body_ = mj_name2id(handles.model, mjOBJ_BODY, "ball");
-            ball_geom_ = mj_name2id(handles.model, mjOBJ_GEOM, "ball");
-            if (head_body_ < 0) {
-                throw std::runtime_error("SkillPlayer: the model has no Head_2 body to carry the camera");
-            }
-            if (!freebody::valid_free_body_geom(handles.model, ball_body_, ball_geom_)) {
+            const mjModel* m = handles.model;
+            ball_body_       = mj_name2id(m, mjOBJ_BODY, "ball");
+            ball_geom_       = mj_name2id(m, mjOBJ_GEOM, "ball");
+            if (!freebody::valid_free_body_geom(m, ball_body_, ball_geom_)) {
                 log<NUClear::LogLevel::WARN>("SkillPlayer: this field has no ball, so there is nothing to play with");
                 ball_body_ = ball_geom_ = -1;
             }
             goals_.clear();
             for (const char* name : {"goal_pos_x", "goal_neg_x"}) {
-                const int body = mj_name2id(handles.model, mjOBJ_BODY, name);
-                const int post = mj_name2id(handles.model, mjOBJ_GEOM, (std::string(name) + "_post1").c_str());
-                const int bar  = mj_name2id(handles.model, mjOBJ_GEOM, (std::string(name) + "_bar").c_str());
+                const int body = mj_name2id(m, mjOBJ_BODY, name);
+                const int post = mj_name2id(m, mjOBJ_GEOM, (std::string(name) + "_post1").c_str());
+                const int bar  = mj_name2id(m, mjOBJ_GEOM, (std::string(name) + "_bar").c_str());
                 if (body < 0 || post < 0 || bar < 0) {
                     continue;
                 }
-                const mjtNum* m_pos = handles.model->body_pos + 3 * body;
-                const double radius = handles.model->geom_size[3 * post];
+                const mjtNum* m_pos = m->body_pos + 3 * body;
+                const double radius = m->geom_size[3 * post];
                 Goal goal;
                 goal.x          = m_pos[0];
                 goal.y          = m_pos[1];
-                goal.half_width = std::abs(handles.model->geom_pos[3 * post + 1]) - radius;
-                goal.height     = handles.model->geom_pos[3 * bar + 2] - radius;
+                goal.half_width = std::abs(m->geom_pos[3 * post + 1]) - radius;
+                goal.height     = m->geom_pos[3 * bar + 2] - radius;
                 goal.dir        = goal.x >= 0.0 ? 1 : -1;
                 goals_.push_back(goal);
             }
-            rtf_   = handles.measured_rtf;
+            rtf_          = handles.measured_rtf;
+            placed_robot_ = handles.placed_robot;
+
+            // One agent per robot in the scene: the first is free play's, the rest stand aside
+            // until a drill wants them.
+            agents_.clear();
+            for (const auto& robot : config::robot_roster()) {
+                const std::string prefix = robot_prefix(robot.model_index);
+                Agent agent;
+                agent.robot_id  = robot.robot_id;
+                agent.trunk     = prefix + "Trunk";
+                agent.map       = ModelMap::build(m, prefix);
+                agent.head_body = mj_name2id(m, mjOBJ_BODY, (prefix + "Head_2").c_str());
+                if (agent.head_body < 0) {
+                    throw std::runtime_error("SkillPlayer: the model has no " + prefix + "Head_2 body to carry the camera");
+                }
+                agent.logic        = skill::Logic(logic_config_);
+                agent.logged_skill = agent.logic.skill();
+                agent.role         = agents_.empty() ? Role::PLAYER : Role::PARKED;
+                agents_.push_back(std::move(agent));
+            }
+            if (agents_.empty()) {
+                throw std::runtime_error("SkillPlayer: no robots in the roster");
+            }
+
+            // Where a placed robot stands: the "ready" keyframe's pose, as the scene spawns it.
+            const ModelMap& first = agents_.front().map;
+            ready_joints_         = policies_->receive->default_pose;
+            if (const int key = mj_name2id(m, mjOBJ_KEY, "ready"); key >= 0) {
+                const mjtNum* qpos = m->key_qpos + static_cast<std::size_t>(key) * m->nq;
+                ready_z_           = qpos[first.root_qpos_adr + 2];
+                for (std::size_t i = 0; i < JOINT_COUNT; ++i) {
+                    ready_joints_[i] = qpos[first.qpos_adr[i]];
+                }
+            }
+
+            std::lock_guard<std::mutex> lock(*handles.mutex);
+            // Free play's starting spots for the first robot and the ball, as the scene put them.
+            const mjtNum* root = handles.data->qpos + first.root_qpos_adr;
+            start_pose_        = {root[0], root[1], quat_yaw(root + 3)};
+            if (ball_body_ >= 0) {
+                const int joint = m->body_jntadr[ball_body_];
+                const mjtNum* q = handles.data->qpos + m->jnt_qposadr[joint];
+                ball_start_     = {q[0] + m->geom_pos[3 * ball_geom_], q[1] + m->geom_pos[3 * ball_geom_ + 1]};
+            }
             // Match the foot-ball contact the policies were trained on (mjlab's explicit foot-ball pairs,
             // corrected 2026-11-18): the ball has priority in its contacts with the robot, so its own
             // friction and solref decide them. Ball-floor contacts come from the scene's explicit
             // <pair> and are untouched.
             if (match_ball_contact_ && ball_geom_ >= 0) {
-                std::lock_guard<std::mutex> lock(*handles.mutex);
-                auto* m = const_cast<mjModel*>(handles.model);
-                m->geom_friction[3 * ball_geom_]     = ball_contact_friction_;
-                m->geom_friction[3 * ball_geom_ + 1] = 0.005;
-                m->geom_friction[3 * ball_geom_ + 2] = 1e-4;
-                m->geom_solref[2 * ball_geom_]       = ball_contact_solref_[0];
-                m->geom_solref[2 * ball_geom_ + 1]   = ball_contact_solref_[1];
+                auto* mm = const_cast<mjModel*>(m);
+                mm->geom_friction[3 * ball_geom_]     = ball_contact_friction_;
+                mm->geom_friction[3 * ball_geom_ + 1] = 0.005;
+                mm->geom_friction[3 * ball_geom_ + 2] = 1e-4;
+                mm->geom_solref[2 * ball_geom_]       = ball_contact_solref_[0];
+                mm->geom_solref[2 * ball_geom_ + 1]   = ball_contact_solref_[1];
                 log<NUClear::LogLevel::INFO>("SkillPlayer: ball-robot contact set to friction",
                                              ball_contact_friction_,
                                              "solref",
@@ -285,24 +366,46 @@ namespace k1sim::module {
             }
             data_  = handles.data;
             mutex_ = handles.mutex;
-            model_ = handles.model;
-            log<NUClear::LogLevel::INFO>("SkillPlayer ready --", KEY_HELP);
+            model_ = m;
+            log<NUClear::LogLevel::INFO>("SkillPlayer ready with", agents_.size(), "robot(s) --", KEY_HELP);
         });
 
-        on<Trigger<SimStateUpdate>, Sync<SkillPlayer>>().then([this](const SimStateUpdate& state) { tick(state); });
+        on<Trigger<RobotStatesUpdate>, Sync<SkillPlayer>>().then([this](const RobotStatesUpdate& states) { tick(states); });
 
         on<Trigger<message::ViewDirection>, Sync<SkillPlayer>>().then(
             [this](const message::ViewDirection& view) { view_yaw_ = view.yaw; });
 
         on<Trigger<KeyEvent>, Sync<SkillPlayer>>().then([this](const KeyEvent& event) { key(event.key, event.down); });
+
+        on<Trigger<message::SkillDrill>, Sync<SkillPlayer>>().then([this](const message::SkillDrill& request) {
+            if (request.name == "rondo" || request.name == "free") {
+                drill_wanted_  = request.name == "rondo" ? Drill::RONDO : Drill::FREE;
+                drill_pending_ = true;
+            }
+            else {
+                log<NUClear::LogLevel::WARN>("SkillPlayer: no drill called", request.name);
+            }
+        });
     }
 
     void SkillPlayer::key(int code, bool down) {
         switch (code) {
-            case 'W': keys_.forward = down; break;
-            case 'S': keys_.back = down; break;
-            case 'A': keys_.left = down; break;
-            case 'D': keys_.right = down; break;
+            case 'W':
+                keys_.forward   = down;
+                masked_.forward = masked_.forward && down;
+                break;
+            case 'S':
+                keys_.back   = down;
+                masked_.back = masked_.back && down;
+                break;
+            case 'A':
+                keys_.left   = down;
+                masked_.left = masked_.left && down;
+                break;
+            case 'D':
+                keys_.right   = down;
+                masked_.right = masked_.right && down;
+                break;
             case message::KEY_LEFT_SHIFT:
             case message::KEY_RIGHT_SHIFT: keys_.fast = down; break;
             case 'Q': pass_pressed_ = pass_pressed_ || down; break;
@@ -313,39 +416,54 @@ namespace k1sim::module {
                 (down ? shoot_down_ : shoot_up_) = true;
                 keys_.shoot                      = down;
                 break;
-            case 'R':
-                if (down) {
-                    emit(std::make_unique<message::RobotResetRequest>());
-                }
-                break;
+            case 'R': reset_pressed_ = reset_pressed_ || down; break;
             default: break;
         }
     }
 
-    void SkillPlayer::restart() {
-        phase_          = Phase::WAITING;
-        mode_asked_     = -1.0;
-        history_primed_ = false;
-        last_action_    = {};
-        walk_last_action_ = {};
-        have_target_    = false;
-        running_        = nullptr;
-        last_ball_      = {0.5, 0.0, -0.8, 0.0};
-        pass_pressed_ = drop_pressed_ = shoot_down_ = shoot_up_ = release_pressed_ = air_down_ = air_up_ = false;
-        logic_.reset();
-        decision_     = {};
-        logged_skill_ = logic_.skill();
+    // The keys as the robot being played should see them: direction keys still held from before
+    // the control last switched don't count until they are let go.
+    skill::Keys SkillPlayer::held_keys() const {
+        skill::Keys keys = keys_;
+        keys.forward     = keys.forward && !masked_.forward;
+        keys.back        = keys.back && !masked_.back;
+        keys.left        = keys.left && !masked_.left;
+        keys.right       = keys.right && !masked_.right;
+        return keys;
     }
 
-    SkillPlayer::Sample SkillPlayer::read_state() {
+    void SkillPlayer::note(const std::string& text, double sim_time, double seconds) {
+        note_       = text;
+        note_until_ = sim_time + seconds;
+    }
+
+    void SkillPlayer::restart(Agent& agent) {
+        agent.phase            = Phase::WAITING;
+        agent.mode_asked       = -1.0;
+        agent.history_primed   = false;
+        agent.last_action      = {};
+        agent.walk_last_action = {};
+        agent.have_target      = false;
+        agent.running          = nullptr;
+        agent.last_ball        = {0.5, 0.0, -0.8, 0.0};
+        agent.logic.reset();
+        agent.decision     = {};
+        agent.logged_skill = agent.logic.skill();
+        if (&agent == &agents_[active_]) {
+            pass_pressed_ = drop_pressed_ = shoot_down_ = shoot_up_ = release_pressed_ = air_down_ = air_up_ = false;
+        }
+    }
+
+    SkillPlayer::Sample SkillPlayer::read_state(Agent& agent) {
         Sample s;
         std::lock_guard<std::mutex> lock(*mutex_);
-        const mjtNum* root = data_->qpos + map_.root_qpos_adr;  // xyz + wxyz
-        const mjtNum* quat = root + 3;
+        const ModelMap& map = agent.map;
+        const mjtNum* root  = data_->qpos + map.root_qpos_adr;  // xyz + wxyz
+        const mjtNum* quat  = root + 3;
 
         // Trunk frame, as mjlab's root_link_ang_vel_b and projected_gravity_b: a free joint's
         // angular velocity is already in the body frame.
-        const mjtNum* w = data_->qvel + map_.root_dof_adr + 3;
+        const mjtNum* w = data_->qvel + map.root_dof_adr + 3;
         s.gyro          = {w[0], w[1], w[2]};
         mjtNum inverse[4];
         mju_negQuat(inverse, quat);
@@ -355,26 +473,26 @@ namespace k1sim::module {
         s.gravity = {gravity[0], gravity[1], gravity[2]};
 
         for (std::size_t i = 0; i < JOINT_COUNT; ++i) {
-            s.q[i]  = data_->qpos[map_.qpos_adr[i]];
-            s.dq[i] = data_->qvel[map_.dof_adr[i]];
+            s.q[i]  = data_->qpos[map.qpos_adr[i]];
+            s.dq[i] = data_->qvel[map.dof_adr[i]];
         }
 
-        s.world.robot_x = root[0];
-        s.world.robot_y = root[1];
+        s.world.robot_x  = root[0];
+        s.world.robot_y  = root[1];
         s.world.yaw      = quat_yaw(quat);
         s.world.view_yaw = view_yaw_;
 
-        s.ball_camera = last_ball_;
+        s.ball_camera    = agent.last_ball;
         s.ball_camera[3] = 0.0;
         if (ball_body_ >= 0) {
-            const auto ball     = freebody::geom_centre_state(model_, data_, ball_body_, ball_geom_);
-            s.world.ball_valid  = true;
-            s.world.ball_x      = ball.position[0];
-            s.world.ball_y      = ball.position[1];
-            s.world.ball_z      = ball.position[2];
-            s.world.ball_speed  = std::hypot(ball.lin_vel[0], ball.lin_vel[1], ball.lin_vel[2]);
-            s.world.ball_vx     = ball.lin_vel[0];
-            s.world.ball_vy     = ball.lin_vel[1];
+            const auto ball    = freebody::geom_centre_state(model_, data_, ball_body_, ball_geom_);
+            s.world.ball_valid = true;
+            s.world.ball_x     = ball.position[0];
+            s.world.ball_y     = ball.position[1];
+            s.world.ball_z     = ball.position[2];
+            s.world.ball_speed = std::hypot(ball.lin_vel[0], ball.lin_vel[1], ball.lin_vel[2]);
+            s.world.ball_vx    = ball.lin_vel[0];
+            s.world.ball_vy    = ball.lin_vel[1];
             // A first touch: a contact between the ball and a body of this robot right now, or (since a
             // touch can begin and end between two 20 ms control steps) a jump in the ball's velocity
             // near the robot that rolling friction can't explain.
@@ -382,20 +500,21 @@ namespace k1sim::module {
                 const mjContact& c = data_->contact[i];
                 const int other    = c.geom[0] == ball_geom_ ? c.geom[1] : c.geom[1] == ball_geom_ ? c.geom[0] : -1;
                 s.world.ball_touched =
-                    other >= 0 && model_->body_rootid[model_->geom_bodyid[other]] == map_.root_body_id;
+                    other >= 0 && model_->body_rootid[model_->geom_bodyid[other]] == map.root_body_id;
             }
-            const double jump = std::hypot(ball.lin_vel[0] - last_ball_vel_[0], ball.lin_vel[1] - last_ball_vel_[1]);
+            const double jump =
+                std::hypot(ball.lin_vel[0] - agent.last_ball_vel[0], ball.lin_vel[1] - agent.last_ball_vel[1]);
             if (jump > touch_velocity_jump_ && s.world.ball_distance() < 0.6) {
                 s.world.ball_touched = true;
             }
-            last_ball_vel_ = {ball.lin_vel[0], ball.lin_vel[1]};
+            agent.last_ball_vel = {ball.lin_vel[0], ball.lin_vel[1]};
             s.world.ball_radius = model_->geom_size[3 * ball_geom_];
 
             // The ball as the head camera would report it: the Head_2 frame (x forward, y left,
             // z up) moved to the front of the head. Out of view, the last sighting is repeated
             // with the flag down.
-            const mjtNum* head_pos = data_->xpos + 3 * head_body_;
-            const mjtNum* head_mat = data_->xmat + 9 * head_body_;
+            const mjtNum* head_pos = data_->xpos + 3 * agent.head_body;
+            const mjtNum* head_mat = data_->xmat + 9 * agent.head_body;
             mjtNum camera[3], relative[3], local[3];
             mju_mulMatVec3(camera, head_mat, camera_offset_.data());
             for (int k = 0; k < 3; ++k) {
@@ -423,14 +542,14 @@ namespace k1sim::module {
     // first put `distance` away at `bearing` off the robot's heading. Returns a note when the pass
     // is outside what receive was trained on (from in front, up to about 4 m away, within 45
     // degrees), or empty.
-    std::string SkillPlayer::launch_pass(const Sample& sample) {
-        const auto& w = sample.world;
+    std::string SkillPlayer::launch_pass(Agent& agent) {
+        const auto& w  = agent.sample.world;
         const double c = std::cos(w.yaw), s = std::sin(w.yaw);
         double sx = 0.0, sy = 0.0;  // ball start, the robot's yaw frame
         if (pass_from_ball_) {
             const auto ball = w.ball_local();
-            sx = ball[0];
-            sy = ball[1];
+            sx              = ball[0];
+            sy              = ball[1];
         }
         else {
             const double distance = sample_range(pass_distance_);
@@ -447,16 +566,18 @@ namespace k1sim::module {
         const double vx = speed * px / length, vy = speed * py / length;
         pass_angle_     = w.yaw + std::atan2(vy, vx);  // the way it rolls, world frame
 
-        auto command        = std::make_unique<message::BallCommand>();
-        command->frame      = message::BallCommand::Frame::WORLD;
-        command->position   = {w.robot_x + c * sx - s * sy, w.robot_y + s * sx + c * sy, -1.0};  // z < 0: on the floor
-        command->velocity   = {c * vx - s * vy, s * vx + c * vy, 0.0};
-        command->rolling    = true;
+        auto command      = std::make_unique<message::BallCommand>();
+        command->frame    = message::BallCommand::Frame::WORLD;
+        command->position = {w.robot_x + c * sx - s * sy, w.robot_y + s * sx + c * sy, -1.0};  // z < 0: on the floor
+        command->velocity = {c * vx - s * vy, s * vx + c * vy, 0.0};
+        command->rolling  = true;
         emit(command);
 
         const double distance = std::hypot(sx, sy);
         const double bearing  = std::atan2(sy, sx);
-        log<NUClear::LogLevel::INFO>("SkillPlayer: pass from",
+        log<NUClear::LogLevel::INFO>("SkillPlayer: pass to robot",
+                                     agent.robot_id,
+                                     "from",
                                      distance,
                                      "m at bearing",
                                      bearing,
@@ -492,17 +613,21 @@ namespace k1sim::module {
         return *policies_->receive;
     }
 
-    void SkillPlayer::send_targets(const std::array<double, JOINT_COUNT>& q, const skill::Gains& gains, double delay) {
+    void SkillPlayer::send_targets(Agent& agent,
+                                   const std::array<double, JOINT_COUNT>& q,
+                                   const skill::Gains& gains,
+                                   double delay) {
         auto command      = std::make_unique<message::LowCmdMessage>();
         command->cmd_type = 1;  // serial
+        command->robot_id = agent.robot_id;
         command->motors.resize(JOINT_COUNT);
         for (std::size_t i = 0; i < JOINT_COUNT; ++i) {
             command->motors[i].q  = static_cast<float>(q[i]);
             command->motors[i].kp = static_cast<float>(gains.kp[i]);
             command->motors[i].kd = static_cast<float>(gains.kd[i]);
         }
-        last_target_ = q;
-        have_target_ = true;
+        agent.last_target = q;
+        agent.have_target = true;
         // The ball skills were trained with the servo command reaching the motor 10 to 40 ms late;
         // sending it at once makes them over-correct. The wait is in wall time, so it is scaled by
         // how fast the sim is running.
@@ -517,243 +642,331 @@ namespace k1sim::module {
         }
     }
 
-    void SkillPlayer::tick(const SimStateUpdate& state) {
-        if (model_ == nullptr || state.identity.model_index != 0) {
+    void SkillPlayer::tick(const RobotStatesUpdate& states) {
+        if (model_ == nullptr || states.robots.empty() || agents_.empty()) {
             return;
         }
         // Snapshots keep arriving while the sim is paused; only a new physics step is a control step.
-        const bool rewound = have_state_ && (state.step_count < last_step_ || state.reset_count != reset_seen_);
-        if (have_state_ && !rewound && state.step_count == last_step_) {
+        const auto& first       = states.robots.front();
+        const bool world_reset  = have_state_ && first.step_count < last_step_;
+        if (have_state_ && !world_reset && first.step_count == last_step_) {
             return;
         }
-        if (rewound || !have_state_) {
-            if (state.step_count < last_step_) {
-                script_next_ = 0;  // the whole world was reset, clock included
-            }
-            restart();
+        if (world_reset) {
+            // The whole world was reset, clock included: the script starts over and the drill is
+            // set up again (the reset put every robot back where the scene spawns it).
+            script_next_   = 0;
+            drill_wanted_  = drill_pending_ ? drill_wanted_ : drill_;
+            drill_pending_ = true;
         }
         have_state_ = true;
-        last_step_  = state.step_count;
-        reset_seen_ = state.reset_count;
+        last_step_  = first.step_count;
+        sim_time_   = first.sim_time;
 
-        while (script_next_ < script_.size() && script_[script_next_].time <= state.sim_time) {
+        while (script_next_ < script_.size() && script_[script_next_].time <= sim_time_) {
             key(script_[script_next_].key, script_[script_next_].down);
             ++script_next_;
         }
 
-        const Sample sample = read_state();
-        last_ball_          = sample.ball_camera;
-        check_goal(sample, state.sim_time);
+        if (reset_pressed_) {
+            reset_pressed_ = false;
+            if (drill_ == Drill::RONDO) {
+                drill_wanted_  = Drill::RONDO;
+                drill_pending_ = true;
+            }
+            else {
+                emit(std::make_unique<message::RobotResetRequest>(message::RobotResetRequest{agents_[active_].robot_id}));
+            }
+        }
+        if (drill_pending_) {
+            drill_pending_ = false;
+            start_drill(drill_wanted_, sim_time_);
+        }
+
+        std::vector<const SimStateUpdate*> robot_states(agents_.size(), nullptr);
+        for (std::size_t i = 0; i < agents_.size(); ++i) {
+            Agent& agent = agents_[i];
+            for (const auto& robot : states.robots) {
+                if (robot.identity.robot_id == agent.robot_id) {
+                    robot_states[i] = &robot;
+                }
+            }
+            if (robot_states[i] == nullptr) {
+                continue;
+            }
+            if (world_reset || (agent.have_state && robot_states[i]->reset_count != agent.reset_seen)) {
+                restart(agent);
+            }
+            agent.have_state = true;
+            agent.reset_seen = robot_states[i]->reset_count;
+            agent.sample     = read_state(agent);
+            agent.last_ball  = agent.sample.ball_camera;
+        }
+
+        if (drill_ == Drill::FREE) {
+            check_goal(agents_[active_].sample, sim_time_);
+        }
+        else {
+            update_rondo(sim_time_);
+        }
+        for (std::size_t i = 0; i < agents_.size(); ++i) {
+            if (robot_states[i] != nullptr) {
+                step_agent(agents_[i], *robot_states[i]);
+            }
+        }
+        publish_status(sim_time_, agents_[active_].decision.aiming);
+    }
+
+    void SkillPlayer::step_agent(Agent& agent, const SimStateUpdate& state) {
+        const double t = state.sim_time;
         // The pose and gains the robot eases into at start-up: the policy it starts with.
-        const SkillPolicy& base = logic_.skill() == Skill::WALK ? *policies_->walk : *policies_->receive;
+        const bool walk_first = policies_->walk && (agent.role == Role::DEFENDER || agent.logic.skill() == Skill::WALK);
+        const SkillPolicy& base = walk_first ? *policies_->walk : *policies_->receive;
 
         // The servo targets are only followed in CUSTOM mode; ask until the robot is in it.
         if (state.mode != booster::CUSTOM) {
-            if (phase_ != Phase::WAITING) {
-                restart();
+            if (agent.phase != Phase::WAITING) {
+                restart(agent);
             }
-            if (mode_asked_ < 0.0 || state.sim_time - mode_asked_ > 0.25 || state.sim_time < mode_asked_) {
-                mode_asked_ = state.sim_time;
-                emit(std::make_unique<message::ModeChangeRequest>(message::ModeChangeRequest{booster::CUSTOM, 1}));
+            if (agent.mode_asked < 0.0 || t - agent.mode_asked > 0.25 || t < agent.mode_asked) {
+                agent.mode_asked = t;
+                emit(std::make_unique<message::ModeChangeRequest>(message::ModeChangeRequest{booster::CUSTOM, agent.robot_id}));
             }
-            publish_status(state.sim_time, false);
             return;
         }
 
-        if (phase_ == Phase::WAITING) {
-            phase_       = Phase::BLENDING;
-            phase_start_ = state.sim_time;
-            blend_from_  = sample.q;
+        if (agent.phase == Phase::WAITING) {
+            agent.phase       = Phase::BLENDING;
+            agent.phase_start = t;
+            agent.blend_from  = agent.sample.q;
         }
 
-        if (phase_ != Phase::FALLEN && state.fall_state == booster::HAS_FALLEN) {
-            phase_       = Phase::FALLEN;
-            phase_start_ = state.sim_time;
-            log<NUClear::LogLevel::WARN>("SkillPlayer: the robot fell over (no policy gets it up; R stands it back up)");
+        // (Not in the first moments after a reset, while the fall detector catches up.)
+        const bool settled = agent.phase == Phase::PLAYING || t - agent.phase_start > 0.3;
+        if (agent.phase != Phase::FALLEN && settled && state.fall_state == booster::HAS_FALLEN) {
+            agent.phase       = Phase::FALLEN;
+            agent.phase_start = t;
+            log<NUClear::LogLevel::WARN>("SkillPlayer: robot", agent.robot_id, "fell over (no policy gets it up; it is stood back up shortly)");
         }
 
-        switch (phase_) {
+        switch (agent.phase) {
             case Phase::WAITING: break;
             case Phase::BLENDING: {
                 // Ease from the pose the robot spawned in to the pose the policies are centred on.
-                const double x = blend_time_ > 0.0 ? (state.sim_time - phase_start_) / blend_time_ : 1.0;
+                const double x = blend_time_ > 0.0 ? (t - agent.phase_start) / blend_time_ : 1.0;
                 const double s = smoothstep(x);
                 std::array<double, JOINT_COUNT> target{};
                 for (std::size_t i = 0; i < JOINT_COUNT; ++i) {
-                    target[i] = blend_from_[i] + s * (base.default_pose[i] - blend_from_[i]);
+                    target[i] = agent.blend_from[i] + s * (base.default_pose[i] - agent.blend_from[i]);
                 }
-                send_targets(target, base.gains, 0.0);
+                send_targets(agent, target, base.gains, 0.0);
                 if (x >= 1.0) {
-                    phase_ = Phase::PLAYING;
-                    log<NUClear::LogLevel::INFO>(logic_.skill() == Skill::WALK
-                                                 ? "SkillPlayer: policies in control, standing in walk (W walks, Q passes)"
-                                                 : "SkillPlayer: policies in control, waiting for a pass (Q)");
+                    agent.phase         = Phase::PLAYING;
+                    agent.playing_since = t;
+                    if (agent.start_with_ball) {
+                        agent.start_with_ball = false;
+                        agent.logic.on_drop();  // the ball was put at its feet: receive it
+                    }
+                    if (drill_ == Drill::FREE && agent.role == Role::PLAYER) {
+                        log<NUClear::LogLevel::INFO>(agent.logic.skill() == Skill::WALK
+                                                         ? "SkillPlayer: policies in control, standing in walk (W walks, Q passes)"
+                                                         : "SkillPlayer: policies in control, waiting for a pass (Q)");
+                    }
                 }
                 break;
             }
             case Phase::PLAYING:
-                play(state, sample);
-                publish_status(state.sim_time, decision_.aiming, &sample);
-                return;
+                if (&agent == &agents_[active_] && agent.role != Role::DEFENDER) {
+                    apply_inputs(agent, t);
+                }
+                run_policy(agent, state);
+                break;
             case Phase::FALLEN: {
                 // Go limp rather than let a policy thrash on the ground.
                 skill::Gains limp;
                 limp.kd.fill(1.0);
-                send_targets(sample.q, limp, 0.0);
-                if (fall_reset_after_ > 0.0 && state.sim_time - phase_start_ > fall_reset_after_) {
-                    phase_start_ = state.sim_time;
-                    emit(std::make_unique<message::RobotResetRequest>());
+                send_targets(agent, agent.sample.q, limp, 0.0);
+                if (fall_reset_after_ > 0.0 && t - agent.phase_start > fall_reset_after_) {
+                    agent.phase_start = t;
+                    if (agent.homed && placed_robot_) {
+                        std::lock_guard<std::mutex> lock(*mutex_);
+                        place_locked(agent, agent.home[0], agent.home[1], agent.home[2]);
+                        mj_forward(model_, data_);
+                    }
+                    else {
+                        emit(std::make_unique<message::RobotResetRequest>(message::RobotResetRequest{agent.robot_id}));
+                    }
                 }
                 break;
             }
         }
-        publish_status(state.sim_time, false);
     }
 
-    void SkillPlayer::play(const SimStateUpdate& state, const Sample& sample) {
-        if (pass_pressed_ && logic_.pass_incoming()) {
+    // The one-off keys (Q, E, Space, C, X) for the robot being played.
+    void SkillPlayer::apply_inputs(Agent& agent, double sim_time) {
+        skill::Logic& logic = agent.logic;
+        const auto& world   = agent.sample.world;
+        const skill::Keys keys = held_keys();
+        if (pass_pressed_ && logic.pass_incoming()) {
             // Q with a pass rolling in: pass it on first time.
-            if (!logic_.on_first_pass(keys_, sample.world)) {
-                note_       = "no first-time pass policy";
-                note_until_ = state.sim_time + 2.0;
+            if (!logic.on_first_pass(keys, world)) {
+                note("no first-time pass policy", sim_time);
             }
         }
         else if (pass_pressed_) {
-            if (!sample.world.ball_valid) {
-                note_       = "no ball on this field";
-                note_until_ = state.sim_time + 2.0;
+            if (!world.ball_valid) {
+                note("no ball on this field", sim_time);
             }
-            else if (pass_from_ball_ && sample.world.ball_distance() < pass_min_distance_) {
-                note_       = "the ball is already at the robot's feet";
-                note_until_ = state.sim_time + 2.0;
+            else if (pass_from_ball_ && world.ball_distance() < pass_min_distance_) {
+                note("the ball is already at the robot's feet", sim_time);
             }
             else {
-                const std::string warning = launch_pass(sample);
-                logic_.on_pass(pass_angle_);
+                const std::string warning = launch_pass(agent);
+                logic.on_pass(pass_angle_);
                 if (!warning.empty()) {
-                    note_       = warning;
-                    note_until_ = state.sim_time + 3.0;
+                    note(warning, sim_time, 3.0);
                 }
             }
         }
-        if (drop_pressed_ && sample.world.ball_valid) {
-            logic_.on_drop();  // receive it, from walk too
+        if (drop_pressed_ && world.ball_valid) {
+            logic.on_drop();  // receive it, from walk too
             // A ball at rest at the robot's feet, to dribble or shoot without a pass first.
             auto command        = std::make_unique<message::BallCommand>();
             command->frame      = message::BallCommand::Frame::ROBOT;
             command->position   = {drop_distance_, 0.0, -1.0};
-            command->robot_body = "Trunk";
+            command->robot_body = agent.trunk;
             emit(command);
         }
-        if ((shoot_down_ || air_down_) && logic_.pass_incoming()) {
+        if ((shoot_down_ || air_down_) && logic.pass_incoming()) {
             // The shoot key with a pass rolling in: shoot it first time. There is no first-time air
             // shot, so C does the same on the ground.
-            if (!logic_.on_first_shot(keys_, sample.world)) {
-                note_       = "no first-time pass policy to shoot it first time with";
-                note_until_ = state.sim_time + 2.0;
+            if (!logic.on_first_shot(keys, world)) {
+                note("no first-time pass policy to shoot it first time with", sim_time);
             }
             else if (air_down_) {
-                note_       = "no first-time air shot: shooting it first time on the ground";
-                note_until_ = state.sim_time + 2.0;
+                note("no first-time air shot: shooting it first time on the ground", sim_time);
             }
             shoot_down_ = air_down_ = false;
         }
-        if (shoot_down_ && !logic_.on_shoot_press(sample.world)) {
-            note_       = logic_.skill() == Skill::WALK ? "walk up to the ball first" : "the ball is not in front of the robot";
-            note_until_ = state.sim_time + 2.0;
+        if (shoot_down_ && !logic.on_shoot_press(world)) {
+            note(logic.skill() == Skill::WALK ? "walk up to the ball first" : "the ball is not in front of the robot", sim_time);
         }
         if (shoot_up_) {
-            logic_.on_shoot_release(sample.world);
+            logic.on_shoot_release(world);
         }
-        if (air_down_ && !logic_.on_shoot_press(sample.world, true)) {
-            note_       = !logic_.config().air_enabled  ? "no air-shot policy"
-                          : logic_.skill() == Skill::WALK ? "walk up to the ball first"
-                                                          : "the ball is not in front of the robot";
-            note_until_ = state.sim_time + 2.0;
+        if (air_down_ && !logic.on_shoot_press(world, true)) {
+            note(!logic.config().air_enabled    ? "no air-shot policy"
+                 : logic.skill() == Skill::WALK ? "walk up to the ball first"
+                                                : "the ball is not in front of the robot",
+                 sim_time);
         }
         if (air_up_) {
-            logic_.on_shoot_release(sample.world, true);
+            logic.on_shoot_release(world, true);
         }
         if (release_pressed_) {
-            logic_.on_release();
+            logic.on_release();
         }
         pass_pressed_ = drop_pressed_ = shoot_down_ = shoot_up_ = release_pressed_ = air_down_ = air_up_ = false;
+    }
 
-        decision_ = logic_.tick(keys_, sample.world, CONTROL_DT);
-        if (decision_.skill != logged_skill_) {
-            log<NUClear::LogLevel::INFO>("SkillPlayer: t =",
-                                         state.sim_time,
-                                         skill::name(logged_skill_),
-                                         "->",
-                                         skill::name(decision_.skill),
-                                         decision_.skill == Skill::KICK && decision_.moving_kick ? "(ball moving)" : "");
-            logged_skill_ = decision_.skill;
+    void SkillPlayer::run_policy(Agent& agent, const SimStateUpdate& state) {
+        const double t      = state.sim_time;
+        const bool played   = &agent == &agents_[active_] && agent.role != Role::DEFENDER;
+        const auto was      = agent.decision.twist;
+        agent.decision      = agent.role == Role::DEFENDER ? defender_decision(agent, t)
+                                                           : agent.logic.tick(played ? held_keys() : skill::Keys{},
+                                                                              agent.sample.world,
+                                                                              CONTROL_DT);
+        if (drill_ == Drill::RONDO && agent.role == Role::TEAMMATE && !played && agent.decision.skill == Skill::WALK) {
+            // Off the ball: get to where it can be passed to (support_twist), standing still between rounds.
+            agent.decision.twist = ease_twist(was, round_over_at_ < 0.0 ? support_twist(agent) : std::array<double, 3>{});
         }
-        SkillPolicy& policy  = policy_for(decision_);
-        const bool walking   = decision_.skill == Skill::WALK && policies_->walk != nullptr;
-        const bool was_walk  = running_ != nullptr && running_ == policies_->walk.get();
-        if (running_ != nullptr && walking != was_walk && have_target_) {
+        const skill::Decision& decision = agent.decision;
+        if (decision.skill != agent.logged_skill) {
+            log<NUClear::LogLevel::INFO>("SkillPlayer: t =",
+                                         t,
+                                         "robot",
+                                         agent.robot_id,
+                                         skill::name(agent.logged_skill),
+                                         "->",
+                                         skill::name(decision.skill),
+                                         decision.skill == Skill::KICK && decision.moving_kick ? "(ball moving)" : "");
+            agent.logged_skill = decision.skill;
+        }
+        SkillPolicy& policy = policy_for(decision);
+        const bool walking  = decision.skill == Skill::WALK && policies_->walk != nullptr;
+        const bool was_walk = agent.running != nullptr && agent.running == policies_->walk.get();
+        if (agent.running != nullptr && walking != was_walk && agent.have_target) {
             // Switching between walk and a ball skill changes gains, default pose, action scale and
             // input layout in the same step (spec section 4). The new policy starts from the current
             // state, and its "previous action" is the joint target last sent, in its own convention.
-            std::array<float, JOINT_COUNT>& previous = walking ? walk_last_action_ : last_action_;
+            std::array<float, JOINT_COUNT>& previous = walking ? agent.walk_last_action : agent.last_action;
             for (std::size_t i = 0; i < JOINT_COUNT; ++i) {
-                previous[i] = static_cast<float>((last_target_[i] - policy.default_pose[i]) / policy.action_scale[i]);
+                previous[i] = static_cast<float>((agent.last_target[i] - policy.default_pose[i]) / policy.action_scale[i]);
             }
-            history_primed_ = false;
+            agent.history_primed = false;
         }
-        running_ = &policy;
+        agent.running = &policy;
 
-        const auto previous_action = walking ? walk_last_action_ : last_action_;
-        const auto action          = walking ? run_walk(policy, sample) : run_ball_skill(policy, sample);
+        const auto previous_action = walking ? agent.walk_last_action : agent.last_action;
+        const auto action          = walking ? run_walk(agent, policy) : run_ball_skill(agent, policy);
         for (std::size_t i = 10; i < JOINT_COUNT; ++i) {  // legs
-            jitter_sum_ += std::abs(policy.action_scale[i] * static_cast<double>(action[i] - previous_action[i]));
+            agent.jitter_sum += std::abs(policy.action_scale[i] * static_cast<double>(action[i] - previous_action[i]));
         }
-        ++jitter_count_;
+        ++agent.jitter_count;
         std::array<double, JOINT_COUNT> target{};
         for (std::size_t i = 0; i < JOINT_COUNT; ++i) {
             target[i] = policy.default_pose[i] + policy.action_scale[i] * static_cast<double>(action[i]);
         }
-        send_targets(target, policy.gains, walking ? walk_action_delay_ : action_delay_);
+        send_targets(agent, target, policy.gains, walking ? walk_action_delay_ : action_delay_);
 
-        if (state.sim_time >= log_next_ || state.sim_time < log_next_ - 1.0) {
-            log_next_ = state.sim_time + log_period_;
-            char line[360];
-            std::snprintf(line,
-                          sizeof(line),
-                          "SKILL t=%.1f %s cmd=(%.2f, %.2f) twist=(%.2f, %.2f, %.2f) robot=(%.2f, %.2f, yaw %.2f) z=%.2f ball=(%.2f, %.2f, %.2f) "
-                          "speed=%.2f seen=%d cam=(%.2f, %.2f, %.2f) head=(%.2f, %.2f) local_cmd=(%.2f, %.2f) leg_target_step=%.4f",
-                          state.sim_time,
-                          skill::name(decision_.skill),
-                          decision_.command_world[0],
-                          decision_.command_world[1],
-                          decision_.twist[0],
-                          decision_.twist[1],
-                          decision_.twist[2],
-                          sample.world.robot_x,
-                          sample.world.robot_y,
-                          sample.world.yaw,
-                          state.base.z,
-                          sample.world.ball_x,
-                          sample.world.ball_y,
-                          sample.world.ball_z,
-                          sample.world.ball_speed,
-                          static_cast<int>(sample.ball_camera[3]),
-                          sample.ball_camera[0],
-                          sample.ball_camera[1],
-                          sample.ball_camera[2],
-                          sample.q[JointIndexK1::HeadYaw],
-                          sample.q[JointIndexK1::HeadPitch],
-                          decision_.command_local[0],
-                          decision_.command_local[1],
-                          jitter_count_ ? jitter_sum_ / (12.0 * jitter_count_) : 0.0);
-            jitter_sum_   = 0.0;
-            jitter_count_ = 0;
-            log<NUClear::LogLevel::INFO>(line);
+        // One SKILL line a second for each robot in play (free play: just the one).
+        if (agent.role == Role::PARKED) {
+            return;
         }
+        if (t < agent.log_next && t >= agent.log_next - 1.0 - log_period_) {
+            return;
+        }
+        agent.log_next = t + log_period_;
+        const Sample& sample = agent.sample;
+        char line[400];
+        std::snprintf(line,
+                      sizeof(line),
+                      "SKILL t=%.1f robot=%d %s cmd=(%.2f, %.2f) twist=(%.2f, %.2f, %.2f) robot=(%.2f, %.2f, yaw %.2f) z=%.2f "
+                      "ball=(%.2f, %.2f, %.2f) speed=%.2f seen=%d cam=(%.2f, %.2f, %.2f) head=(%.2f, %.2f) local_cmd=(%.2f, %.2f) "
+                      "leg_target_step=%.4f",
+                      t,
+                      agent.robot_id,
+                      skill::name(decision.skill),
+                      decision.command_world[0],
+                      decision.command_world[1],
+                      decision.twist[0],
+                      decision.twist[1],
+                      decision.twist[2],
+                      sample.world.robot_x,
+                      sample.world.robot_y,
+                      sample.world.yaw,
+                      state.base.z,
+                      sample.world.ball_x,
+                      sample.world.ball_y,
+                      sample.world.ball_z,
+                      sample.world.ball_speed,
+                      static_cast<int>(sample.ball_camera[3]),
+                      sample.ball_camera[0],
+                      sample.ball_camera[1],
+                      sample.ball_camera[2],
+                      sample.q[JointIndexK1::HeadYaw],
+                      sample.q[JointIndexK1::HeadPitch],
+                      decision.command_local[0],
+                      decision.command_local[1],
+                      agent.jitter_count ? agent.jitter_sum / (12.0 * agent.jitter_count) : 0.0);
+        agent.jitter_sum   = 0.0;
+        agent.jitter_count = 0;
+        log<NUClear::LogLevel::INFO>(line);
     }
 
-    std::array<float, JOINT_COUNT> SkillPlayer::run_ball_skill(SkillPolicy& policy, const Sample& sample) {
+    std::array<float, JOINT_COUNT> SkillPlayer::run_ball_skill(Agent& agent, SkillPolicy& policy) {
+        const Sample& sample = agent.sample;
         Frame frame;
         for (int k = 0; k < 3; ++k) {
             frame.gyro[k]    = static_cast<float>(sample.gyro[k]);
@@ -763,26 +976,28 @@ namespace k1sim::module {
             frame.q[i]  = static_cast<float>(sample.q[i] - policy.default_pose[i]);
             frame.dq[i] = static_cast<float>(sample.dq[i]);
         }
-        frame.action  = last_action_;
-        frame.command = {static_cast<float>(decision_.command_local[0]), static_cast<float>(decision_.command_local[1])};
+        frame.action  = agent.last_action;
+        frame.command = {static_cast<float>(agent.decision.command_local[0]),
+                         static_cast<float>(agent.decision.command_local[1])};
         for (int k = 0; k < 4; ++k) {
             frame.ball[k] = static_cast<float>(sample.ball_camera[k]);
         }
-        if (!history_primed_) {
-            history_.fill(frame);
-            history_primed_ = true;
+        auto& history = agent.history;
+        if (!agent.history_primed) {
+            history.fill(frame);
+            agent.history_primed = true;
         }
         else {
-            history_[0] = history_[1];
-            history_[1] = history_[2];
-            history_[2] = frame;
+            history[0] = history[1];
+            history[1] = history[2];
+            history[2] = frame;
         }
 
         // Term by term, each as its three steps oldest first.
         std::vector<float> obs;
         obs.reserve(skill::OBS_SIZE);
         auto put = [&](auto member) {
-            for (const Frame& step : history_) {
+            for (const Frame& step : history) {
                 obs.insert(obs.end(), (step.*member).begin(), (step.*member).end());
             }
         };
@@ -793,13 +1008,14 @@ namespace k1sim::module {
         put(&Frame::action);
         put(&Frame::command);
         put(&Frame::ball);
-        last_action_ = policy.infer(obs);
-        return last_action_;
+        agent.last_action = policy.infer(obs);
+        return agent.last_action;
     }
 
     // The walk policy's 75 numbers, current step only: gyro, gravity, joint angles from ITS default
     // pose, joint speeds, its own previous output, twist (vx, vy, wz).
-    std::array<float, JOINT_COUNT> SkillPlayer::run_walk(SkillPolicy& policy, const Sample& sample) {
+    std::array<float, JOINT_COUNT> SkillPlayer::run_walk(Agent& agent, SkillPolicy& policy) {
+        const Sample& sample = agent.sample;
         std::vector<float> obs;
         obs.reserve(skill::WALK_OBS_SIZE);
         for (int k = 0; k < 3; ++k) {
@@ -814,12 +1030,432 @@ namespace k1sim::module {
         for (std::size_t i = 0; i < JOINT_COUNT; ++i) {
             obs.push_back(static_cast<float>(sample.dq[i]));
         }
-        obs.insert(obs.end(), walk_last_action_.begin(), walk_last_action_.end());
+        obs.insert(obs.end(), agent.walk_last_action.begin(), agent.walk_last_action.end());
         for (int k = 0; k < 3; ++k) {
-            obs.push_back(static_cast<float>(decision_.twist[k]));
+            obs.push_back(static_cast<float>(agent.decision.twist[k]));
         }
-        walk_last_action_ = policy.infer(obs);
-        return walk_last_action_;
+        agent.walk_last_action = policy.infer(obs);
+        return agent.walk_last_action;
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Drills
+
+    void SkillPlayer::place_locked(Agent& agent, double x, double y, double yaw) {
+        const ModelMap& map = agent.map;
+        mjtNum* root        = data_->qpos + map.root_qpos_adr;
+        root[0]             = x;
+        root[1]             = y;
+        root[2]             = ready_z_;
+        root[3]             = std::cos(yaw / 2.0);  // yaw-only quaternion, wxyz
+        root[4]             = 0.0;
+        root[5]             = 0.0;
+        root[6]             = std::sin(yaw / 2.0);
+        for (int i = 0; i < 6; ++i) {
+            data_->qvel[map.root_dof_adr + i]           = 0.0;
+            data_->qfrc_applied[map.root_dof_adr + i]   = 0.0;
+            data_->qacc_warmstart[map.root_dof_adr + i] = 0.0;
+        }
+        for (std::size_t i = 0; i < JOINT_COUNT; ++i) {
+            data_->qpos[map.qpos_adr[i]]           = ready_joints_[i];
+            data_->qvel[map.dof_adr[i]]            = 0.0;
+            data_->qacc_warmstart[map.dof_adr[i]]  = 0.0;
+            data_->ctrl[map.act_id[i]]             = 0.0;
+        }
+        placed_robot_(agent.robot_id);  // clears its controller; it eases back into the policies
+    }
+
+    void SkillPlayer::place_ball_locked(double x, double y) {
+        if (ball_body_ < 0) {
+            return;
+        }
+        const int joint = model_->body_jntadr[ball_body_];
+        mjtNum* q       = data_->qpos + model_->jnt_qposadr[joint];
+        mjtNum* v       = data_->qvel + model_->jnt_dofadr[joint];
+        const mjtNum* g = model_->geom_pos + 3 * ball_geom_;
+        q[0]            = x - g[0];
+        q[1]            = y - g[1];
+        q[2]            = model_->geom_size[3 * ball_geom_] - g[2];
+        q[3]            = 1.0;
+        q[4] = q[5] = q[6] = 0.0;
+        std::fill_n(v, 6, 0.0);
+    }
+
+    std::array<double, 2> SkillPlayer::rondo_spot(int k) const {
+        // The corners of an equilateral triangle about the centre, the first nearest the camera's
+        // starting side (-y).
+        const double radius = rondo_.side / std::sqrt(3.0);
+        const double angle  = -PI / 2.0 + k * 2.0 * PI / 3.0;
+        return {rondo_.centre[0] + radius * std::cos(angle), rondo_.centre[1] + radius * std::sin(angle)};
+    }
+
+    void SkillPlayer::start_drill(Drill drill, double sim_time) {
+        if (placed_robot_ == nullptr) {
+            return;
+        }
+        const Drill before = drill_;
+        if (drill == Drill::RONDO) {
+            const char* why = agents_.size() < 4  ? "the rondo needs 4 robots: start with ./b skills --robots 4"
+                              : !policies_->walk  ? "the rondo needs the walk policy (policies.walk)"
+                              : ball_body_ < 0    ? "no ball on this field"
+                                                  : nullptr;
+            if (why != nullptr) {
+                log<NUClear::LogLevel::WARN>("SkillPlayer:", why);
+                note(why, sim_time, 4.0);
+                if (drill_ == Drill::RONDO) {
+                    drill = Drill::FREE;  // can't go on with it
+                }
+                else {
+                    return;
+                }
+            }
+        }
+        if (drill == Drill::RONDO) {
+            drill_ = Drill::RONDO;
+            if (before != Drill::RONDO) {
+                passes_ = steals_ = lost_ = 0;
+                rondo_holder_ = 0;
+            }
+            start_rondo_round(sim_time);
+            // Free camera, looking over the triangle from behind the first teammate.
+            auto camera       = std::make_unique<message::CameraRequest>();
+            camera->mode      = 0;
+            camera->place     = true;
+            camera->x         = rondo_.centre[0];
+            camera->y         = rondo_.centre[1];
+            camera->distance  = 2.6 * rondo_.side;
+            camera->azimuth   = 90.0;
+            camera->elevation = -55.0;
+            emit(camera);
+            log<NUClear::LogLevel::INFO>("SkillPlayer: rondo, triangle of side", rondo_.side, "m about (",
+                                         rondo_.centre[0], ",", rondo_.centre[1], ")");
+            return;
+        }
+
+        // Free play: the first robot and the ball back where the scene started them, the rest
+        // standing on the touchline.
+        drill_         = Drill::FREE;
+        active_        = 0;
+        round_over_at_ = -1.0;
+        pass_live_     = false;
+        masked_        = {};
+        {
+            std::lock_guard<std::mutex> lock(*mutex_);
+            for (std::size_t i = 0; i < agents_.size(); ++i) {
+                Agent& agent = agents_[i];
+                agent.logic.set_pass_targets({});
+                agent.start_with_ball = false;
+                agent.idle_since      = -1.0;
+                if (i == 0) {
+                    agent.role  = Role::PLAYER;
+                    agent.homed = false;
+                    place_locked(agent, start_pose_[0], start_pose_[1], start_pose_[2]);
+                    continue;
+                }
+                const std::size_t k = i - 1;
+                const auto spot = k < rondo_.park.size() ? rondo_.park[k]
+                                                         : std::array<double, 2>{rondo_.park.empty() ? 2.5 : rondo_.park.back()[0] + double(k - rondo_.park.size() + 1),
+                                                                                 rondo_.park.empty() ? -5.0 : rondo_.park.back()[1]};
+                agent.role  = Role::PARKED;
+                agent.homed = true;
+                agent.home  = {spot[0], spot[1], spot[1] < 0.0 ? PI / 2.0 : -PI / 2.0};  // facing the field
+                place_locked(agent, agent.home[0], agent.home[1], agent.home[2]);
+            }
+            place_ball_locked(ball_start_[0], ball_start_[1]);
+            mj_forward(model_, data_);
+        }
+        for (auto& agent : agents_) {
+            restart(agent);
+        }
+        if (before == Drill::RONDO) {
+            auto camera  = std::make_unique<message::CameraRequest>();
+            camera->mode = 2;  // behind the robot, as free play starts
+            emit(camera);
+            note("free play", sim_time);
+        }
+    }
+
+    void SkillPlayer::start_rondo_round(double sim_time) {
+        round_over_at_    = -1.0;
+        pass_live_        = false;
+        defender_stopped_ = false;
+        const int holder  = rondo_holder_ % 3;
+        std::array<double, 2> ball{};
+        {
+            std::lock_guard<std::mutex> lock(*mutex_);
+            for (std::size_t i = 0; i < agents_.size(); ++i) {
+                Agent& agent          = agents_[i];
+                agent.homed           = true;
+                agent.start_with_ball = false;
+                agent.idle_since      = sim_time;
+                if (i < 3) {
+                    const auto spot = rondo_spot(static_cast<int>(i));
+                    agent.role      = Role::TEAMMATE;
+                    agent.home      = {spot[0], spot[1], std::atan2(rondo_.centre[1] - spot[1], rondo_.centre[0] - spot[0])};
+                    if (static_cast<int>(i) == holder) {
+                        agent.start_with_ball = true;
+                        ball = {spot[0] + rondo_.ball_ahead * std::cos(agent.home[2]),
+                                spot[1] + rondo_.ball_ahead * std::sin(agent.home[2])};
+                    }
+                }
+                else if (i == 3) {
+                    // In the middle, facing the teammate with the ball.
+                    const auto spot = rondo_spot(holder);
+                    agent.role      = Role::DEFENDER;
+                    agent.home      = {rondo_.centre[0], rondo_.centre[1],
+                                       std::atan2(spot[1] - rondo_.centre[1], spot[0] - rondo_.centre[0])};
+                }
+                else {
+                    const std::size_t k = i - 4;
+                    const auto spot     = k < rondo_.park.size() ? rondo_.park[k] : std::array<double, 2>{2.5 + double(k), -5.0};
+                    agent.role          = Role::PARKED;
+                    agent.home          = {spot[0], spot[1], spot[1] < 0.0 ? PI / 2.0 : -PI / 2.0};
+                }
+                place_locked(agent, agent.home[0], agent.home[1], agent.home[2]);
+            }
+            place_ball_locked(ball[0], ball[1]);
+            mj_forward(model_, data_);
+        }
+        for (auto& agent : agents_) {
+            restart(agent);
+        }
+        active_ = static_cast<std::size_t>(holder);
+        agents_[active_].idle_since = -1.0;
+        masked_ = held_keys();  // whatever is held now waits to be let go
+        masked_.fast = masked_.shoot = false;
+        pass_pressed_ = drop_pressed_ = shoot_down_ = shoot_up_ = release_pressed_ = air_down_ = air_up_ = false;
+        log<NUClear::LogLevel::INFO>("SkillPlayer: rondo round, robot", agents_[active_].robot_id, "has the ball");
+    }
+
+    void SkillPlayer::switch_control(std::size_t to, double pass_angle, double sim_time) {
+        agents_[active_].idle_since = sim_time;
+        log<NUClear::LogLevel::INFO>("SkillPlayer: t =", sim_time, "pass from robot", agents_[active_].robot_id,
+                                     "to robot", agents_[to].robot_id, "-- the keys follow it");
+        active_ = to;
+        Agent& receiver     = agents_[to];
+        receiver.idle_since = -1.0;
+        receiver.logic.on_pass(pass_angle);
+        // Keys held for the pass (the aim) are not the receiver's: they wait until let go.
+        masked_       = keys_;
+        masked_.fast  = masked_.shoot = false;
+        pass_pressed_ = drop_pressed_ = shoot_down_ = shoot_up_ = release_pressed_ = air_down_ = air_up_ = false;
+        pass_live_    = true;
+    }
+
+    void SkillPlayer::update_rondo(double sim_time) {
+        if (agents_.size() < 4) {
+            return;
+        }
+        if (round_over_at_ >= 0.0) {
+            if (sim_time >= round_over_at_) {
+                rondo_holder_ = (rondo_holder_ + 1) % 3;
+                start_rondo_round(sim_time);
+            }
+            return;
+        }
+        Agent& active  = agents_[active_];
+        Agent& defender = agents_[3];
+        const auto& w  = active.sample.world;  // the ball is the same in every robot's sample
+        if (!w.ball_valid) {
+            return;
+        }
+        char text[120];
+
+        // The defender wins it: a touch, or the ball at its feet.
+        const auto& dw = defender.sample.world;
+        if (defender.phase == Phase::PLAYING && (dw.ball_touched || dw.ball_distance() < rondo_.steal_distance)) {
+            ++steals_;
+            pass_live_        = false;
+            defender_stopped_ = true;
+            round_over_at_    = sim_time + rondo_.next_round;
+            std::snprintf(text, sizeof(text), "intercepted after %d pass%s! new round shortly", passes_, passes_ == 1 ? "" : "es");
+            note(text, sim_time, rondo_.next_round + 0.5);
+            log<NUClear::LogLevel::INFO>("SkillPlayer: t =", sim_time, "rondo: the defender won the ball");
+            return;
+        }
+        // Out of the rondo altogether.
+        const double radius = rondo_.side / std::sqrt(3.0);
+        if (std::hypot(w.ball_x - rondo_.centre[0], w.ball_y - rondo_.centre[1]) > radius + rondo_.out_margin) {
+            ++lost_;
+            pass_live_        = false;
+            defender_stopped_ = true;
+            round_over_at_    = sim_time + rondo_.next_round;
+            note("the ball got away! new round shortly", sim_time, rondo_.next_round + 0.5);
+            log<NUClear::LogLevel::INFO>("SkillPlayer: t =", sim_time, "rondo: the ball left the rondo");
+            return;
+        }
+        // A pass arriving.
+        if (pass_live_ && w.ball_touched) {
+            pass_live_ = false;
+            ++passes_;
+        }
+        // A pass leaving the robot being played: the keys go to the teammate it is rolling at.
+        const double vx = w.ball_vx, vy = w.ball_vy;
+        const bool kicked = active.decision.skill == Skill::KICK
+                            || (active.decision.skill == Skill::FIRST_PASS && active.decision.touched);
+        if (kicked && std::hypot(vx, vy) > 1.0 && w.ball_distance() > 0.35) {
+            const double heading = std::atan2(vy, vx);
+            std::size_t best     = active_;
+            double best_off      = 0.52;  // 30 degrees
+            for (std::size_t k = 0; k < 3; ++k) {
+                const auto& tw = agents_[k].sample.world;
+                const double dx = tw.robot_x - w.ball_x, dy = tw.robot_y - w.ball_y;
+                if (k == active_ || std::hypot(dx, dy) < 0.4) {
+                    continue;
+                }
+                const double off = std::abs(skill::wrap_angle(std::atan2(dy, dx) - heading));
+                if (off < best_off) {
+                    best_off = off;
+                    best     = k;
+                }
+            }
+            if (best != active_) {
+                switch_control(best, heading, sim_time);
+            }
+        }
+        // Teammates the keys have left: once the ball is well away, back to standing in walk, from
+        // which receive is a trained hand-over.
+        for (std::size_t k = 0; k < 3; ++k) {
+            Agent& mate = agents_[k];
+            if (k != active_ && mate.idle_since >= 0.0 && sim_time - mate.idle_since > 1.0
+                && mate.logic.skill() != Skill::WALK && mate.sample.world.ball_distance() > 1.5) {
+                mate.logic.on_release();
+            }
+        }
+        // Where each teammate off the ball should be: its corner of the triangle, unless the
+        // defender is standing in the lane from the ball to it; then stepped sideways off the
+        // corner, away from the defender, until the lane is clear (by up to support_shift).
+        for (std::size_t k = 0; k < 3; ++k) {
+            Agent& mate    = agents_[k];
+            mate.support   = {mate.home[0], mate.home[1]};
+            const double lx = mate.home[0] - w.ball_x, ly = mate.home[1] - w.ball_y;
+            const double length = std::hypot(lx, ly);
+            if (k == active_ || length < 0.5) {
+                continue;
+            }
+            const double ux = lx / length, uy = ly / length;  // along the lane
+            const double ax = dw.robot_x - w.ball_x, ay = dw.robot_y - w.ball_y;
+            const double along = ax * ux + ay * uy;
+            const double side  = -ax * uy + ay * ux;  // the defender's offset left of the lane
+            if (along > 0.3 && along < length - 0.3 && std::abs(side) < rondo_.lane_clear) {
+                // Turn the lane about the ball until the defender is lane_clear off it, at its distance.
+                const double need  = std::copysign(rondo_.lane_clear, side) - side;  // how far the lane must move at the defender
+                const double shift = std::clamp(-need * length / along, -rondo_.support_shift, rondo_.support_shift);
+                mate.support = {mate.home[0] - uy * shift, mate.home[1] + ux * shift};
+            }
+        }
+
+        // Each teammate's pass targets: the other two, the one the defender is further from the
+        // passing lane of first. The lane starts at the ball when it's at the teammate's feet, else
+        // at the teammate (a pass on its way to it).
+        for (std::size_t k = 0; k < 3; ++k) {
+            const auto& me    = agents_[k].sample.world;
+            const bool at_feet = me.ball_distance() < logic_config_.kick_reach;
+            const double fx   = at_feet ? w.ball_x : me.robot_x;
+            const double fy   = at_feet ? w.ball_y : me.robot_y;
+            std::vector<std::pair<double, std::array<double, 2>>> lanes;
+            for (std::size_t j = 0; j < 3; ++j) {
+                if (j == k) {
+                    continue;
+                }
+                const std::array<double, 2> to{agents_[j].sample.world.robot_x, agents_[j].sample.world.robot_y};
+                const double lx = to[0] - fx, ly = to[1] - fy;
+                const double length2 = std::max(lx * lx + ly * ly, 1e-6);
+                const double u = std::clamp(((dw.robot_x - fx) * lx + (dw.robot_y - fy) * ly) / length2, 0.0, 1.0);
+                lanes.push_back({std::hypot(fx + u * lx - dw.robot_x, fy + u * ly - dw.robot_y), to});
+            }
+            std::sort(lanes.begin(), lanes.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+            std::vector<std::array<double, 2>> targets;
+            for (const auto& lane : lanes) {
+                targets.push_back(lane.second);
+            }
+            agents_[k].logic.set_pass_targets(std::move(targets));
+        }
+    }
+
+    // The defender walks at the ball as fast as the walk goes, aiming where the ball will be by the
+    // time it gets there (up to defender_lead s ahead), turning towards it as it goes. It eases off
+    // close to the ball, so it doesn't run through the robot holding it, and speeds up and slows
+    // down at defender_accel: the walk falls if its command jumps from 2 m/s to standing.
+    skill::Decision SkillPlayer::defender_decision(const Agent& agent, double sim_time) {
+        skill::Decision out;
+        out.skill     = Skill::WALK;
+        const auto& w = agent.sample.world;
+        std::array<double, 3> want{};  // standing still
+        if (!defender_stopped_ && round_over_at_ < 0.0 && w.ball_valid
+            && sim_time - agent.playing_since >= rondo_.defender_delay) {
+            const double distance = w.ball_distance();
+            const double lead     = std::min(rondo_.defender_lead, distance / std::max(rondo_.defender_speed, 0.1));
+            const double tx = w.ball_x + w.ball_vx * lead, ty = w.ball_y + w.ball_vy * lead;
+            const double error = skill::wrap_angle(std::atan2(ty - w.robot_y, tx - w.robot_x) - w.yaw);
+            const double creep = logic_config_.walk_turn_creep;  // the walk does not turn standing still
+            const double top   = std::min(rondo_.defender_speed, rondo_.defender_close_speed + 1.5 * distance);
+            want[2]            = std::clamp(2.5 * error, -rondo_.defender_turn, rondo_.defender_turn);
+            want[0]            = std::abs(error) < PI / 2.0 ? std::max(creep, top * std::cos(error) * std::cos(error)) : creep;
+        }
+        out.twist = ease_twist(agent.decision.twist, want);
+        return out;
+    }
+
+    // A walk command moved from `was` towards `want` no faster than defender_accel (m/s^2) and
+    // 4 rad/s^2: the walk falls if its command jumps, from 2 m/s to standing say.
+    std::array<double, 3> SkillPlayer::ease_twist(const std::array<double, 3>& was, const std::array<double, 3>& want) const {
+        const double dv = rondo_.defender_accel * CONTROL_DT;
+        const double dw = 4.0 * CONTROL_DT;
+        std::array<double, 3> out{was[0] + std::clamp(want[0] - was[0], -dv, dv),
+                                  was[1] + std::clamp(want[1] - was[1], -dv, dv),
+                                  was[2] + std::clamp(want[2] - was[2], -dw, dw)};
+        if (std::abs(out[0]) < 1e-3 && std::abs(out[1]) < 1e-3 && std::abs(out[2]) < 1e-3) {
+            out = {};
+        }
+        return out;
+    }
+
+    // An off-the-ball teammate's walk command: to its support spot (update_rondo), turned to face
+    // the ball so a pass comes from in front, as receive was trained. Far off, it turns and walks
+    // there; within a metre it steps there sideways and backwards while keeping the ball in view.
+    // Hysteresis keeps it from fidgeting once there.
+    std::array<double, 3> SkillPlayer::support_twist(Agent& agent) {
+        const auto& w = agent.sample.world;
+        std::array<double, 3> want{};
+        const double dx = agent.support[0] - w.robot_x, dy = agent.support[1] - w.robot_y;
+        const double distance = std::hypot(dx, dy);
+        const double face     = w.ball_valid ? std::atan2(w.ball_y - w.robot_y, w.ball_x - w.robot_x) : agent.home[2];
+        const double face_err = skill::wrap_angle(face - w.yaw);
+        const double creep    = logic_config_.walk_turn_creep;  // the walk does not turn standing still
+        const double turn     = logic_config_.walk_turn_rate;
+        if (distance > rondo_.support_tolerance) {
+            agent.repositioning = true;
+        }
+        else if (distance < 0.2) {
+            agent.repositioning = false;
+        }
+        if (agent.repositioning) {
+            const double c = std::cos(w.yaw), s = std::sin(w.yaw);
+            const double lx = c * dx + s * dy, ly = -s * dx + c * dy;  // robot frame
+            if (distance < 1.0 && lx > -0.4) {
+                want[0] = std::clamp(1.2 * lx, -logic_config_.walk_back_speed, rondo_.support_speed);
+                want[1] = std::clamp(1.2 * ly, -logic_config_.walk_side_speed, logic_config_.walk_side_speed);
+                want[2] = std::clamp(1.5 * face_err, -turn, turn);
+            }
+            else {
+                const double err = skill::wrap_angle(std::atan2(dy, dx) - w.yaw);
+                want[2]          = std::clamp(2.0 * err, -turn, turn);
+                want[0] = std::abs(err) < PI / 2.0 ? std::max(creep, rondo_.support_speed * std::cos(err) * std::cos(err)) : creep;
+            }
+            return want;
+        }
+        if (std::abs(face_err) > 0.45) {
+            agent.turning = true;
+        }
+        else if (std::abs(face_err) < 0.2) {
+            agent.turning = false;
+        }
+        if (agent.turning) {
+            want[2] = std::clamp(1.5 * face_err, -turn, turn);
+            want[0] = creep;
+        }
+        return want;
     }
 
     // A goal: the whole ball past the goal line, between the posts and under the bar. Latched until
@@ -835,7 +1471,7 @@ namespace k1sim::module {
             behind_a_line     = behind_a_line || past > 0.0;
             if (!ball_in_goal_ && past > w.ball_radius && std::abs(w.ball_y - goal.y) < goal.half_width
                 && w.ball_z < goal.height) {
-                ball_in_goal_ = true;
+                ball_in_goal_  = true;
                 auto scored    = std::make_unique<message::GoalScored>();
                 scored->x      = goal.x;
                 scored->y      = goal.y;
@@ -843,8 +1479,7 @@ namespace k1sim::module {
                 scored->height = goal.height;
                 scored->dir    = goal.dir;
                 emit(scored);
-                note_       = "GOAL!";
-                note_until_ = sim_time + 2.5;
+                note("GOAL!", sim_time, 2.5);
                 log<NUClear::LogLevel::INFO>("SkillPlayer: GOAL in the", goal.dir > 0 ? "+x" : "-x", "goal at t =", sim_time);
             }
         }
@@ -853,29 +1488,36 @@ namespace k1sim::module {
         }
     }
 
-    void SkillPlayer::publish_status(double sim_time, bool force, const Sample* sample) {
-        auto status  = std::make_unique<message::SkillStatus>();
-        status->keys = KEY_HELP;
-        const bool loaded = (decision_.skill == Skill::FIRST_TOUCH || decision_.skill == Skill::FIRST_PASS) && !decision_.touched;
-        if (phase_ == Phase::PLAYING && (decision_.aiming || loaded) && sample != nullptr) {
-            const auto& cfg   = logic_.config();
+    void SkillPlayer::publish_status(double sim_time, bool force) {
+        const Agent& agent       = agents_[active_];
+        const auto& decision     = agent.decision;
+        const auto& sample       = agent.sample;
+        const bool rondo         = drill_ == Drill::RONDO;
+        auto status              = std::make_unique<message::SkillStatus>();
+        status->keys             = rondo ? RONDO_HELP : KEY_HELP;
+        status->drill            = rondo ? "rondo" : "free";
+        status->robot_body       = agent.trunk;
+        status->marker           = rondo;
+        const bool loaded = (decision.skill == Skill::FIRST_TOUCH || decision.skill == Skill::FIRST_PASS) && !decision.touched;
+        if (agent.phase == Phase::PLAYING && (decision.aiming || loaded)) {
+            const auto& cfg   = agent.logic.config();
             status->aiming    = true;
-            status->aim_angle = decision_.aim_angle;
+            status->aim_angle = decision.aim_angle;
             if (loaded) {
                 // The loaded first touch, as an arrow from the robot's feet.
-                status->ball_x = sample->world.robot_x;
-                status->ball_y = sample->world.robot_y;
-                status->charge = decision_.skill == Skill::FIRST_PASS ? 0.6 : 0.0;
+                status->ball_x = sample.world.robot_x;
+                status->ball_y = sample.world.robot_y;
+                status->charge = decision.skill == Skill::FIRST_PASS ? 0.6 : 0.0;
             }
             else {
-                status->ball_x = sample->world.ball_x;
-                status->ball_y = sample->world.ball_y;
-                status->charge = (decision_.aim_speed - cfg.kick_speed_min)
+                status->ball_x = sample.world.ball_x;
+                status->ball_y = sample.world.ball_y;
+                status->charge = (decision.aim_speed - cfg.kick_speed_min)
                                  / std::max(cfg.kick_speed_max - cfg.kick_speed_min, 1e-6);
             }
         }
-        char text[160];
-        switch (phase_) {
+        char text[200];
+        switch (agent.phase) {
             case Phase::WAITING:
             case Phase::BLENDING:
                 status->skill  = "STARTING";
@@ -887,69 +1529,78 @@ namespace k1sim::module {
                                                          : "R stands the robot back up";
                 break;
             case Phase::PLAYING:
-                status->skill = skill::name(decision_.skill);
-                if (decision_.aiming) {
-                    status->skill = decision_.air ? "AIMING (AIR)" : "AIMING";
+                status->skill = skill::name(decision.skill);
+                if (decision.aiming) {
+                    status->skill = decision.air ? "AIMING (AIR)" : "AIMING";
                     std::snprintf(text,
                                   sizeof(text),
-                                  "%.1f m/s -- hold for more, W A S D to aim, release to shoot",
-                                  decision_.aim_speed);
+                                  "%.1f m/s -- hold for more, W A S D to aim, release to %s",
+                                  decision.aim_speed,
+                                  rondo ? "pass" : "shoot");
                     status->detail = text;
                 }
-                else if (decision_.skill == Skill::FIRST_TOUCH || decision_.skill == Skill::FIRST_PASS) {
-                    const bool pass = decision_.skill == Skill::FIRST_PASS;
-                    const bool shot = pass && logic_.first_shot();
+                else if (decision.skill == Skill::FIRST_TOUCH || decision.skill == Skill::FIRST_PASS) {
+                    const bool pass = decision.skill == Skill::FIRST_PASS;
+                    const bool shot = pass && agent.logic.first_shot();
                     if (shot) {
                         status->skill = "FIRST-TIME SHOT";
                     }
                     std::snprintf(text,
                                   sizeof(text),
-                                  decision_.touched ? "%s at %.1f m/s, done" : "%s loaded: %.1f m/s off the touch; W A S D re-aim",
+                                  decision.touched ? "%s at %.1f m/s, done" : "%s loaded: %.1f m/s off the touch; W A S D re-aim",
                                   shot ? "shot" : pass ? "pass" : "touch",
-                                  decision_.aim_speed);
+                                  decision.aim_speed);
                     status->detail = text;
                 }
-                else if (decision_.skill == Skill::RECEIVE && decision_.pass_incoming) {
-                    status->detail = "pass coming: hold a direction for a first touch, Q to pass it first time, Space to shoot "
-                                     "it first time, or let it come";
+                else if (decision.skill == Skill::RECEIVE && decision.pass_incoming) {
+                    status->detail = rondo ? "pass coming: Q to pass it on first time, Space to hit it first time, hold a "
+                                             "direction for a first touch, or let it come"
+                                           : "pass coming: hold a direction for a first touch, Q to pass it first time, "
+                                             "Space to shoot it first time, or let it come";
                 }
-                else if (decision_.skill == Skill::WALK) {
-                    const auto& t = decision_.twist;
+                else if (decision.skill == Skill::WALK) {
+                    const auto& t = decision.twist;
                     if (t[0] != 0.0 || t[1] != 0.0 || t[2] != 0.0) {
                         std::snprintf(text, sizeof(text), "walking: %.1f m/s forward, %.1f m/s left, turning %.1f rad/s", t[0], t[1], t[2]);
                         status->detail = text;
                     }
                     else {
-                        status->detail = "standing; W A S D walk, Q plays a pass, E a ball at the feet";
+                        status->detail = rondo ? "standing; W A S D walk to the ball" : "standing; W A S D walk, Q plays a pass, E a ball at the feet";
                     }
                 }
-                else if (decision_.skill == Skill::RECEIVE) {
+                else if (decision.skill == Skill::RECEIVE) {
                     status->detail = "waiting for a pass (Q), then trapping it; W walks if the ball is away";
                 }
-                else if (decision_.skill == Skill::KICK) {
-                    if (decision_.air) {
+                else if (decision.skill == Skill::KICK) {
+                    if (decision.air) {
                         status->skill = "AIR SHOT";
                     }
                     std::snprintf(text,
                                   sizeof(text),
                                   "shot at %.1f m/s; W to walk after it, Q for a new pass",
-                                  std::hypot(decision_.command_world[0], decision_.command_world[1]));
+                                  std::hypot(decision.command_world[0], decision.command_world[1]));
                     status->detail = text;
                 }
-                else if (decision_.command_world[0] != 0.0 || decision_.command_world[1] != 0.0) {
+                else if (decision.command_world[0] != 0.0 || decision.command_world[1] != 0.0) {
                     std::snprintf(text,
                                   sizeof(text),
                                   "ball to go (%.1f, %.1f) m/s",
-                                  decision_.command_world[0],
-                                  decision_.command_world[1]);
+                                  decision.command_world[0],
+                                  decision.command_world[1]);
                     status->detail = text;
                 }
                 else {
-                    status->detail = "holding the ball";
+                    status->detail = rondo ? "holding the ball; Space to pass" : "holding the ball";
                 }
                 break;
         }
-        if (sim_time < note_until_ && sim_time > note_until_ - 2.5) {
+        if (rondo) {
+            std::snprintf(text, sizeof(text), "RONDO, robot %d: ", agent.robot_id);
+            status->skill = text + status->skill;
+            std::snprintf(text, sizeof(text), "  |  passes %d, intercepted %d, lost %d", passes_, steals_, lost_);
+            status->detail += text;
+        }
+        if (sim_time < note_until_ && sim_time > note_until_ - 10.0) {
             status->detail += "  [" + note_ + "]";
         }
         const std::string all = status->skill + status->detail;

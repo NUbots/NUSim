@@ -44,6 +44,27 @@ namespace k1sim::message {
         double ball_x = 0.0, ball_y = 0.0;  // world frame (m)
         double aim_angle = 0.0;             // world frame (rad)
         double charge    = 0.0;             // 0 = a tap, 1 = full power
+
+        // The training drill running ("free" or "rondo") and the robot the keys play: the camera's
+        // Follow and Behind track its trunk, and in a drill a marker hangs over it.
+        std::string drill      = "free";
+        std::string robot_body = "Trunk";
+        bool marker            = false;
+    };
+
+    // From the viewer's Training buttons to module::SkillPlayer: start a drill ("free", "rondo").
+    // Asking for the one already running starts it again.
+    struct SkillDrill {
+        std::string name;
+    };
+
+    // From module::SkillPlayer to the viewer: switch the camera mode (0 Free, 1 Follow, 2 Behind,
+    // as the Simulation panel's buttons) and, with `place`, point it at (x, y) from `distance` m.
+    struct CameraRequest {
+        int mode   = 0;
+        bool place = false;
+        double x = 0.0, y = 0.0;
+        double distance = 8.0, azimuth = 90.0, elevation = -50.0;  // m, degrees
     };
 
 }  // namespace k1sim::message

@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <string>
+#include <vector>
 
 // Which skill policy runs and what ball velocity it is asked for, from the operator's keys and the
 // state of the world. No NUClear, MuJoCo or ONNX in here, so test/unit/test_skill_logic.cpp can
@@ -126,6 +127,16 @@ namespace k1sim::skill {
         // After a pass is played the robot stays in receive at least this long, whatever the keys:
         // the ball is moved a step or two later, so until then it is still where it was.
         double pass_grace = 0.3;
+
+        // Passing to teammates (the rondo; see Logic::set_pass_targets). A shot aimed at a teammate
+        // is powered to arrive at pass_arrival_speed after rolling friction (rolling_decel m/s^2)
+        // for a tap, more if held. With no direction key held, an aim within target_snap of a
+        // teammate locks onto them; a direction held for a first-time pass picks the teammate within
+        // target_key_snap of it, if there is one.
+        double pass_arrival_speed = 1.8;
+        double rolling_decel      = 0.9;
+        double target_snap        = 0.17;  // rad, 10 degrees
+        double target_key_snap    = 0.52;  // rad, 30 degrees
     };
 
     // Limits the policies were trained over.
@@ -203,6 +214,7 @@ namespace k1sim::skill {
             cfg_.first_pass_fast_speed  = std::clamp(cfg_.first_pass_fast_speed, FIRST_PASS_SPEED_MIN, FIRST_PASS_SPEED_MAX);
             cfg_.first_shot_speed       = std::clamp(cfg_.first_shot_speed, FIRST_PASS_SPEED_MIN, FIRST_PASS_SPEED_MAX);
             skill_                      = start_skill();
+            tap_speed_                  = cfg_.kick_speed_min;
         }
 
         const Config& config() const {
@@ -214,6 +226,13 @@ namespace k1sim::skill {
         // A pass is rolling in and hasn't been touched yet: Q now means a first-time pass.
         bool pass_incoming() const {
             return incoming_;
+        }
+
+        // Teammates to pass to, world (x, y), the preferred one first. With any set, shots and
+        // first-time passes aim at a teammate rather than the goal or the passer (see Config).
+        // Empty: as before.
+        void set_pass_targets(std::vector<std::array<double, 2>> targets) {
+            targets_ = std::move(targets);
         }
 
         // Back to the start (start-up, robot reset): standing in walk, or waiting for a pass.
@@ -257,7 +276,9 @@ namespace k1sim::skill {
                 return false;
             }
             skill_    = Skill::FIRST_PASS;
-            redirect_ = keys.any_direction() ? clamp_redirect(key_angle(keys, world)) : from_;
+            redirect_ = keys.any_direction() ? clamp_redirect(assisted_key_angle(keys, world))
+                        : targets_.empty()   ? from_
+                                             : clamp_redirect(angle_to(targets_.front(), world.robot_x, world.robot_y));
             fast_     = keys.fast;
             shot_     = false;
             return true;
@@ -271,9 +292,10 @@ namespace k1sim::skill {
                 return false;
             }
             skill_    = Skill::FIRST_PASS;
-            redirect_ = clamp_redirect(keys.any_direction()
-                                           ? key_angle(keys, world)
-                                           : std::atan2(cfg_.goal[1] - world.robot_y, cfg_.goal[0] - world.robot_x));
+            redirect_ = clamp_redirect(keys.any_direction() ? assisted_key_angle(keys, world)
+                                       : targets_.empty()
+                                           ? std::atan2(cfg_.goal[1] - world.robot_y, cfg_.goal[0] - world.robot_x)
+                                           : angle_to(targets_.front(), world.robot_x, world.robot_y));
             shot_     = true;
             return true;
         }
@@ -288,7 +310,16 @@ namespace k1sim::skill {
             if (skill_ == Skill::WALK || aiming_ || (air && !cfg_.air_enabled) || !ball_kickable(world)) {
                 return false;
             }
-            aim_     = cfg_.aim_goal ? std::atan2(cfg_.goal[1] - world.ball_y, cfg_.goal[0] - world.ball_x) : world.yaw;
+            aim_      = cfg_.aim_goal ? std::atan2(cfg_.goal[1] - world.ball_y, cfg_.goal[0] - world.ball_x) : world.yaw;
+            tap_speed_ = cfg_.kick_speed_min;
+            if (!targets_.empty()) {
+                // At the preferred teammate, hard enough to reach them at pass_arrival_speed.
+                const auto& t   = targets_.front();
+                aim_            = angle_to(t, world.ball_x, world.ball_y);
+                const double d  = std::hypot(t[0] - world.ball_x, t[1] - world.ball_y);
+                const double v  = std::sqrt(cfg_.pass_arrival_speed * cfg_.pass_arrival_speed + 2.0 * cfg_.rolling_decel * d);
+                tap_speed_      = std::clamp(v, cfg_.kick_speed_min, cfg_.kick_speed_max);
+            }
             charge_  = 0.0;
             aim_     = clamp_aim(aim_, world.yaw);
             aiming_  = true;
@@ -342,6 +373,9 @@ namespace k1sim::skill {
                         const auto dir    = key_direction(keys, world);
                         const double turn = wrap_angle(std::atan2(dir[1], dir[0]) - aim_);
                         aim_ += std::clamp(turn, -cfg_.aim_rate * dt, cfg_.aim_rate * dt);
+                    }
+                    else if (const double* snap = nearest_target(aim_, world.ball_x, world.ball_y, cfg_.target_snap)) {
+                        aim_ = *snap;  // let go near a teammate: lock onto them
                     }
                     aim_ = clamp_aim(aim_, world.yaw);
                     Decision out;
@@ -420,7 +454,7 @@ namespace k1sim::skill {
                     if (!touched_) {
                         // Until the touch, the direction held can still change the aim.
                         if (keys.any_direction()) {
-                            redirect_ = clamp_redirect(key_angle(keys, world));
+                            redirect_ = clamp_redirect(pass ? assisted_key_angle(keys, world) : key_angle(keys, world));
                             fast_     = keys.fast;
                         }
                         if (world.ball_touched) {
@@ -560,6 +594,37 @@ namespace k1sim::skill {
             return std::atan2(dir[1], dir[0]);
         }
 
+        double angle_to(const std::array<double, 2>& target, double x, double y) const {
+            return std::atan2(target[1] - y, target[0] - x);
+        }
+
+        // The angle from (x, y) to the pass target nearest `angle`, if one is within `limit`;
+        // nullptr otherwise. The result points into snap_.
+        const double* nearest_target(double angle, double x, double y, double limit) {
+            double best = limit;
+            bool found  = false;
+            for (const auto& t : targets_) {
+                if (std::hypot(t[0] - x, t[1] - y) < 0.3) {
+                    continue;
+                }
+                const double a   = angle_to(t, x, y);
+                const double off = std::abs(wrap_angle(a - angle));
+                if (off <= best) {
+                    best  = off;
+                    snap_ = a;
+                    found = true;
+                }
+            }
+            return found ? &snap_ : nullptr;
+        }
+
+        // The direction keys' angle, pulled onto a teammate within target_key_snap of it.
+        double assisted_key_angle(const Keys& keys, const World& world) {
+            const double raw = key_angle(keys, world);
+            const double* snap = nearest_target(raw, world.robot_x, world.robot_y, cfg_.target_key_snap);
+            return snap != nullptr ? *snap : raw;
+        }
+
         // A first-touch direction, kept within first_touch_max_angle of where the pass came from:
         // sideways or back towards the passer, never on past the robot.
         double clamp_redirect(double angle) const {
@@ -594,7 +659,7 @@ namespace k1sim::skill {
 
         double aim_speed() const {
             const double charged = cfg_.charge_time > 0.0 ? std::clamp(charge_ / cfg_.charge_time, 0.0, 1.0) : 1.0;
-            return cfg_.kick_speed_min + charged * (cfg_.kick_speed_max - cfg_.kick_speed_min);
+            return tap_speed_ + charged * (cfg_.kick_speed_max - tap_speed_);
         }
 
         Config cfg_;
@@ -620,6 +685,9 @@ namespace k1sim::skill {
         bool carry_        = false;  // dribbling on in the first touch's direction while carry_keys_ are held
         Keys carry_keys_{};
         std::array<double, 2> kick_world_{};
+        double tap_speed_ = 2.0;  // a tap of the shoot key: kick_speed_min, or a pass's power
+        std::vector<std::array<double, 2>> targets_;
+        double snap_ = 0.0;
     };
 
 }  // namespace k1sim::skill

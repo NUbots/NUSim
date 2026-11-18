@@ -149,6 +149,44 @@ ball_contact:
   friction: 0.3
   solref: [0.02, 0.35]
 
+# The rondo, from the viewer's Training buttons (needs 4 robots; ./b skills spawns them). Three
+# teammates stand at the corners of a triangle facing in, one with the ball at its feet; the fourth
+# stands in the middle and walks at the ball as fast as the walk goes. The keys play whichever
+# teammate the ball is rolling to: a shot (Space) aims at the teammate whose passing lane is further
+# from the defender, powered so a tap reaches them at arrival_speed; W A S D still swing it, and let
+# go within snap_deg of a teammate it locks onto them. A first-time pass (Q as it comes) goes to the
+# same teammate, or with a direction held to the teammate within key_snap_deg of it. The round
+# starts again when the defender touches the ball or it rolls out_margin beyond the corners; R
+# starts it again at once.
+rondo:
+  centre: [0.0, 0.0]
+  side: 4.0 # m between teammates (receive was trained on passes from up to 4 m)
+  ball_ahead: 0.3 # m in front of the starting teammate
+  defender_speed: 2.0 # m/s, the walk's top speed
+  defender_turn_rate: 1.0 # rad/s
+  defender_delay: 2.0 # s after the round starts before the defender sets off
+  defender_accel: 3.0 # m/s^2: its walking speed changes no faster (the walk falls on a jump to standing)
+  defender_close_speed: 0.6 # m/s at the ball, rising 1.5 m/s per metre away, so it doesn't run through robots
+  defender_lead: 1.0 # s it looks ahead along the ball's roll, at most
+  steal_distance: 0.3 # m from the defender's trunk: the ball is won
+  out_margin: 2.0
+  next_round: 1.5 # s after an interception or a lost ball
+  # Teammates off the ball walk back to their corner, facing the ball, and step sideways off it
+  # (up to support_shift m) while the defender stands within lane_clear m of the lane from the ball.
+  support_speed: 0.8 # m/s
+  support_tolerance: 0.4 # m from their spot before they move again
+  lane_clear: 0.8 # m
+  support_shift: 1.2 # m
+  arrival_speed: 1.8 # m/s
+  snap_deg: 10
+  key_snap_deg: 30
+
+# The drill to start in: free or rondo (then switch with the Training buttons).
+drill: free
+
+# Where the robots free play doesn't use stand (x, y), facing the field: off the -y touchline.
+park: [[2.5, -5.0], [3.5, -5.0], [4.5, -5.0]]
+
 # The head camera the ball observation imitates (ground truth cut to a field of view, no noise).
 camera:
   offset: [0.06, 0.0, 0.07] # m, in the Head_2 body frame

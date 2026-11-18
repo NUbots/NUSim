@@ -53,13 +53,58 @@ with a warning. As it comes:
 
 The status line at the top left says what is loaded.
 
+## Training drills
+
+When keyboard play is running, the Simulation panel has a **Training** section with two buttons. Pressing the one
+already running starts it again.
+
+- **Free play** is everything above: one robot, the ball where the scene puts it. The other robots stand on the -y
+  touchline out of the way (`park` in the config).
+- **Rondo**: three teammates stand at the corners of a 4 m triangle facing in, one with the ball at its feet, and
+  the fourth stands in the middle. Pass it round and keep it away from the robot in the middle.
+
+The rondo needs four robots, so `./b skills` now spawns four unless you pass `--robots` (`--robots 1` gives the
+single-robot scene, and the Rondo button then says why it can't start).
+
+In the rondo:
+
+- **The keys play whoever the ball is going to.** When a pass or first-time pass leaves the robot you're playing
+  and rolls towards a teammate (within 30 degrees), the keys switch to that teammate. A cyan arrow hangs over the
+  robot you're playing. Direction keys still held from the pass don't count for the new robot until you let them
+  go, so a key held to aim the pass doesn't turn into a first touch.
+- **Passes auto-aim at a teammate.** `Space` aims at whichever of the other two has the passing lane further from
+  the defender, and a tap is powered to reach them at 1.8 m/s (`rondo.arrival_speed`). Hold for more power. `W A S D`
+  still swing the aim, and when you let go within 10 degrees of a teammate it locks onto them. With a pass coming in,
+  `Q` passes it first time to the open teammate, or, with a direction held, to the teammate within 30 degrees of
+  that direction (else exactly that way). `Space` with a pass coming hits it first time the same way, at 4 m/s.
+  Hold a direction with no `Q` for a first touch, as in free play.
+- **The defender** walks at the ball with the walk policy, as fast as it goes (2 m/s), aiming where the ball will be
+  when it gets there. It waits 2 s after a round starts, eases off near the ball so it doesn't run through the robot
+  holding it, and changes speed at no more than 3 m/s². It doesn't kick: touching the ball wins it.
+- **A round ends** when the defender touches the ball (or gets within 0.3 m of its trunk), or the ball rolls 2 m
+  past the triangle's corners. The next round starts 1.5 s later with the next teammate on the ball. `R` starts a
+  new round at once. The status line counts passes completed, interceptions and lost balls.
+- **The camera** switches to Free, looking over the triangle. Follow and Behind follow the robot you're playing.
+  Switching back to free play puts the camera behind the robot again.
+- A robot that falls is stood back up at its spot after 3 s.
+
+Teammates you're not playing stay available. After a pass they go back to walk and head for their corner of the
+triangle, turned to face the ball so the next pass comes from in front, as receive was trained. Far from their corner
+(over a metre) they turn and walk there at 0.8 m/s; closer in they step there sideways or backwards with the ball in
+view, and they don't move again until they are 0.4 m off it. If the defender stands within 0.8 m of the lane from
+the ball to a teammate's corner, that teammate steps sideways off the corner, away from the defender, until the lane
+is clear (by up to 1.2 m), and goes back to the corner once it is. A pass played to a teammate on the move is the
+trained walk-to-receive hand-over. `rondo:` in the config sets the triangle's size and centre, the
+defender's speed, turn rate, head start and lead, the support movement (`support_speed`, `support_tolerance`,
+`lane_clear`, `support_shift`) and the auto-aim. `drill: rondo` starts in the rondo.
+
 ## Camera
 
 The Simulation panel has three camera buttons:
 
 - **Free**: the camera stays wherever the mouse leaves it.
-- **Follow**: the camera stays on the robot; the mouse still turns and zooms it.
-- **Behind**: the camera stays behind the robot and turns with it.
+- **Follow**: the camera stays on the robot (in the rondo, the one you're playing); the mouse still turns and zooms it.
+- **Behind**: the camera stays behind that robot and turns with it.
 
 ## Goals
 

@@ -378,6 +378,24 @@ void ViewerUI::render_simulation_controls(UIState& state) {
         }
     }
 
+    if (state.skill_keys) {
+        // Keyboard play's drills. Pressing the one running starts it again.
+        section(font_small_, "TRAINING");
+        static constexpr const char* drills[2][2] = {{"Free play", "free"}, {"Rondo", "rondo"}};
+        const float tw = std::floor((ImGui::GetContentRegionAvail().x - gap) / 2.0f);
+        for (int i = 0; i < 2; ++i) {
+            if (i > 0) {
+                ImGui::SameLine(0.0f, gap);
+            }
+            if (button(drills[i][0], tw, dp(30), state.skill_drill == drills[i][1] ? Kind::Selected : Kind::Secondary)) {
+                pending_.skill_drill = drills[i][1];
+            }
+        }
+        if (state.skill_drill == "rondo") {
+            note(font_small_, C_MUTED, "3 pass round the robot in the middle; the keys play whoever the ball is going to. Rondo again: new round.");
+        }
+    }
+
     ImGui::Dummy({0.0f, dp(4)});
     char buf[32];
     stat_row("Sim time", clock_text(state.sim_time, true).c_str());
