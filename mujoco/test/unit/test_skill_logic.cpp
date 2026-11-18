@@ -349,6 +349,10 @@ int main() {
         World turned       = world_with_ball(0.6, 0.0, 0.9, 1.0);  // robot (and view) turned since
         turned.view_yaw    = 1.0;
         d = touchy.tick(left, turned, DT);
+        check(touchy.tick(left, world_with_ball(1.8, 0.0, 1.0), DT).skill == Skill::DRIBBLE,
+              "I: holding the key, the dribble chases a touch that ran 1.8 m ahead");
+        check(Logic(touchy).tick(left, world_with_ball(3.0, 0.0, 1.0), DT).skill == Skill::WALK,
+              "I: but walks once the ball is 2.5 m away");
         // The touch was last loaded with S (held to -90 degrees), so it went to -y.
         check(near(d.command_world[0], 0.0, 1e-9) && near(d.command_world[1], -0.8),
               "I: with the same key held it dribbles on along the touch, whatever the view does");

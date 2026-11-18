@@ -109,6 +109,9 @@ namespace k1sim::skill {
         double first_pass_lockout       = 1.0;  // s after the touch before dribbling or walking
         // No touch this long after the pass was played: give up on the first touch and receive.
         double first_touch_timeout = 4.0;
+        // While the dribble carries a first touch on, the ball has run ahead of the robot: only give up
+        // and walk once it is this far away (not takeover_distance).
+        double carry_walk_distance = 2.5;
 
         // Receive hands over to dribble once the ball has stayed within zone_radius of `zone` (in the
         // robot's yaw frame) and slower than trap_speed for settle_time.
@@ -465,7 +468,9 @@ namespace k1sim::skill {
                     }
                     break;
                 case Skill::DRIBBLE:
-                    if (wants_walk(keys, world)) {
+                    if (wants_walk(keys, world)
+                        && (!carry_ || !same_directions(keys, carry_keys_) || !world.ball_valid
+                            || world.ball_distance() > cfg_.carry_walk_distance)) {
                         skill_ = Skill::WALK;  // the ball got away
                     }
                     break;
