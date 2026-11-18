@@ -114,7 +114,7 @@ int main() {
         Keys fast = left;
         fast.fast = true;
         d         = field.tick(fast, turned, DT);
-        check(near(std::hypot(d.command_world[0], d.command_world[1]), 1.3), "C: Shift uses the fast speed");
+        check(near(std::hypot(d.command_world[0], d.command_world[1]), 1.8), "C: Shift uses the fast speed");
 
         Keys both;
         both.forward = both.back = true;
@@ -129,8 +129,9 @@ int main() {
     {  // D
         Config field_frame;
         field_frame.frame          = Config::Frame::FIELD;
-        field_frame.kick_speed_max = 5.0;
-        field_frame.charge_time    = 1.5;
+        field_frame.kick_speed_max   = 5.0;
+        field_frame.charge_time      = 1.5;
+        field_frame.kick_power_speed = 5.0;  // these checks are of the aim, not the power limit
         Logic logic(field_frame);
         check(!logic.on_shoot_press(world_with_ball(3.0, 0.0)) && !logic.on_shoot_release(world_with_ball(3.0, 0.0))
                   && logic.skill() == Skill::RECEIVE,
@@ -176,12 +177,12 @@ int main() {
               "D: aim clamped to 135 degrees off the heading");
 
         // Not with the ball beside or behind the robot.
-        logic.on_pass();
+        logic.on_drop();
         check(!logic.on_shoot_press(world_with_ball(0.0, 0.8)) && !logic.on_shoot_press(world_with_ball(-0.5, 0.0)),
               "D: no shot with the ball beside or behind the robot");
 
         // The ball rolling away cancels the wind-up.
-        logic.on_pass();
+        logic.on_drop();
         logic.on_shoot_press(w);
         d = logic.tick({}, world_with_ball(3.0, 0.0), DT);
         check(!d.aiming && !logic.on_shoot_release(w), "D: the wind-up is dropped if the ball gets away");
@@ -191,19 +192,19 @@ int main() {
         Config power;
         power.frame = Config::Frame::FIELD;
         Logic logic(power);
-        check(near(logic.config().kick_speed_max, 8.0), "D2: shots go up to 8 m/s");
+        check(near(logic.config().kick_speed_max, 7.0), "D2: shots go up to 7 m/s");
         Keys left;
         left.left     = true;
         const World w = world_with_ball(0.5, 0.0);
         logic.on_shoot_press(w);
         Decision d = run(logic, left, w, 0.5);  // 3.5 m/s: the aim may swing past 45 degrees
-        check(d.aim_speed < 5.0 && d.aim_angle > 0.8, "D2: below 5 m/s the aim swings wide");
+        check(d.aim_speed < 4.5 && d.aim_angle > 0.8, "D2: below 4.5 m/s the aim swings wide");
         d = run(logic, left, w, 2.0);  // full power
-        check(near(d.aim_speed, 8.0) && near(d.aim_angle, 0.785, 1e-3), "D2: at full power it is held to 45 degrees");
+        check(near(d.aim_speed, 7.0) && near(d.aim_angle, 0.785, 1e-3), "D2: at full power it is held to 45 degrees");
         logic.on_shoot_release(w);
         d = logic.tick({}, w, DT);
         check(near(std::atan2(d.command_world[1], d.command_world[0]), 0.785, 1e-3)
-                  && near(std::hypot(d.command_world[0], d.command_world[1]), 8.0),
+                  && near(std::hypot(d.command_world[0], d.command_world[1]), 7.0),
               "D2: and kicked along it");
     }
 
@@ -227,7 +228,7 @@ int main() {
         Logic logic;
         logic.on_shoot_press(world_with_ball(0.5, 0.0));
         logic.on_shoot_release(world_with_ball(0.5, 0.0));
-        logic.on_pass();
+        logic.on_drop();
         check(logic.tick({}, world_with_ball(2.5, 0.0, 2.0), DT).skill == Skill::RECEIVE, "F: a pass returns to receive");
     }
 
@@ -263,7 +264,7 @@ int main() {
 
         // A pass from walk goes to receive, and holds there briefly whatever the keys.
         logic.reset();
-        logic.on_pass();
+        logic.on_drop();
         check(logic.tick(forward, world_with_ball(0.3, 0.0), DT).skill == Skill::RECEIVE, "G: a pass is received");
         // Back to walk with W once the ball is out of reach, not while a pass rolls in.
         run(logic, {}, world_with_ball(3.0, 0.0, 2.0), 0.5);
@@ -279,13 +280,13 @@ int main() {
 
         // Any direction key with the ball far walks, not just W.
         Logic idle(walking);
-        idle.on_pass();
+        idle.on_drop();
         run(idle, {}, world_with_ball(3.0, 0.0), 0.5);
         check(idle.tick(left, world_with_ball(3.0, 0.0), DT).skill == Skill::WALK, "G: A walks to a far, still ball");
 
         // Release: from dribble straight to walk, and the ball is not picked straight back up.
         Logic holder(walking);
-        holder.on_pass();
+        holder.on_drop();
         const World at_feet = world_with_ball(0.2, 0.0);
         run(holder, {}, at_feet, 1.0);
         check(holder.skill() == Skill::DRIBBLE, "G: trapped, dribbling");
@@ -306,6 +307,91 @@ int main() {
         forward.forward = true;
         check(logic.skill() == Skill::RECEIVE && logic.tick(forward, world_with_ball(5.0, 0.0), DT).skill == Skill::RECEIVE,
               "G2: no walk policy, no walking");
+    }
+
+    {  // I: a pass rolling in. It comes from +x towards the robot, so "back where it came from" is +x.
+        Config cfg;
+        cfg.frame               = Config::Frame::FIELD;
+        cfg.first_touch_enabled = cfg.first_pass_enabled = cfg.air_enabled = cfg.walk_enabled = true;
+        const World coming = world_with_ball(2.0, 0.0, 2.0);  // 2 m away, rolling in
+        World touch        = world_with_ball(0.2, 0.0, 1.5);
+        touch.ball_touched = true;
+        Keys none, left, right, back;
+        left.left   = true;
+        right.right = true;
+        back.back   = true;
+
+        // Nothing pressed: an ordinary receive, and Q still means a first-time pass until the touch.
+        Logic plain(cfg);
+        plain.on_pass(M_PI);
+        Decision d = run(plain, none, coming, 0.5);
+        check(d.skill == Skill::RECEIVE && d.pass_incoming && plain.pass_incoming(), "I: no key, it is received");
+        d = plain.tick(none, touch, DT);
+        check(d.skill == Skill::RECEIVE && !plain.pass_incoming(), "I: after the touch it is an ordinary receive");
+
+        // A direction before the touch loads a first touch, kept within 90 degrees of where it came from.
+        Logic touchy(cfg);
+        touchy.on_pass(M_PI);
+        run(touchy, none, coming, 0.4);  // past the grace
+        d = touchy.tick(left, coming, DT);
+        check(d.skill == Skill::FIRST_TOUCH && near(d.command_world[0], 0.0, 1e-9) && near(d.command_world[1], 0.9),
+              "I: A loads a first touch to the left at the first-touch speed");
+        d = touchy.tick(back, coming, DT);  // straight on, past the robot: not allowed
+        check(near(std::abs(std::atan2(d.command_world[1], d.command_world[0])), M_PI / 2, 1e-6),
+              "I: a touch on past the robot is held to 90 degrees");
+        d = touchy.tick(none, coming, DT);
+        check(d.skill == Skill::FIRST_TOUCH && near(std::hypot(d.command_world[0], d.command_world[1]), 0.9),
+              "I: releasing the key keeps the loaded touch");
+        d = touchy.tick(none, touch, DT);
+        check(d.touched && d.skill == Skill::FIRST_TOUCH, "I: the touch is seen");
+        d = run(touchy, left, world_with_ball(0.6, 0.0, 0.9), 0.4);
+        check(d.skill == Skill::DRIBBLE, "I: the dribble takes over after the touch window");
+        World turned       = world_with_ball(0.6, 0.0, 0.9, 1.0);  // robot (and view) turned since
+        turned.view_yaw    = 1.0;
+        d = touchy.tick(left, turned, DT);
+        // The touch was last loaded with S (held to -90 degrees), so it went to -y.
+        check(near(d.command_world[0], 0.0, 1e-9) && near(d.command_world[1], -0.8),
+              "I: with the same key held it dribbles on along the touch, whatever the view does");
+        d = touchy.tick(back, turned, DT);  // field frame: S is -x
+        check(near(d.command_world[0], -0.8) && near(d.command_world[1], 0.0, 1e-9), "I: a new key steers as usual");
+
+        // Q while it comes: a first-time pass, straight back with no key, at the first-pass speed.
+        Logic passer(cfg);
+        check(!passer.on_first_pass(none, coming), "I: no first-time pass without a pass coming");
+        passer.on_pass(M_PI);
+        run(passer, none, coming, 0.4);
+        check(passer.on_first_pass(none, coming), "I: Q with a pass coming plays it first time");
+        d = passer.tick(none, coming, DT);
+        check(d.skill == Skill::FIRST_PASS && near(d.command_world[0], 3.0) && near(d.command_world[1], 0.0, 1e-9),
+              "I: first-time pass straight back at 3 m/s");
+        d = passer.tick(right, coming, DT);
+        check(near(d.command_world[1], -3.0) && near(d.command_world[0], 0.0, 1e-9), "I: D aims it to the right");
+        passer.tick(none, touch, DT);
+        check(run(passer, right, world_with_ball(3.0, 0.0, 3.0), 0.5).skill == Skill::FIRST_PASS,
+              "I: it stands still after the pass");
+        check(run(passer, right, world_with_ball(3.0, 0.0, 3.0), 0.6).skill == Skill::WALK, "I: then walks off");
+
+        // Never reached: back to receiving.
+        Logic missed(cfg);
+        missed.on_pass(M_PI);
+        run(missed, none, coming, 0.4);
+        missed.tick(left, coming, DT);
+        check(run(missed, none, world_with_ball(3.0, 2.0), 4.0).skill == Skill::RECEIVE, "I: no touch, back to receive");
+
+        // The air shot: its own key, its own kind of kick; the other key's release doesn't fire it.
+        Logic air(cfg);
+        const World w = world_with_ball(0.5, 0.0);
+        air.on_drop();
+        check(air.on_shoot_press(w, true), "I: C winds up an air shot");
+        check(!air.on_shoot_release(w, false), "I: Space's release doesn't fire it");
+        check(air.on_shoot_release(w, true), "I: C's release does");
+        d = air.tick(none, w, DT);
+        check(d.skill == Skill::KICK && d.air, "I: and it is an air kick");
+        Config no_air = cfg;
+        no_air.air_enabled = false;
+        Logic ground(no_air);
+        ground.on_drop();
+        check(!ground.on_shoot_press(w, true), "I: no air shot without its policy");
     }
 
     {  // H: a fast incoming ball is not taken over by a direction key

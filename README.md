@@ -33,9 +33,10 @@ for setup and how each mode works.
 
 ## Keyboard play
 
-`./b skills` puts one K1 on the field and plays it from the keyboard with the walk, receive, dribble and kick policies
-from mjlab, run inside the sim with no NUbots role: `W` `A` `S` `D` walk and dribble, `X` lets go of the ball, `Q` rolls
-the ball at the robot and holding `Space` winds up a shot. `./b skills sync` refreshes the policies from mjlab. See
+`./b skills` puts one K1 on the field and plays it from the keyboard with mjlab's walk, receive, first-touch,
+first-time-pass, dribble, kick and air-shot policies, run inside the sim with no NUbots role: `W` `A` `S` `D` walk and
+dribble, `Q` calls for a pass (hold a direction as it comes for a first touch, or press `Q` again to pass it first
+time), `Space` and `C` charge a shot and an air shot. `./b skills sync` refreshes the policies from mjlab. See
 [docs/SKILL_KEYBOARD.md](docs/SKILL_KEYBOARD.md).
 
 ## Refereed matches (`layton/sim-match`)

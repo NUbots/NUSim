@@ -10,32 +10,41 @@
 // state of the world. No NUClear, MuJoCo or ONNX in here, so test/unit/test_skill_logic.cpp can
 // drive it directly.
 //
-// The rules follow the policies' interface spec (mjlab policies/CONTROLLER_INTERFACE.md):
-//   walk     body twist (vx, vy, wz): W/S forward/back, A/D turn (or step sideways). The spec trained
-//            it forward to 1 m/s and found turning and sideways barely respond in mjlab; in NUSim
-//            turning does, so the keys are all live here
-//   receive  command (0, 0); hands over to dribble once the ball has been held still in front
-//   dribble  command = the direction held, at 0.4 to 1.5 m/s, or (0, 0) to hold the ball
-//   kick     one command per kick, 2 to 8 m/s, within +/-135 degrees of the robot's heading up to
-//            5 m/s and +/-45 degrees above
+// The rules follow the policies' interface spec (mjlab policies/CONTROLLER_INTERFACE.md, 2026-11-18):
+//   walk          body twist (vx, vy, wz): W/S forward/back, A/D turn. The spec found turning barely
+//                 responds in mjlab; in NUSim it does, so the keys are live here
+//   receive       command (0, 0); traps the pass and hands over to dribble once it is held still
+//   first touch   the ball velocity wanted straight off the first touch of a pass, 0.5 to 1.2 m/s,
+//                 within 90 degrees of the direction the pass came from; dribble takes over 0.4 s
+//                 after the touch
+//   first pass    the same for a first-time pass, 2 to 4 m/s; the robot stands still afterwards
+//   dribble       the direction held, 0.4 to 1.8 m/s, or (0, 0) to hold the ball
+//   kick, air     one command per kick, 2 to 7 m/s, within 135 degrees of the heading (45 above
+//                 4.5 m/s); the air shot also lifts the ball at about 30 degrees
 //
-// Hand-overs: walk -> receive is trained (a pass played to a walking robot) and so is dribble ->
-// kick. Walking into a resting ball also hands over to receive. Releasing the ball (the release
-// key) goes from any ball skill to walk, and the robot will not pick that ball up again until it
-// has been at least walk_pickup_distance + pickup_rearm away from it. Getting back into walk (from a
-// ball skill, once the ball is out of reach) is untested in mjlab but is the only way to go and
-// fetch a ball.
+// A pass rolling in (Q): with no key the robot receives it. A direction key held before the touch
+// loads that direction for a first touch, and Q again plays a first-time pass (aimed with the
+// direction keys, or straight back to where it came from). The first-touch policies were trained
+// with the command set from the moment the pass is played, so loading it early is what they expect.
 //
-// A shot is wound up: while the shoot key is held the robot holds the ball, the power climbs from
-// kick_speed_min to kick_speed_max and the direction keys swing the aim; releasing the key kicks.
+// Hand-overs: walk -> receive / first touch / first pass and dribble -> kick are trained. Walking
+// into a resting ball hands over to receive. Releasing the ball (X) goes from any ball skill to walk,
+// and the robot will not pick that ball up again until it has been walk_pickup_distance +
+// pickup_rearm away from it. Getting back into walk from a ball skill is untested in mjlab but is
+// the only way to go and fetch a ball.
+//
+// A shot is wound up: while the shoot key (Space, or C for the air shot) is held the robot holds the
+// ball, the power climbs and the direction keys swing the aim; releasing the key kicks.
 namespace k1sim::skill {
 
-    enum class Skill { WALK, RECEIVE, DRIBBLE, KICK };
+    enum class Skill { WALK, RECEIVE, FIRST_TOUCH, FIRST_PASS, DRIBBLE, KICK };
 
     inline const char* name(Skill skill) {
         switch (skill) {
             case Skill::WALK: return "WALK";
             case Skill::RECEIVE: return "RECEIVE";
+            case Skill::FIRST_TOUCH: return "FIRST TOUCH";
+            case Skill::FIRST_PASS: return "FIRST-TIME PASS";
             case Skill::DRIBBLE: return "DRIBBLE";
             case Skill::KICK: return "KICK";
         }
@@ -45,49 +54,59 @@ namespace k1sim::skill {
     struct Config {
         // Dribble: speed asked of the ball while a direction is held, and with Shift.
         double dribble_speed      = 0.8;
-        double dribble_fast_speed = 1.3;
-        // What W/A/S/D are relative to. VIEW: the viewer's camera (W = away from it, A = to its left).
-        // FIELD: +x, +y, -x, -y of the field. ROBOT: the robot's heading.
+        double dribble_fast_speed = 1.8;
+        // What W/A/S/D are relative to for the ball skills. VIEW: the viewer's camera (W = away from
+        // it, A = to its left). FIELD: +x, +y, -x, -y of the field. ROBOT: the robot's heading.
         enum class Frame { VIEW, FIELD, ROBOT } frame = Frame::VIEW;
 
         // Walk, in the robot's own frame whatever the view: W forward at walk_speed (Shift:
         // walk_fast_speed), S back at walk_back_speed. A/D turn at walk_turn_rate rad/s, or with
-        // walk_side_keys = STRAFE step sideways at walk_side_speed. A rate or speed of 0 turns that off.
+        // walk_side_keys = STRAFE step sideways at walk_side_speed.
         double walk_speed      = 0.6;
         double walk_fast_speed = 1.0;
         double walk_back_speed = 0.3;
         double walk_turn_rate  = 0.8;
         double walk_side_speed = 0.3;
         enum class SideKeys { TURN, STRAFE } walk_side_keys = SideKeys::TURN;
-        // The walk will not turn on the spot: with A/D alone it is also asked to creep forward at this
-        // speed so that it steps, and so turns.
+        // The walk will not turn on the spot: with A/D alone it is also asked to creep forward.
         double walk_turn_creep = 0.3;
-        // There is a walk policy. Without one, W never leaves the ball skills.
-        bool walk_enabled = false;
-        // Start (and restart) walking, standing still until W, rather than waiting for a pass.
-        bool start_walking = false;
+        bool walk_enabled      = false;  // there is a walk policy
+        bool start_walking     = false;  // start (and restart) standing in walk, not waiting in receive
         // While walking, a ball this close ahead of the robot hands over to receive (0 = never).
         double walk_pickup_distance = 0.8;
         // After a release, the ball must first get this much further away than walk_pickup_distance.
         double pickup_rearm = 0.4;
 
-        // A shot's speed: kick_speed_min for a tap, rising to kick_speed_max over charge_time held.
+        // Shots: kick_speed_min for a tap, rising to kick_speed_max over charge_time held.
         double kick_speed_min = 2.0;
-        double kick_speed_max = 8.0;
+        double kick_speed_max = 7.0;
         double charge_time    = 2.0;
         double aim_rate       = 2.0;  // rad/s the aim swings towards the direction held
-        // The aim starts at this point if aim_goal, else straight ahead.
-        bool aim_goal = true;
+        bool aim_goal         = true;  // the aim starts at `goal`, else straight ahead
         std::array<double, 2> goal{7.0, 0.0};
-        double kick_max_angle = 2.356;  // rad from the heading; behind that is untrained
-        // Shots faster than this were trained only within kick_power_angle of the heading.
-        double kick_power_speed = 5.0;
-        double kick_power_angle = 0.785;
-        double kick_reach     = 1.0;    // m; no kick is started with the ball further away
-        double kick_cone      = 1.05;   // rad; or with the ball further than this off the robot's heading
-        double kick_lockout   = 1.0;    // s after a kick before dribbling can resume
-        // Above this ball speed the kick-out-of-a-dribble policy is used (when there is one).
+        double kick_max_angle   = 2.356;  // rad from the heading; behind that is untrained
+        double kick_power_speed = 4.5;    // shots faster than this were trained only within...
+        double kick_power_angle = 0.785;  // ...this angle of the heading
+        double kick_reach       = 1.0;    // m; no shot with the ball further away...
+        double kick_cone        = 1.05;   // rad; ...or further off the robot's heading
+        double kick_lockout     = 1.0;    // s after a kick before dribbling can resume
+        bool air_enabled        = false;  // there is an air-shot policy
         double moving_kick_speed = 0.2;
+
+        // First touch of a pass: ball speed off the touch (Shift: the fast one), and the window after
+        // the touch before the dribble takes over. Directions are kept within first_touch_max_angle of
+        // the direction the pass came from.
+        bool first_touch_enabled        = false;
+        double first_touch_speed        = 0.9;
+        double first_touch_fast_speed   = 1.2;
+        double first_touch_window       = 0.4;
+        bool first_pass_enabled         = false;
+        double first_pass_speed         = 3.0;
+        double first_pass_fast_speed    = 4.0;
+        double first_touch_max_angle    = M_PI / 2.0;
+        double first_pass_lockout       = 1.0;  // s after the touch before dribbling or walking
+        // No touch this long after the pass was played: give up on the first touch and receive.
+        double first_touch_timeout = 4.0;
 
         // Receive hands over to dribble once the ball has stayed within zone_radius of `zone` (in the
         // robot's yaw frame) and slower than trap_speed for settle_time.
@@ -96,7 +115,7 @@ namespace k1sim::skill {
         double trap_speed  = 0.3;
         double settle_time = 0.5;
         // A direction key takes over from receive early if the ball is this close and slower than
-        // takeover_speed (switching while it still rolls in is untested).
+        // takeover_speed (when no pass is rolling in).
         double takeover_distance = 1.0;
         double takeover_speed    = 0.8;
         // After a pass is played the robot stays in receive at least this long, whatever the keys:
@@ -105,11 +124,15 @@ namespace k1sim::skill {
     };
 
     // Limits the policies were trained over.
-    inline constexpr double DRIBBLE_SPEED_MIN = 0.4;
-    inline constexpr double DRIBBLE_SPEED_MAX = 1.5;
-    inline constexpr double KICK_SPEED_MIN    = 2.0;
-    inline constexpr double KICK_SPEED_MAX    = 8.0;
-    inline constexpr double WALK_SPEED_MAX    = 1.0;
+    inline constexpr double DRIBBLE_SPEED_MIN     = 0.4;
+    inline constexpr double DRIBBLE_SPEED_MAX     = 1.8;
+    inline constexpr double KICK_SPEED_MIN        = 2.0;
+    inline constexpr double KICK_SPEED_MAX        = 7.0;
+    inline constexpr double WALK_SPEED_MAX        = 1.0;
+    inline constexpr double FIRST_TOUCH_SPEED_MIN = 0.5;
+    inline constexpr double FIRST_TOUCH_SPEED_MAX = 1.2;
+    inline constexpr double FIRST_PASS_SPEED_MIN  = 2.0;
+    inline constexpr double FIRST_PASS_SPEED_MAX  = 4.0;
 
     struct Keys {
         bool forward = false, back = false, left = false, right = false, fast = false;
@@ -125,8 +148,10 @@ namespace k1sim::skill {
         double view_yaw = 0.0;  // direction the viewer's camera looks along the ground
         bool ball_valid = false;
         double ball_x = 0.0, ball_y = 0.0, ball_z = 0.0;  // ball centre, world frame
+        double ball_vx = 0.0, ball_vy = 0.0;               // ball velocity, world frame
         double ball_speed  = 0.0;
         double ball_radius = 0.0785;
+        bool ball_touched  = false;  // the robot is in contact with the ball this step
 
         double ball_distance() const {
             return std::hypot(ball_x - robot_x, ball_y - robot_y);
@@ -141,13 +166,16 @@ namespace k1sim::skill {
 
     struct Decision {
         Skill skill      = Skill::RECEIVE;
-        bool moving_kick = false;                  // KICK: the ball was rolling when the kick was called
-        std::array<double, 2> command_world{};     // ball velocity asked for, world frame (m/s)
-        std::array<double, 2> command_local{};     // the same in the robot's yaw frame: the policy input
-        std::array<double, 3> twist{};             // WALK: (vx, vy, wz) in the robot's frame
-        bool aiming      = false;                  // a shot is being wound up
-        double aim_angle = 0.0;                    // its direction, world frame (rad)
-        double aim_speed = 0.0;                    // the speed it would be kicked at now (m/s)
+        bool moving_kick = false;               // KICK: the ball was rolling when the kick was called
+        bool air         = false;               // KICK: the air shot
+        std::array<double, 2> command_world{};  // ball velocity asked for, world frame (m/s)
+        std::array<double, 2> command_local{};  // the same in the robot's yaw frame: the policy input
+        std::array<double, 3> twist{};          // WALK: (vx, vy, wz) in the robot's frame
+        bool aiming      = false;               // a shot is being wound up
+        double aim_angle = 0.0;                 // its direction, world frame (rad)
+        double aim_speed = 0.0;                 // the speed it would be kicked at now (m/s)
+        bool pass_incoming = false;             // a pass is rolling in, not yet touched
+        bool touched       = false;             // FIRST_TOUCH / FIRST_PASS: the touch has happened
     };
 
     inline double wrap_angle(double a) {
@@ -157,13 +185,17 @@ namespace k1sim::skill {
     class Logic {
     public:
         explicit Logic(Config config = {}) : cfg_(config) {
-            cfg_.dribble_speed      = std::clamp(cfg_.dribble_speed, DRIBBLE_SPEED_MIN, DRIBBLE_SPEED_MAX);
-            cfg_.dribble_fast_speed = std::clamp(cfg_.dribble_fast_speed, DRIBBLE_SPEED_MIN, DRIBBLE_SPEED_MAX);
-            cfg_.kick_speed_min     = std::clamp(cfg_.kick_speed_min, KICK_SPEED_MIN, KICK_SPEED_MAX);
-            cfg_.kick_speed_max     = std::clamp(cfg_.kick_speed_max, cfg_.kick_speed_min, KICK_SPEED_MAX);
-            cfg_.walk_speed         = std::clamp(cfg_.walk_speed, 0.0, WALK_SPEED_MAX);
-            cfg_.walk_fast_speed    = std::clamp(cfg_.walk_fast_speed, 0.0, WALK_SPEED_MAX);
-            skill_                  = start_skill();
+            cfg_.dribble_speed          = std::clamp(cfg_.dribble_speed, DRIBBLE_SPEED_MIN, DRIBBLE_SPEED_MAX);
+            cfg_.dribble_fast_speed     = std::clamp(cfg_.dribble_fast_speed, DRIBBLE_SPEED_MIN, DRIBBLE_SPEED_MAX);
+            cfg_.kick_speed_min         = std::clamp(cfg_.kick_speed_min, KICK_SPEED_MIN, KICK_SPEED_MAX);
+            cfg_.kick_speed_max         = std::clamp(cfg_.kick_speed_max, cfg_.kick_speed_min, KICK_SPEED_MAX);
+            cfg_.walk_speed             = std::clamp(cfg_.walk_speed, 0.0, WALK_SPEED_MAX);
+            cfg_.walk_fast_speed        = std::clamp(cfg_.walk_fast_speed, 0.0, WALK_SPEED_MAX);
+            cfg_.first_touch_speed      = std::clamp(cfg_.first_touch_speed, FIRST_TOUCH_SPEED_MIN, FIRST_TOUCH_SPEED_MAX);
+            cfg_.first_touch_fast_speed = std::clamp(cfg_.first_touch_fast_speed, FIRST_TOUCH_SPEED_MIN, FIRST_TOUCH_SPEED_MAX);
+            cfg_.first_pass_speed       = std::clamp(cfg_.first_pass_speed, FIRST_PASS_SPEED_MIN, FIRST_PASS_SPEED_MAX);
+            cfg_.first_pass_fast_speed  = std::clamp(cfg_.first_pass_fast_speed, FIRST_PASS_SPEED_MIN, FIRST_PASS_SPEED_MAX);
+            skill_                      = start_skill();
         }
 
         const Config& config() const {
@@ -172,35 +204,85 @@ namespace k1sim::skill {
         Skill skill() const {
             return skill_;
         }
+        // A pass is rolling in and hasn't been touched yet: Q now means a first-time pass.
+        bool pass_incoming() const {
+            return incoming_;
+        }
 
         // Back to the start (start-up, robot reset): standing in walk, or waiting for a pass.
         void reset() {
-            skill_      = start_skill();
-            settle_     = 0.0;
-            kick_age_   = 0.0;
-            kick_world_ = {};
-            aiming_     = false;
-            grace_      = 0.0;
+            skill_        = start_skill();
+            settle_       = 0.0;
+            kick_age_     = 0.0;
+            kick_world_   = {};
+            aiming_       = false;
+            grace_        = 0.0;
             pickup_armed_ = true;
+            incoming_     = false;
+            touched_      = false;
+            touch_age_    = 0.0;
+            carry_        = false;
+            pass_age_     = 0.0;
+            air_          = false;
         }
 
-        // A pass has just been launched at the robot, or a ball put at its feet: receive it.
-        void on_pass() {
+        // A ball put at the robot's feet: receive it (no first touch, nothing rolling in).
+        void on_drop() {
             reset();
             skill_ = Skill::RECEIVE;
             grace_ = cfg_.pass_grace;
         }
 
-        // The shoot key going down: start winding up a shot. Returns false, changing nothing, if the
-        // ball is not there to be kicked.
-        bool on_shoot_press(const World& world) {
-            if (skill_ == Skill::WALK || !ball_kickable(world)) {
+        // A pass has been played to the robot, rolling along `pass_angle` (world, rad): receive it, or
+        // take it with a first touch if a direction is loaded before it arrives.
+        void on_pass(double pass_angle) {
+            on_drop();
+            incoming_  = true;
+            from_      = wrap_angle(pass_angle + M_PI);  // back towards where it came from
+            redirect_  = from_;
+        }
+
+        // Q with a pass rolling in: pass it on first time. Returns false if there is no such pass or
+        // no first-time pass policy.
+        bool on_first_pass(const Keys& keys, const World& world) {
+            if (!incoming_ || !cfg_.first_pass_enabled) {
                 return false;
             }
-            aim_    = cfg_.aim_goal ? std::atan2(cfg_.goal[1] - world.ball_y, cfg_.goal[0] - world.ball_x) : world.yaw;
-            charge_ = 0.0;
-            aim_    = clamp_aim(aim_, world.yaw);
-            aiming_ = true;
+            skill_    = Skill::FIRST_PASS;
+            redirect_ = keys.any_direction() ? clamp_redirect(key_angle(keys, world)) : from_;
+            fast_     = keys.fast;
+            return true;
+        }
+
+        // The shoot key (air: the air-shot key) going down: start winding up a shot. Returns false,
+        // changing nothing, if the ball is not there to be kicked.
+        bool on_shoot_press(const World& world, bool air = false) {
+            if (skill_ == Skill::WALK || aiming_ || (air && !cfg_.air_enabled) || !ball_kickable(world)) {
+                return false;
+            }
+            aim_     = cfg_.aim_goal ? std::atan2(cfg_.goal[1] - world.ball_y, cfg_.goal[0] - world.ball_x) : world.yaw;
+            charge_  = 0.0;
+            aim_     = clamp_aim(aim_, world.yaw);
+            aiming_  = true;
+            air_aim_ = air;
+            return true;
+        }
+
+        // The shoot key (air: the air-shot key) coming up: kick. Returns false if no shot of that kind
+        // was being wound up.
+        bool on_shoot_release(const World& world, bool air = false) {
+            if (!aiming_ || air != air_aim_) {
+                return false;
+            }
+            aiming_            = false;
+            const double speed = aim_speed();
+            aim_               = clamp_aim(aim_, world.yaw);
+            kick_world_        = {speed * std::cos(aim_), speed * std::sin(aim_)};
+            moving_kick_       = world.ball_speed > cfg_.moving_kick_speed;
+            air_               = air;
+            kick_age_          = 0.0;
+            skill_             = Skill::KICK;
+            incoming_          = false;
             return true;
         }
 
@@ -210,25 +292,11 @@ namespace k1sim::skill {
             if (!cfg_.walk_enabled || skill_ == Skill::WALK) {
                 return false;
             }
-            skill_         = Skill::WALK;
-            aiming_        = false;
-            grace_         = 0.0;
-            pickup_armed_  = false;
-            return true;
-        }
-
-        // The shoot key coming up: kick. Returns false if no shot was being wound up.
-        bool on_shoot_release(const World& world) {
-            if (!aiming_) {
-                return false;
-            }
-            aiming_            = false;
-            const double speed = aim_speed();
-            aim_               = clamp_aim(aim_, world.yaw);
-            kick_world_        = {speed * std::cos(aim_), speed * std::sin(aim_)};
-            moving_kick_       = world.ball_speed > cfg_.moving_kick_speed;
-            kick_age_          = 0.0;
-            skill_             = Skill::KICK;
+            skill_        = Skill::WALK;
+            aiming_       = false;
+            grace_        = 0.0;
+            incoming_     = false;
+            pickup_armed_ = false;
             return true;
         }
 
@@ -252,16 +320,22 @@ namespace k1sim::skill {
                     out.skill     = skill_ == Skill::KICK ? Skill::DRIBBLE : skill_;
                     skill_        = out.skill;
                     out.aiming    = true;
+                    out.air       = air_aim_;
                     out.aim_angle = aim_;
                     out.aim_speed = aim_speed();
                     return out;
                 }
             }
+
+            if (incoming_) {
+                pass_age_ += dt;
+            }
             switch (skill_) {
                 case Skill::WALK: {
                     const auto ball = world.ball_local();
-                    if (!pickup_armed_ && (!world.ball_valid
-                                           || world.ball_distance() > cfg_.walk_pickup_distance + cfg_.pickup_rearm)) {
+                    if (!pickup_armed_
+                        && (!world.ball_valid
+                            || world.ball_distance() > cfg_.walk_pickup_distance + cfg_.pickup_rearm)) {
                         pickup_armed_ = true;
                     }
                     if (pickup_armed_ && world.ball_valid && ball[0] > 0.0
@@ -275,22 +349,81 @@ namespace k1sim::skill {
                     if (grace_ > 0.0) {
                         grace_ -= dt;
                         settle_ = 0.0;
+                        // A direction held as the pass is played loads the first touch straight away, so a
+                        // walking robot goes walk -> first touch (trained) rather than via receive.
+                        if (incoming_ && keys.any_direction() && cfg_.first_touch_enabled) {
+                            skill_    = Skill::FIRST_TOUCH;
+                            redirect_ = clamp_redirect(key_angle(keys, world));
+                            fast_     = keys.fast;
+                        }
                         break;
+                    }
+                    if (incoming_) {
+                        if (world.ball_touched || pass_age_ > cfg_.first_touch_timeout) {
+                            incoming_ = false;  // received: from here on, an ordinary receive
+                        }
+                        else if (keys.any_direction() && cfg_.first_touch_enabled) {
+                            skill_    = Skill::FIRST_TOUCH;  // a direction loaded before the touch
+                            redirect_ = clamp_redirect(key_angle(keys, world));
+                            fast_     = keys.fast;
+                            break;
+                        }
                     }
                     const auto ball   = world.ball_local();
                     const bool in_zone = world.ball_valid && ball[0] > 0.0
                                          && std::hypot(ball[0] - cfg_.zone[0], ball[1] - cfg_.zone[1]) < cfg_.zone_radius
                                          && world.ball_z < world.ball_radius + 0.03;
                     settle_ = in_zone && world.ball_speed < cfg_.trap_speed ? settle_ + dt : 0.0;
-                    const bool takeover = keys.any_direction() && world.ball_valid
+                    const bool takeover = !incoming_ && keys.any_direction() && world.ball_valid
                                           && world.ball_distance() < cfg_.takeover_distance
                                           && world.ball_speed < cfg_.takeover_speed;
                     if (settle_ >= cfg_.settle_time || takeover) {
-                        skill_ = Skill::DRIBBLE;
+                        skill_    = Skill::DRIBBLE;
+                        incoming_ = false;
                     }
-                    // Not while a pass is on its way.
-                    else if (wants_walk(keys, world) && world.ball_speed < cfg_.trap_speed) {
+                    else if (!incoming_ && wants_walk(keys, world) && world.ball_speed < cfg_.trap_speed) {
                         skill_ = Skill::WALK;
+                    }
+                    break;
+                }
+                case Skill::FIRST_TOUCH:
+                case Skill::FIRST_PASS: {
+                    const bool pass = skill_ == Skill::FIRST_PASS;
+                    if (!touched_) {
+                        // Until the touch, the direction held can still change the aim.
+                        if (keys.any_direction()) {
+                            redirect_ = clamp_redirect(key_angle(keys, world));
+                            fast_     = keys.fast;
+                        }
+                        if (world.ball_touched) {
+                            touched_   = true;
+                            touch_age_ = 0.0;
+                            incoming_  = false;
+                        }
+                        else if (pass_age_ > cfg_.first_touch_timeout) {
+                            // Never reached the ball: receive what's left of it.
+                            skill_    = Skill::RECEIVE;
+                            incoming_ = false;
+                        }
+                        break;
+                    }
+                    touch_age_ += dt;
+                    if (!pass && touch_age_ >= cfg_.first_touch_window) {
+                        skill_ = Skill::DRIBBLE;  // the touch is done; the dribble takes it on
+                        // ...in the direction the touch sent it, for as long as the same keys are held. With
+                        // a view-relative frame and the camera behind the robot, the held key's direction
+                        // would otherwise turn with the robot as it chases the ball, and it spirals.
+                        carry_      = keys.any_direction();
+                        carry_keys_ = keys;
+                    }
+                    else if (pass && touch_age_ >= cfg_.first_pass_lockout) {
+                        // After a first-time pass the robot stands still, as after a kick.
+                        if (keys.any_direction() && world.ball_valid && world.ball_distance() < cfg_.takeover_distance) {
+                            skill_ = Skill::DRIBBLE;
+                        }
+                        else if (wants_walk(keys, world)) {
+                            skill_ = Skill::WALK;
+                        }
                     }
                     break;
                 }
@@ -312,9 +445,14 @@ namespace k1sim::skill {
                     }
                     break;
             }
+            if (skill_ != Skill::FIRST_TOUCH && skill_ != Skill::FIRST_PASS) {
+                touched_ = false;
+            }
 
             Decision out;
-            out.skill = skill_;
+            out.skill         = skill_;
+            out.pass_incoming = incoming_;
+            out.touched       = touched_;
             if (skill_ == Skill::WALK) {
                 if (keys.forward && !keys.back) {
                     out.twist[0] = keys.fast ? cfg_.walk_fast_speed : cfg_.walk_speed;
@@ -336,14 +474,32 @@ namespace k1sim::skill {
                 }
                 return out;
             }
-            if (skill_ == Skill::DRIBBLE && keys.any_direction()) {
+            if (carry_ && (skill_ != Skill::DRIBBLE || !same_directions(keys, carry_keys_))) {
+                carry_ = false;
+            }
+            if (skill_ == Skill::DRIBBLE && carry_) {
+                const double speed = keys.fast ? cfg_.dribble_fast_speed : cfg_.dribble_speed;
+                out.command_world  = {speed * std::cos(redirect_), speed * std::sin(redirect_)};
+            }
+            else if (skill_ == Skill::DRIBBLE && keys.any_direction()) {
                 const auto dir     = key_direction(keys, world);
                 const double speed = keys.fast ? cfg_.dribble_fast_speed : cfg_.dribble_speed;
                 out.command_world  = {speed * dir[0], speed * dir[1]};
             }
+            else if (skill_ == Skill::FIRST_TOUCH || skill_ == Skill::FIRST_PASS) {
+                // The command stays the wanted ball velocity off the touch, before and after it, as in
+                // training.
+                const double speed = skill_ == Skill::FIRST_PASS
+                                         ? (fast_ ? cfg_.first_pass_fast_speed : cfg_.first_pass_speed)
+                                         : (fast_ ? cfg_.first_touch_fast_speed : cfg_.first_touch_speed);
+                out.command_world = {speed * std::cos(redirect_), speed * std::sin(redirect_)};
+                out.aim_angle     = redirect_;
+                out.aim_speed     = speed;
+            }
             else if (skill_ == Skill::KICK) {
                 out.command_world = kick_world_;
                 out.moving_kick   = moving_kick_;
+                out.air           = air_;
             }
             const double c = std::cos(world.yaw), s = std::sin(world.yaw);
             out.command_local = {c * out.command_world[0] + s * out.command_world[1],
@@ -364,6 +520,21 @@ namespace k1sim::skill {
                                                                       : 0.0;
             const double c = std::cos(frame), s = std::sin(frame);
             return {c * x - s * y, s * x + c * y};
+        }
+        static bool same_directions(const Keys& a, const Keys& b) {
+            return a.forward == b.forward && a.back == b.back && a.left == b.left && a.right == b.right;
+        }
+
+        double key_angle(const Keys& keys, const World& world) const {
+            const auto dir = key_direction(keys, world);
+            return std::atan2(dir[1], dir[0]);
+        }
+
+        // A first-touch direction, kept within first_touch_max_angle of where the pass came from:
+        // sideways or back towards the passer, never on past the robot.
+        double clamp_redirect(double angle) const {
+            const double limit = cfg_.first_touch_max_angle;
+            return from_ + std::clamp(wrap_angle(angle - from_), -limit, limit);
         }
 
         // The kick was trained with the ball in front of the robot (standing: 0.3 to 0.8 m ahead within
@@ -397,15 +568,26 @@ namespace k1sim::skill {
         }
 
         Config cfg_;
-        Skill skill_      = Skill::RECEIVE;
-        double settle_    = 0.0;
-        double kick_age_  = 0.0;
-        bool moving_kick_ = false;
-        bool aiming_      = false;
-        double aim_       = 0.0;  // world frame (rad)
-        double charge_    = 0.0;  // s the shoot key has been held
-        double grace_     = 0.0;  // s left of pass_grace
-        bool pickup_armed_ = true;  // false after a release, until the ball is well away
+        Skill skill_       = Skill::RECEIVE;
+        double settle_     = 0.0;
+        double kick_age_   = 0.0;
+        bool moving_kick_  = false;
+        bool air_          = false;  // the kick under way is the air shot
+        bool aiming_       = false;
+        bool air_aim_      = false;  // the shot being wound up is the air shot
+        double aim_        = 0.0;    // world frame (rad)
+        double charge_     = 0.0;    // s the shoot key has been held
+        double grace_      = 0.0;    // s left of pass_grace
+        bool pickup_armed_ = true;   // false after a release, until the ball is well away
+        bool incoming_     = false;  // a pass is rolling in, untouched
+        double pass_age_   = 0.0;    // s since the pass was played
+        double from_       = 0.0;    // world angle back towards where the pass came from
+        double redirect_   = 0.0;    // world angle the first touch / first pass sends the ball
+        bool fast_         = false;  // Shift was held when the first touch was loaded
+        bool touched_      = false;
+        double touch_age_  = 0.0;
+        bool carry_        = false;  // dribbling on in the first touch's direction while carry_keys_ are held
+        Keys carry_keys_{};
         std::array<double, 2> kick_world_{};
     };
 

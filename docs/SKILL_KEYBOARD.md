@@ -1,8 +1,8 @@
 # Keyboard play with the mjlab policies
 
 `./b skills` (the `sim/skills` role) puts one K1 on the field and lets you play it from the keyboard with the
-walk, receive, dribble and kick policies from mjlab. No NUbots role runs and nothing goes over DDS: the policies
-run inside the sim.
+policies from mjlab: walk, receive, directional first touch, first-time pass, dribble, kick and air shot. No NUbots
+role runs and nothing goes over DDS: the policies run inside the sim.
 
 ```bash
 ./b build
@@ -11,84 +11,100 @@ run inside the sim.
 ```
 
 The policies and the rules for using them come from mjlab's `policies/CONTROLLER_INTERFACE.md` (the version of
-2026-11-17 18:00).
+2026-11-18 17:45).
 
 ## Keys
 
-Click the sim window first so it has the keyboard.
+Click the sim window first so it has the keyboard. The window starts with the camera behind the robot, where `W`
+means forward for walking and dribbling alike.
 
 | Key | What it does |
 | --- | --- |
-| `W` `A` `S` `D` | Without the ball (over a metre away, or none rolling in): walk. `W` forward at 0.6 m/s, `S` back at 0.3 m/s, `A`/`D` turn at 0.8 rad/s. Walking up to a ball picks it up, and with a direction still held it carries on into a dribble. |
-| `X` | Release the ball: from receive, dribble or a shot being wound up, straight back to walking. The robot won't pick that ball up again until it has been 1.2 m away from it. |
-| `Q` | Rolls the ball at the robot from wherever it is now (if it's more than a metre away), standing or walking. The receive policy traps it. A pass from behind the robot, from wider than 45 degrees or from more than 4 m is still played, with a warning: receive was trained only on passes from in front within 4 m. |
+| `W` `A` `S` `D` | Without the ball (over a metre away, or none rolling in): walk. `W` forward at 0.6 m/s, `S` back at 0.3 m/s, `A`/`D` turn at 0.8 rad/s. Walking up to a ball picks it up. With the ball: dribble away from / left of / towards / right of the camera at 0.8 m/s; release everything to hold it still. |
+| `Q` | Call for a pass: the ball is rolled at the robot from wherever it is. See [Passes](#passes) for what you can do as it comes. |
+| `Space` | With the ball in front of the robot: hold to wind up a shot, release to kick. A tap is 2 m/s, rising to 7 m/s over 2 s. An arrow from the ball shows the aim (it starts at the +x goal) and grows and reddens with the power; `W` `A` `S` `D` swing it while the key is held. |
+| `C` | The same for an air shot: the ball lifts at about 30 degrees. |
+| `X` | Let go of the ball and walk. |
 | `E` | Puts a ball at rest half a metre in front of the robot. |
-| `W` `A` `S` `D` | With the ball at the robot's feet: dribble. The ball goes away from / to the left of / towards / to the right of the camera at 0.8 m/s. Release everything to hold the ball still. |
-| `Shift` | Faster: walk forward at 1.0 m/s, dribble at 1.3 m/s. |
-| `Space` | With the ball in front of the robot: hold to wind up a shot, release to kick. A tap is 2 m/s; the power climbs to 8 m/s over 2 s. An arrow from the ball shows the aim (it starts at the +x goal) and grows and reddens with the power; `W` `A` `S` `D` swing it while `Space` is held. The robot holds the ball until the release. |
+| `Shift` | Faster: walk at 1.0 m/s, dribble at 1.8 m/s, first touch at 1.2 m/s, first-time pass at 4 m/s. |
 | `R` | Stands the robot back up where it started. This also happens by itself 3 s after a fall. |
 | `P` | Pause. (`Space` pauses in the other roles; here it shoots.) |
 
-The current skill and what it is doing are shown at the top left of the window.
+## Passes
 
-A ball that goes fully over a goal line between the posts and under the bar is a goal: "GOAL!" comes up in the middle
-of the window, and confetti blasts out of both posts with a few fireworks above the goal. It's only for show, drawn by
-the viewer and not part of the physics, so it can't move the ball or the robot. `Q` rolls the ball back out of the
-net to the robot.
+`Q` rolls the ball at the robot from where it lies, to arrive at 1.5 to 2.5 m/s. Receive was trained on passes from
+in front, up to 4 m away and within about 48 degrees; a pass from behind, from wide or from further is still played,
+with a warning. As it comes:
 
-The spec trained the walk forward up to 1 m/s and found turning and sideways barely respond in mjlab. Measured in
-NUSim:
+- **Do nothing:** the robot receives it, trapping it at its feet, and the dribble takes over once it is still.
+- **Hold a direction** (any time before the ball reaches the robot): a **directional first touch** that sends the
+  ball that way at 0.9 m/s (`Shift`: 1.2), then the dribble takes over 0.4 s after the touch. Holding the direction
+  early is what the policy was trained on: it gets the command from the moment the pass is played. Directions are
+  kept within 90 degrees of where the pass came from, sideways or back towards the passer, never straight on past
+  the robot. An arrow from the robot shows the loaded direction; releasing the key keeps it.
+- **Press `Q` again:** a **first-time pass** at 3 m/s (`Shift`: 4), aimed with the direction keys or, with none held,
+  straight back to where it came from. The robot stands still afterwards, as after a kick, and a direction key gets
+  it moving again a second later. Press it early: the policy was trained running from the moment the pass is played,
+  and switching to it late, from receive, is a hand-over it has never seen (see the results below).
 
-| Asked | Got |
-| --- | --- |
-| Back, 0.3 m/s | 0.19 m/s back |
-| Forward 0.6 m/s and turn 0.8 rad/s | 0.83 rad/s while walking |
-| Turn 0.8 rad/s standing still | nothing; it turns only while stepping |
-| Turn 0.8 rad/s plus 0.3 m/s forward | 0.70 rad/s, on a 0.26 m circle |
-| Sideways 0.3 m/s | nothing |
-
-So `A`/`D` on their own also ask for 0.3 m/s forward (`walk.turn_creep`), which turns the robot nearly on the spot.
-`walk.side_keys: strafe` makes `A`/`D` step sideways instead, but the walk doesn't respond to that.
+The status line at the top left says what is loaded.
 
 ## Camera
 
-The Simulation panel has three camera buttons. Keyboard play starts in **Behind**.
+The Simulation panel has three camera buttons:
 
 - **Free**: the camera stays wherever the mouse leaves it.
 - **Follow**: the camera stays on the robot; the mouse still turns and zooms it.
-- **Behind**: the camera stays behind the robot and turns with it. Here `W` means the robot's forward for walking
-  and dribbling alike; in the other two views walking is along the robot's heading but dribbling follows the camera.
+- **Behind**: the camera stays behind the robot and turns with it.
+
+## Goals
+
+A ball that goes fully over a goal line between the posts and under the bar is a goal: "GOAL!" comes up in the middle
+of the window, and confetti blasts out of both posts with a few fireworks above the goal. It's only for show.
 
 ## How the skills are switched
 
 The rules are in `module/SkillPlayer/src/SkillLogic.hpp`:
 
 - The robot starts in **walk**, standing still.
-- `X` goes from any ball skill back to walk.
-- `Q` (a pass) or `E` (a ball at the feet) switches to **receive** at once. Walk to receive is a trained hand-over;
-  the robot then stays in receive for 0.3 s whatever the keys, while the ball is moved.
-- Walking with a ball within 0.8 m ahead also switches to receive.
+- `Q` or `E` switches to **receive**; with a direction held as the pass is played, straight to **first touch**
+  instead (walk to receive and walk to first touch are trained hand-overs).
+- A first touch or first-time pass is "touched" when the ball is in contact with the robot, or its velocity jumps
+  near the robot between two control steps. No touch within 4 s: back to receive.
 - Receive hands over to **dribble** once the ball has sat within 18 cm of a point 18 cm in front of the robot, slower
-  than 0.3 m/s, for half a second. A direction key takes over sooner if the ball is within a metre and already slower
-  than 0.8 m/s.
-- Holding `Space` with the ball within a metre and within 60 degrees of the robot's heading winds up a shot: the
-  robot is asked to hold the ball still while the power and aim are set. Releasing it switches to **kick** (dribble
-  to kick is trained). The aim stays within 135 degrees of the heading, or 45 degrees once the power is above 5 m/s.
-  The wind-up is dropped if the ball rolls out of reach.
-- After a kick the robot stands still. A direction key picks the dribble back up from a second after the shot if the
-  ball is still within a metre; otherwise `W` walks.
+  than 0.3 m/s, for half a second. With no pass rolling in, a direction key takes over sooner if the ball is within
+  a metre and slower than 0.8 m/s.
+- Holding `Space` or `C` with the ball within a metre and within 60 degrees of the robot's heading winds up a shot;
+  releasing it switches to **kick** or **air shot** (dribble to kick is trained). The aim stays within 135 degrees of
+  the heading, or 45 degrees once the power is above 4.5 m/s.
+- After a kick or first-time pass the robot stands still. A direction key picks the dribble back up a second later if
+  the ball is within a metre; otherwise it walks.
 - A direction key also leaves receive (with no pass rolling in) or dribble for walk if the ball is more than a metre
-  away.
+  away, and `X` goes from any ball skill to walk.
 
 Switching to or from walk changes the PD gains, the default pose and action scale, and the input layout in the same
-step, as the spec's section 4 describes. The new policy's "previous action" is the joint target last sent, in its
-own convention, and a ball skill's three-step history restarts from the current state. Getting into walk from a ball
-skill, and walking up to a resting ball, are not hand-overs mjlab has trained or tested.
+step, as the spec's section 4 describes. Untested in mjlab: getting into walk from a ball skill, walking up to a
+resting ball, and switching from receive to first-time pass part-way through a pass.
+
+## The ball's contact with the robot
+
+The policies were trained (in mjlab, from 2026-11-18) with explicit foot-ball contacts of friction 0.3 and solref
+(0.02, 0.35): a little springy, so the ball comes off a foot about 1.4x as fast as the foot hits it, like a real
+kick. NUSim's scene has no foot-ball contact of its own, so there the ball has priority and its critically damped
+contact applies: it barely springs off a foot at all. With that, first touches went in random directions and kicks
+left at 0.7-0.8x the speed asked for.
+
+So in this role only, `ball_contact.match_mjlab` (on by default) sets the ball's own friction and solref to mjlab's
+foot-ball values when the model loads. The ball has priority in its contacts with the robot, so these decide them;
+ball-floor contacts come from the scene's explicit `<pair>` and are unchanged (a free-rolling pass slows exactly as
+before). No other role is affected.
 
 ## Settings
 
-`mujoco/config/skills.yaml` holds the policy files, walk and dribble speeds, the frame the dribble keys work in
-(`view`, `field` or `robot`), the shot's power range, charge time and aim, and the range of passes `Q` draws from.
+`mujoco/config/skills.yaml` holds the policy files, walk, dribble, first-touch and first-pass speeds, the frame the
+dribble keys work in (`view`, `field` or `robot`), the shot's power range, charge time and aim, the passes `Q` plays
+(`pass.from: spawn` rolls them from a fresh spot in front instead of from the ball), the ball contact and the camera
+model (the K1's calibrated 106.2 x 95 degree field of view).
 
 `action_delay` (25 ms) holds each ball skill's joint targets back before they reach the servos. They were trained
 with 10 to 40 ms there; sent at once, the dribble's leg targets moved 0.167 rad per control step on average, against
@@ -99,11 +115,8 @@ It also takes a `script` of timed key presses, for running without a keyboard:
 
 ```yaml
 script:
-  - [1.5, press, W]
-  - [5.0, tap, Q]
-  - [5.4, release, W]
-  - [9.0, press, space]
-  - [10.5, release, space]
+  - [2.0, tap, Q]
+  - [2.1, tap, Q] # a first-time pass
 ```
 
 With `--headless` the module logs one `SKILL` line a second (`log_period`) giving the skill, the command, and where
@@ -112,9 +125,8 @@ the robot and ball are.
 ## Policies
 
 `./b skills sync` reads the spec's policy table and copies each file it names into `mujoco/policies/skills/` as
-`walk.onnx`, `receive.onnx`, `dribble.onnx` and `kick.onnx`, and records where each came from in `SOURCES.txt`.
-For the kick it also checks where the spec says the finished run will be, and takes whichever file is newer, so
-running sync again after mjlab's kick training ends picks up the final kick.
+`walk`, `receive`, `dribble`, `kick`, `kick_air`, `first_touch` and `first_pass` `.onnx`, and records where each came
+from in `SOURCES.txt`. Leave `kick_air`, `first_touch` or `first_pass` empty in the config and that action is off.
 
 Joint order, default pose and action scale are read from each file's metadata. So are the PD gains, except that the
 ball-skill files exported with the motor torque-speed model carry placeholder gains (kp 1, kd 0). For those the
@@ -123,21 +135,21 @@ start-up. A file with a different joint order or input size stops the sim at sta
 
 ## What to expect
 
-From scripted runs on the middle field with the policies of 2026-11-17 18:00:
+Scripted runs on the middle field with the policies of 2026-11-18 17:45 and the matched ball contact, 8 of each
+unless noted; passes from 2.5 to 3.5 m in front.
 
-- **Receive:** 12 of 12 passes and 6 of 6 balls put at the feet were trapped and handed over to dribble in one
-  batch; one later pass, played while the robot was turning mid-dribble, was not.
-- **Kick:** 18 of 18 shots struck the ball, from a dribble, from standing and straight after a pass, with no falls.
-  Asked for 4.4 to 8 m/s, the ball left at 3.7 to 6.6 m/s. That is slower than asked, unlike mjlab's 1.2x
-  overshoot; the spec's note that shots above about 5 m/s squash the ball into mjlab's softer ground is the likely
-  difference.
-- **Walk:** 0.6 m/s asked gave about 0.43 m/s.
-- **Passes from where the ball lies:** trapped from 1.4 m, 2.3 m and 5.4 m in front, and eventually from 1.5 m
-  directly behind; not from 2.7 m behind and to the side.
+| | Result |
+| --- | --- |
+| Receive | 8 of 8 trapped and handed over to dribble |
+| First touch, standing | 8 of 8 touched; the ball within 15 degrees of the direction asked in 6, 29 and 67 degrees off in the other two; 0.6 to 1.2 m/s |
+| First touch, walking | 8 of 8 touched, no falls; 5 to 37 degrees off (median about 20) |
+| First-time pass, `Q` again at once | 6 of 8 within 2 degrees at 2.0 to 2.6 m/s (asked 3); 1 weak; 1 fall |
+| First-time pass, `Q` again 0.4 s later | 5 of 8 within 15 degrees; 3 falls |
+| Air shot | 4 of 4 within 3 degrees; asked 4.5 m/s, left at 5.6; rose to about 0.4 m |
 
-The ball observation is ground truth cut to the field of view the policies were trained with (90 by 60 degrees from
-the front of the head); the head camera image is not used.
+Before the contact was matched, first touches mostly went the wrong way and the first-time pass managed 2 of 8.
 
-Headless there is no camera, so `view` keys act as if it looked along +y (the window's starting view).
+The ball observation is ground truth cut to the camera's field of view; the head camera image is not used. Headless
+there is no camera, so `view` keys act as if it looked along +y.
 
 Keys work in the sim window only, not in the browser viewer (`--web`).

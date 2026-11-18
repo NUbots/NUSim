@@ -2,16 +2,21 @@
 #
 #   W A S D  without the ball: walk. W/S forward/back, A/D turn (Shift: faster). Walking up to a
 #            ball picks it up (receive).
-#   X        release the ball and go back to walking
-#   Q        roll the ball at the robot from wherever it is; it receives it, standing or walking
+#   Q        call for a pass: the ball is rolled at the robot from wherever it is. As it comes:
+#              nothing  the robot receives it (traps it)
+#              W A S D  held before the touch: a first touch that sends it that way (0.9 m/s, Shift
+#                       1.2), within 90 degrees of where it came from; the dribble then takes over
+#              Q again  a first-time pass (3 m/s, Shift 4), aimed with W A S D or straight back
 #   E        put a ball at rest at the robot's feet
 #   W A S D  with the ball at its feet: dribble away from / left of / towards / right of the camera
 #            (Shift: faster); nothing held = hold the ball still
 #   Space    hold to wind up a shot: the longer, the harder, and W A S D swing the aim. Release to kick.
+#   C        the same for an air shot (the ball lifts at about 30 degrees)
+#   X        release the ball and go back to walking
 #   R        stand the robot back up at its start
 #   P        pause (Space is taken)
 #
-# The interface these settings follow is mjlab's policies/CONTROLLER_INTERFACE.md (2026-11-17).
+# The interface these settings follow is mjlab's policies/CONTROLLER_INTERFACE.md (2026-11-18).
 
 # Exported policies (ONNX -> `actions` [1, 22]), relative to mujoco/. Joint order, default pose,
 # action scale and PD gains are read from each file's metadata. Refresh them from an mjlab checkout
@@ -21,6 +26,9 @@ policies:
   receive: policies/skills/receive.onnx # the walking version: works from standing and walking
   dribble: policies/skills/dribble.onnx
   kick: policies/skills/kick.onnx # from standing and out of a dribble
+  kick_air: policies/skills/kick_air.onnx # C; empty = no air shot
+  first_touch: policies/skills/first_touch.onnx # directional first touch; empty = always receive
+  first_pass: policies/skills/first_pass.onnx # first-time pass; empty = Q doesn't pass first time
   # Used instead of `kick` when the ball is rolling as the shot is called. Empty = `kick` for
   # everything, which is what the spec now says (the kick is trained out of a dribble too).
   kick_moving: ""
@@ -67,8 +75,8 @@ walk:
   action_delay: 0.0
 
 dribble:
-  speed: 0.8 # m/s asked of the ball while a direction is held (trained 0.4 to 1.5; it tops out near 1.2)
-  fast_speed: 1.3 # with Shift
+  speed: 0.8 # m/s asked of the ball while a direction is held (trained 0.4 to 1.8)
+  fast_speed: 1.8 # with Shift; the ball reaches about 1.4 m/s
   # view:  W/A/S/D send the ball away from / left of / towards / right of the viewer's camera, so
   #        they match what is on screen however the view is turned. Headless, the view looks along +y.
   # field: towards +x / +y / -x / -y of the field.
@@ -76,16 +84,14 @@ dribble:
   frame: view
 
 shoot:
-  # Speed asked of the ball (trained 2 to 8 m/s; it leaves about 1.2x faster): min_speed for a tap of
-  # Space, rising to max_speed once it has been held for charge_time seconds. The spec: shots above
-  # about 5 m/s squash the ball into the soft simulated ground and spring out too fast, so do not
-  # expect them on the real robot.
+  # Speed asked of the ball (trained 2 to 7 m/s; it leaves about 1.05-1.14x that in mjlab): min_speed
+  # for a tap of Space (or C), rising to max_speed once it has been held for charge_time seconds.
   min_speed: 2.0
-  max_speed: 8.0
+  max_speed: 7.0
   charge_time: 2.0
   # The aim starts at the point below (`goal`) or straight ahead of the robot (`heading`), and swings
   # towards the W/A/S/D direction held at aim_rate rad/s. It stays within 135 degrees of the robot's
-  # heading, and within 45 degrees once the power is above 5 m/s.
+  # heading, and within 45 degrees once the power is above 4.5 m/s.
   aim: goal
   aim_rate: 2.0
   goal: [7.0, 0.0] # centre of the +x goal on the middle field
@@ -94,17 +100,27 @@ shoot:
   reach: 1.0
   cone_deg: 60.0
 
+# A pass's first touch. Directions are kept within 90 degrees of where the pass came from: sideways
+# or back towards the passer, never on past the robot.
+first_touch:
+  speed: 0.9 # m/s off the touch (trained 0.5 to 1.2)
+  fast_speed: 1.2 # with Shift
+  window: 0.4 # s after the touch before the dribble takes over (the trained touch window)
+  timeout: 4.0 # s after the pass with no touch: give up and receive
+first_pass:
+  speed: 3.0 # m/s off the touch (trained 2 to 4)
+  fast_speed: 4.0 # with Shift
+
 receive:
   # Receive hands over to dribble once the ball has sat still at the robot's feet for this long.
   settle_time: 0.5
-  # A direction key takes over from receive straight away if the ball is within this distance (m) and
-  # slower than takeover_speed (m/s). Beyond that distance, W walks instead.
+  # With no pass rolling in, a direction key takes over from receive straight away if the ball is
+  # within this distance (m) and slower than takeover_speed (m/s). Beyond that distance, W walks.
   takeover_distance: 1.0
   takeover_speed: 0.8
 
 # The pass Q rolls at the robot, each value drawn from its range. Trained: up to 4 m away, within
-# 0.79 rad of straight ahead, arriving at up to 3.5 m/s, up to 0.45 m to the side (passes 0.5 m or
-# more to the side fail more than half the time). A pass from outside that range is still played,
+# 0.84 rad (48 degrees) of straight ahead, arriving at up to 3.5 m/s, up to 0.45 m to the side. A pass from outside that range is still played,
 # with a warning on the status line.
 pass:
   # ball:  roll it from wherever the ball is now (nothing happens if it is within min_distance m).
@@ -117,11 +133,23 @@ pass:
   arrival_speed: [1.5, 2.5] # m/s as it reaches the robot
   rolling_decel: 0.9 # m/s^2 the ball loses rolling on this field; sets the launch speed
 
+# The ball's contact with the robot. The policies were trained (mjlab, from 2026-11-18) with explicit
+# foot-ball contacts of friction 0.3 and solref (0.02, 0.35): a little springy, so the ball comes off a
+# foot about 1.4x as fast as the foot hits it. NUSim's scene has none, so its ball-robot contact is
+# critically damped and the ball barely springs at all, which matters most for first touches and
+# first-time passes. match_mjlab sets the ball's own friction and solref to these (the ball has
+# priority in its contacts with the robot); ball-floor rolling comes from the scene's explicit pair
+# and doesn't change. Only this role is affected.
+ball_contact:
+  match_mjlab: true
+  friction: 0.3
+  solref: [0.02, 0.35]
+
 # The head camera the ball observation imitates (ground truth cut to a field of view, no noise).
 camera:
   offset: [0.06, 0.0, 0.07] # m, in the Head_2 body frame
-  hfov_deg: 90.0
-  vfov_deg: 60.0
+  hfov_deg: 106.2 # the K1 head camera's calibration, as the 2026-11-18 policies were trained with
+  vfov_deg: 95.0
   range: 5.0
 
 # Key presses at given sim times, for running without a keyboard (e.g. --headless):

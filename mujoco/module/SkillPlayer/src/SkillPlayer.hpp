@@ -135,6 +135,8 @@ namespace k1sim::module {
         skill::Logic logic_;
         skill::Keys keys_{};
         bool pass_pressed_ = false, drop_pressed_ = false, release_pressed_ = false;
+        bool air_down_ = false, air_up_ = false;  // C edges since the last control step
+        double pass_angle_ = 0.0;                 // the way the last pass rolls (world, rad)
         bool shoot_down_ = false, shoot_up_ = false;  // Space edges since the last control step
         double view_yaw_ = 1.5708;                    // the viewer camera's default direction
         Phase phase_         = Phase::WAITING;
@@ -152,6 +154,11 @@ namespace k1sim::module {
         bool have_target_                  = false;
         const skill::SkillPolicy* running_ = nullptr;        // the policy that ran last step
         std::array<double, 4> last_ball_{0.5, 0.0, -0.8, 0.0};
+        std::array<double, 2> last_ball_vel_{};  // for spotting a touch between control steps
+        double touch_velocity_jump_ = 0.4;        // m/s change in one 20 ms step: more than rolling friction
+        bool match_ball_contact_     = true;
+        double ball_contact_friction_ = 0.3;
+        std::array<double, 2> ball_contact_solref_{0.02, 0.35};
         skill::Decision decision_{};
         skill::Skill logged_skill_ = skill::Skill::RECEIVE;  // last skill logged; first change is always logged
         std::size_t script_next_   = 0;

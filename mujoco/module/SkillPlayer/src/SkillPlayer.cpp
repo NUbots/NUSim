@@ -27,8 +27,8 @@ namespace k1sim::module {
         constexpr double CONTROL_DT = 0.02;  // the policies' step; SimStateUpdate arrives at this rate
         constexpr const char* KEY_HELP =
             "No ball: W S walk, A D turn  |  Ball: W A S D dribble, X release  |  Shift faster\n"
-            "Q pass from the ball  |  E ball at feet  |  Space hold to charge, W A S D aim, release to kick\n"
-            "R stand up  |  P pause";
+            "Q call for a pass (as it comes: hold a direction = first touch, Q again = first-time pass)  |  E ball at feet\n"
+            "Space hold to charge a shot, C an air shot, W A S D aim, release to kick  |  R stand up  |  P pause";
 
         // Ball-skill PD gains from the controller spec (section 4), for files whose metadata gains
         // are placeholders. The same values as the earlier exports' metadata.
@@ -63,7 +63,7 @@ namespace k1sim::module {
 
     struct SkillPlayer::Policies {
         Ort::Env env{ORT_LOGGING_LEVEL_WARNING, "k1sim-skills"};
-        std::unique_ptr<SkillPolicy> walk, receive, dribble, kick, kick_moving;
+        std::unique_ptr<SkillPolicy> walk, receive, dribble, kick, kick_moving, kick_air, first_touch, first_pass;
     };
 
     SkillPlayer::~SkillPlayer() = default;
@@ -111,6 +111,9 @@ namespace k1sim::module {
         policies_->dribble     = load("dribble", true);
         policies_->kick        = load("kick", true);
         policies_->kick_moving = load("kick_moving", false);
+        policies_->kick_air    = load("kick_air", false);
+        policies_->first_touch = load("first_touch", false);
+        policies_->first_pass  = load("first_pass", false);
 
         auto range = [](const YAML::Node& node, Range fallback) {
             if (node && node.IsSequence() && node.size() == 2) {
@@ -159,6 +162,17 @@ namespace k1sim::module {
             logic.goal = {shoot["goal"][0].as<double>(), shoot["goal"][1].as<double>()};
         }
         logic.kick_reach = shoot["reach"].as<double>(logic.kick_reach);
+        logic.air_enabled = policies_->kick_air != nullptr;
+        const auto touch                = cfg["first_touch"];
+        logic.first_touch_enabled       = policies_->first_touch != nullptr;
+        logic.first_touch_speed         = touch["speed"].as<double>(logic.first_touch_speed);
+        logic.first_touch_fast_speed    = touch["fast_speed"].as<double>(logic.first_touch_fast_speed);
+        logic.first_touch_window        = touch["window"].as<double>(logic.first_touch_window);
+        logic.first_touch_timeout       = touch["timeout"].as<double>(logic.first_touch_timeout);
+        const auto first_pass           = cfg["first_pass"];
+        logic.first_pass_enabled        = policies_->first_pass != nullptr;
+        logic.first_pass_speed          = first_pass["speed"].as<double>(logic.first_pass_speed);
+        logic.first_pass_fast_speed     = first_pass["fast_speed"].as<double>(logic.first_pass_fast_speed);
         logic.kick_cone  = shoot["cone_deg"].as<double>(logic.kick_cone * 180.0 / 3.14159265358979323846) * 3.14159265358979323846 / 180.0;
         const auto trap  = cfg["receive"];
         logic.settle_time       = trap["settle_time"].as<double>(logic.settle_time);
@@ -181,6 +195,13 @@ namespace k1sim::module {
         blend_time_       = cfg["blend_time"].as<double>(blend_time_);
         fall_reset_after_ = cfg["fall_reset_after"].as<double>(fall_reset_after_);
 
+        const auto contact     = cfg["ball_contact"];
+        match_ball_contact_    = contact["match_mjlab"].as<bool>(match_ball_contact_);
+        ball_contact_friction_ = contact["friction"].as<double>(ball_contact_friction_);
+        if (contact["solref"] && contact["solref"].size() == 2) {
+            ball_contact_solref_ = {contact["solref"][0].as<double>(), contact["solref"][1].as<double>()};
+        }
+
         const auto camera = cfg["camera"];
         if (camera["offset"] && camera["offset"].size() == 3) {
             camera_offset_ = {camera["offset"][0].as<double>(),
@@ -188,8 +209,8 @@ namespace k1sim::module {
                               camera["offset"][2].as<double>()};
         }
         const double deg = 3.14159265358979323846 / 180.0;
-        camera_hfov_     = camera["hfov_deg"].as<double>(90.0) * deg;
-        camera_vfov_     = camera["vfov_deg"].as<double>(60.0) * deg;
+        camera_hfov_     = camera["hfov_deg"].as<double>(106.2) * deg;
+        camera_vfov_     = camera["vfov_deg"].as<double>(95.0) * deg;
         camera_range_    = camera["range"].as<double>(camera_range_);
 
         // Scripted key presses, for running without a keyboard: [time, press|release|tap, key].
@@ -242,6 +263,25 @@ namespace k1sim::module {
                 goals_.push_back(goal);
             }
             rtf_   = handles.measured_rtf;
+            // Match the foot-ball contact the policies were trained on (mjlab's explicit foot-ball pairs,
+            // corrected 2026-11-18): the ball has priority in its contacts with the robot, so its own
+            // friction and solref decide them. Ball-floor contacts come from the scene's explicit
+            // <pair> and are untouched.
+            if (match_ball_contact_ && ball_geom_ >= 0) {
+                std::lock_guard<std::mutex> lock(*handles.mutex);
+                auto* m = const_cast<mjModel*>(handles.model);
+                m->geom_friction[3 * ball_geom_]     = ball_contact_friction_;
+                m->geom_friction[3 * ball_geom_ + 1] = 0.005;
+                m->geom_friction[3 * ball_geom_ + 2] = 1e-4;
+                m->geom_solref[2 * ball_geom_]       = ball_contact_solref_[0];
+                m->geom_solref[2 * ball_geom_ + 1]   = ball_contact_solref_[1];
+                log<NUClear::LogLevel::INFO>("SkillPlayer: ball-robot contact set to friction",
+                                             ball_contact_friction_,
+                                             "solref",
+                                             ball_contact_solref_[0],
+                                             ball_contact_solref_[1],
+                                             "(as mjlab trained the policies)");
+            }
             data_  = handles.data;
             mutex_ = handles.mutex;
             model_ = handles.model;
@@ -266,6 +306,7 @@ namespace k1sim::module {
             case message::KEY_RIGHT_SHIFT: keys_.fast = down; break;
             case 'Q': pass_pressed_ = pass_pressed_ || down; break;
             case 'E': drop_pressed_ = drop_pressed_ || down; break;
+            case 'C': (down ? air_down_ : air_up_) = true; break;
             case 'X': release_pressed_ = release_pressed_ || down; break;
             case message::KEY_SPACE:
                 (down ? shoot_down_ : shoot_up_) = true;
@@ -289,7 +330,7 @@ namespace k1sim::module {
         have_target_    = false;
         running_        = nullptr;
         last_ball_      = {0.5, 0.0, -0.8, 0.0};
-        pass_pressed_ = drop_pressed_ = shoot_down_ = shoot_up_ = release_pressed_ = false;
+        pass_pressed_ = drop_pressed_ = shoot_down_ = shoot_up_ = release_pressed_ = air_down_ = air_up_ = false;
         logic_.reset();
         decision_     = {};
         logged_skill_ = logic_.skill();
@@ -331,6 +372,22 @@ namespace k1sim::module {
             s.world.ball_y      = ball.position[1];
             s.world.ball_z      = ball.position[2];
             s.world.ball_speed  = std::hypot(ball.lin_vel[0], ball.lin_vel[1], ball.lin_vel[2]);
+            s.world.ball_vx     = ball.lin_vel[0];
+            s.world.ball_vy     = ball.lin_vel[1];
+            // A first touch: a contact between the ball and a body of this robot right now, or (since a
+            // touch can begin and end between two 20 ms control steps) a jump in the ball's velocity
+            // near the robot that rolling friction can't explain.
+            for (int i = 0; i < data_->ncon && !s.world.ball_touched; ++i) {
+                const mjContact& c = data_->contact[i];
+                const int other    = c.geom[0] == ball_geom_ ? c.geom[1] : c.geom[1] == ball_geom_ ? c.geom[0] : -1;
+                s.world.ball_touched =
+                    other >= 0 && model_->body_rootid[model_->geom_bodyid[other]] == map_.root_body_id;
+            }
+            const double jump = std::hypot(ball.lin_vel[0] - last_ball_vel_[0], ball.lin_vel[1] - last_ball_vel_[1]);
+            if (jump > touch_velocity_jump_ && s.world.ball_distance() < 0.6) {
+                s.world.ball_touched = true;
+            }
+            last_ball_vel_ = {ball.lin_vel[0], ball.lin_vel[1]};
             s.world.ball_radius = model_->geom_size[3 * ball_geom_];
 
             // The ball as the head camera would report it: the Head_2 frame (x forward, y left,
@@ -387,6 +444,7 @@ namespace k1sim::module {
         const double length = std::max(std::hypot(px, py), 1e-6);
         const double speed  = std::sqrt(arrival * arrival + 2.0 * pass_rolling_decel_ * length);
         const double vx = speed * px / length, vy = speed * py / length;
+        pass_angle_     = w.yaw + std::atan2(vy, vx);  // the way it rolls, world frame
 
         auto command        = std::make_unique<message::BallCommand>();
         command->frame      = message::BallCommand::Frame::WORLD;
@@ -422,7 +480,12 @@ namespace k1sim::module {
             case Skill::WALK: return policies_->walk ? *policies_->walk : *policies_->receive;
             case Skill::DRIBBLE: return *policies_->dribble;
             case Skill::KICK:
+                if (decision.air && policies_->kick_air) {
+                    return *policies_->kick_air;
+                }
                 return decision.moving_kick && policies_->kick_moving ? *policies_->kick_moving : *policies_->kick;
+            case Skill::FIRST_TOUCH: return policies_->first_touch ? *policies_->first_touch : *policies_->receive;
+            case Skill::FIRST_PASS: return policies_->first_pass ? *policies_->first_pass : *policies_->receive;
             case Skill::RECEIVE: break;
         }
         return *policies_->receive;
@@ -547,7 +610,14 @@ namespace k1sim::module {
     }
 
     void SkillPlayer::play(const SimStateUpdate& state, const Sample& sample) {
-        if (pass_pressed_) {
+        if (pass_pressed_ && logic_.pass_incoming()) {
+            // Q with a pass rolling in: pass it on first time.
+            if (!logic_.on_first_pass(keys_, sample.world)) {
+                note_       = "no first-time pass policy";
+                note_until_ = state.sim_time + 2.0;
+            }
+        }
+        else if (pass_pressed_) {
             if (!sample.world.ball_valid) {
                 note_       = "no ball on this field";
                 note_until_ = state.sim_time + 2.0;
@@ -558,7 +628,7 @@ namespace k1sim::module {
             }
             else {
                 const std::string warning = launch_pass(sample);
-                logic_.on_pass();
+                logic_.on_pass(pass_angle_);
                 if (!warning.empty()) {
                     note_       = warning;
                     note_until_ = state.sim_time + 3.0;
@@ -566,7 +636,7 @@ namespace k1sim::module {
             }
         }
         if (drop_pressed_ && sample.world.ball_valid) {
-            logic_.on_pass();  // receive it, from walk too
+            logic_.on_drop();  // receive it, from walk too
             // A ball at rest at the robot's feet, to dribble or shoot without a pass first.
             auto command        = std::make_unique<message::BallCommand>();
             command->frame      = message::BallCommand::Frame::ROBOT;
@@ -581,10 +651,19 @@ namespace k1sim::module {
         if (shoot_up_) {
             logic_.on_shoot_release(sample.world);
         }
+        if (air_down_ && !logic_.on_shoot_press(sample.world, true)) {
+            note_       = !logic_.config().air_enabled  ? "no air-shot policy"
+                          : logic_.skill() == Skill::WALK ? "walk up to the ball first"
+                                                          : "the ball is not in front of the robot";
+            note_until_ = state.sim_time + 2.0;
+        }
+        if (air_up_) {
+            logic_.on_shoot_release(sample.world, true);
+        }
         if (release_pressed_) {
             logic_.on_release();
         }
-        pass_pressed_ = drop_pressed_ = shoot_down_ = shoot_up_ = release_pressed_ = false;
+        pass_pressed_ = drop_pressed_ = shoot_down_ = shoot_up_ = release_pressed_ = air_down_ = air_up_ = false;
 
         decision_ = logic_.tick(keys_, sample.world, CONTROL_DT);
         if (decision_.skill != logged_skill_) {
@@ -628,7 +707,7 @@ namespace k1sim::module {
             char line[360];
             std::snprintf(line,
                           sizeof(line),
-                          "SKILL t=%.1f %s cmd=(%.2f, %.2f) twist=(%.2f, %.2f, %.2f) robot=(%.2f, %.2f, yaw %.2f) z=%.2f ball=(%.2f, %.2f) "
+                          "SKILL t=%.1f %s cmd=(%.2f, %.2f) twist=(%.2f, %.2f, %.2f) robot=(%.2f, %.2f, yaw %.2f) z=%.2f ball=(%.2f, %.2f, %.2f) "
                           "speed=%.2f seen=%d cam=(%.2f, %.2f, %.2f) head=(%.2f, %.2f) local_cmd=(%.2f, %.2f) leg_target_step=%.4f",
                           state.sim_time,
                           skill::name(decision_.skill),
@@ -643,6 +722,7 @@ namespace k1sim::module {
                           state.base.z,
                           sample.world.ball_x,
                           sample.world.ball_y,
+                          sample.world.ball_z,
                           sample.world.ball_speed,
                           static_cast<int>(sample.ball_camera[3]),
                           sample.ball_camera[0],
@@ -762,14 +842,23 @@ namespace k1sim::module {
     void SkillPlayer::publish_status(double sim_time, bool force, const Sample* sample) {
         auto status  = std::make_unique<message::SkillStatus>();
         status->keys = KEY_HELP;
-        if (phase_ == Phase::PLAYING && decision_.aiming && sample != nullptr) {
+        const bool loaded = (decision_.skill == Skill::FIRST_TOUCH || decision_.skill == Skill::FIRST_PASS) && !decision_.touched;
+        if (phase_ == Phase::PLAYING && (decision_.aiming || loaded) && sample != nullptr) {
             const auto& cfg   = logic_.config();
             status->aiming    = true;
-            status->ball_x    = sample->world.ball_x;
-            status->ball_y    = sample->world.ball_y;
             status->aim_angle = decision_.aim_angle;
-            status->charge    = (decision_.aim_speed - cfg.kick_speed_min)
-                                / std::max(cfg.kick_speed_max - cfg.kick_speed_min, 1e-6);
+            if (loaded) {
+                // The loaded first touch, as an arrow from the robot's feet.
+                status->ball_x = sample->world.robot_x;
+                status->ball_y = sample->world.robot_y;
+                status->charge = decision_.skill == Skill::FIRST_PASS ? 0.6 : 0.0;
+            }
+            else {
+                status->ball_x = sample->world.ball_x;
+                status->ball_y = sample->world.ball_y;
+                status->charge = (decision_.aim_speed - cfg.kick_speed_min)
+                                 / std::max(cfg.kick_speed_max - cfg.kick_speed_min, 1e-6);
+            }
         }
         char text[160];
         switch (phase_) {
@@ -786,12 +875,24 @@ namespace k1sim::module {
             case Phase::PLAYING:
                 status->skill = skill::name(decision_.skill);
                 if (decision_.aiming) {
-                    status->skill = "AIMING";
+                    status->skill = decision_.air ? "AIMING (AIR)" : "AIMING";
                     std::snprintf(text,
                                   sizeof(text),
                                   "%.1f m/s -- hold for more, W A S D to aim, release to shoot",
                                   decision_.aim_speed);
                     status->detail = text;
+                }
+                else if (decision_.skill == Skill::FIRST_TOUCH || decision_.skill == Skill::FIRST_PASS) {
+                    const bool pass = decision_.skill == Skill::FIRST_PASS;
+                    std::snprintf(text,
+                                  sizeof(text),
+                                  decision_.touched ? "%s at %.1f m/s, done" : "%s loaded: %.1f m/s off the touch; W A S D re-aim",
+                                  pass ? "pass" : "touch",
+                                  decision_.aim_speed);
+                    status->detail = text;
+                }
+                else if (decision_.skill == Skill::RECEIVE && decision_.pass_incoming) {
+                    status->detail = "pass coming: hold a direction for a first touch, Q to pass it first time, or let it come";
                 }
                 else if (decision_.skill == Skill::WALK) {
                     const auto& t = decision_.twist;
@@ -807,6 +908,9 @@ namespace k1sim::module {
                     status->detail = "waiting for a pass (Q), then trapping it; W walks if the ball is away";
                 }
                 else if (decision_.skill == Skill::KICK) {
+                    if (decision_.air) {
+                        status->skill = "AIR SHOT";
+                    }
                     std::snprintf(text,
                                   sizeof(text),
                                   "shot at %.1f m/s; W to walk after it, Q for a new pass",

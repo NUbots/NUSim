@@ -25,7 +25,10 @@ SKILLS = {
     "walk": "Walk",
     "receive": "Receive (standing or walking)",
     "dribble": "Dribble",
-    "kick": "Kick",
+    "kick": "Kick",  # "Kick (ground)"
+    "kick_air": "Air shot",
+    "first_touch": "Directional first touch",
+    "first_pass": "First-time pass",
 }
 
 
