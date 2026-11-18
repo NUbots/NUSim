@@ -7,6 +7,7 @@
 #              W A S D  held before the touch: a first touch that sends it that way (0.9 m/s, Shift
 #                       1.2), within 90 degrees of where it came from; the dribble then takes over
 #              Q again  a first-time pass (3 m/s, Shift 4), aimed with W A S D or straight back
+#              Space    a first-time shot: the first-time pass at 4 m/s, at the goal or W A S D
 #   E        put a ball at rest at the robot's feet
 #   W A S D  with the ball at its feet: dribble away from / left of / towards / right of the camera
 #            (Shift: faster); nothing held = hold the ball still
@@ -110,6 +111,9 @@ first_touch:
 first_pass:
   speed: 3.0 # m/s off the touch (trained 2 to 4)
   fast_speed: 4.0 # with Shift
+  # Space (or C) with a pass rolling in shoots it first time with this policy, at this speed, aimed at
+  # shoot.goal unless a direction is held. There is no first-time air shot.
+  shot_speed: 4.0
 
 receive:
   # Receive hands over to dribble once the ball has sat still at the robot's feet for this long.

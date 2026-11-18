@@ -371,6 +371,24 @@ int main() {
               "I: it stands still after the pass");
         check(run(passer, right, world_with_ball(3.0, 0.0, 3.0), 0.6).skill == Skill::WALK, "I: then walks off");
 
+        // The shoot key while it comes: a first-time shot with the same policy, at the goal at 4 m/s.
+        Logic shooter(cfg);
+        check(!shooter.on_first_shot(none, coming), "I: no first-time shot without a pass coming");
+        shooter.on_pass(M_PI);
+        run(shooter, none, coming, 0.1);
+        check(shooter.on_first_shot(none, coming) && shooter.first_shot(), "I: Space with a pass coming shoots it first time");
+        d = shooter.tick(none, coming, DT);
+        check(d.skill == Skill::FIRST_PASS && near(d.command_world[0], 4.0) && near(d.command_world[1], 0.0, 1e-9),
+              "I: at the +x goal at 4 m/s");
+        World wide        = world_with_ball(2.0, 0.0, 2.0);
+        wide.robot_y      = 6.0;  // the goal is now 40 degrees off; still within 90 of where the pass came from
+        Logic aimed(cfg);
+        aimed.on_pass(M_PI);
+        aimed.on_first_shot(none, wide);
+        d = aimed.tick(none, wide, DT);
+        check(near(std::atan2(d.command_world[1], d.command_world[0]), std::atan2(-6.0, 7.0), 1e-6),
+              "I: aimed at the goal from where the robot is");
+
         // Never reached: back to receiving.
         Logic missed(cfg);
         missed.on_pass(M_PI);

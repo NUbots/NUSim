@@ -23,8 +23,9 @@
 //                 4.5 m/s); the air shot also lifts the ball at about 30 degrees
 //
 // A pass rolling in (Q): with no key the robot receives it. A direction key held before the touch
-// loads that direction for a first touch, and Q again plays a first-time pass (aimed with the
-// direction keys, or straight back to where it came from). The first-touch policies were trained
+// loads that direction for a first touch, Q again plays a first-time pass (aimed with the direction
+// keys, or straight back to where it came from), and the shoot key shoots it first time: the same
+// first-time pass policy at its top speed, aimed at the goal unless a direction is held. The first-touch policies were trained
 // with the command set from the moment the pass is played, so loading it early is what they expect.
 //
 // Hand-overs: walk -> receive / first touch / first pass and dribble -> kick are trained. Walking
@@ -103,6 +104,7 @@ namespace k1sim::skill {
         bool first_pass_enabled         = false;
         double first_pass_speed         = 3.0;
         double first_pass_fast_speed    = 4.0;
+        double first_shot_speed         = 4.0;  // the shoot key with a pass rolling in
         double first_touch_max_angle    = M_PI / 2.0;
         double first_pass_lockout       = 1.0;  // s after the touch before dribbling or walking
         // No touch this long after the pass was played: give up on the first touch and receive.
@@ -195,6 +197,7 @@ namespace k1sim::skill {
             cfg_.first_touch_fast_speed = std::clamp(cfg_.first_touch_fast_speed, FIRST_TOUCH_SPEED_MIN, FIRST_TOUCH_SPEED_MAX);
             cfg_.first_pass_speed       = std::clamp(cfg_.first_pass_speed, FIRST_PASS_SPEED_MIN, FIRST_PASS_SPEED_MAX);
             cfg_.first_pass_fast_speed  = std::clamp(cfg_.first_pass_fast_speed, FIRST_PASS_SPEED_MIN, FIRST_PASS_SPEED_MAX);
+            cfg_.first_shot_speed       = std::clamp(cfg_.first_shot_speed, FIRST_PASS_SPEED_MIN, FIRST_PASS_SPEED_MAX);
             skill_                      = start_skill();
         }
 
@@ -222,6 +225,7 @@ namespace k1sim::skill {
             touched_      = false;
             touch_age_    = 0.0;
             carry_        = false;
+            shot_         = false;
             pass_age_     = 0.0;
             air_          = false;
         }
@@ -251,7 +255,27 @@ namespace k1sim::skill {
             skill_    = Skill::FIRST_PASS;
             redirect_ = keys.any_direction() ? clamp_redirect(key_angle(keys, world)) : from_;
             fast_     = keys.fast;
+            shot_     = false;
             return true;
+        }
+
+        // The shoot key with a pass rolling in: shoot it first time, with the first-time pass policy at
+        // first_shot_speed, at the goal (or the direction held), kept within first_touch_max_angle of
+        // where the pass came from. Returns false if there is no such pass or no first-time pass policy.
+        bool on_first_shot(const Keys& keys, const World& world) {
+            if (!incoming_ || !cfg_.first_pass_enabled) {
+                return false;
+            }
+            skill_    = Skill::FIRST_PASS;
+            redirect_ = clamp_redirect(keys.any_direction()
+                                           ? key_angle(keys, world)
+                                           : std::atan2(cfg_.goal[1] - world.robot_y, cfg_.goal[0] - world.robot_x));
+            shot_     = true;
+            return true;
+        }
+        // The first-time kick under way is a shot (the shoot key), not a pass (Q).
+        bool first_shot() const {
+            return shot_;
         }
 
         // The shoot key (air: the air-shot key) going down: start winding up a shot. Returns false,
@@ -490,7 +514,7 @@ namespace k1sim::skill {
                 // The command stays the wanted ball velocity off the touch, before and after it, as in
                 // training.
                 const double speed = skill_ == Skill::FIRST_PASS
-                                         ? (fast_ ? cfg_.first_pass_fast_speed : cfg_.first_pass_speed)
+                                         ? (shot_ ? cfg_.first_shot_speed : fast_ ? cfg_.first_pass_fast_speed : cfg_.first_pass_speed)
                                          : (fast_ ? cfg_.first_touch_fast_speed : cfg_.first_touch_speed);
                 out.command_world = {speed * std::cos(redirect_), speed * std::sin(redirect_)};
                 out.aim_angle     = redirect_;
@@ -584,6 +608,7 @@ namespace k1sim::skill {
         double from_       = 0.0;    // world angle back towards where the pass came from
         double redirect_   = 0.0;    // world angle the first touch / first pass sends the ball
         bool fast_         = false;  // Shift was held when the first touch was loaded
+        bool shot_         = false;  // the first-time kick is a shot (shoot key), not a pass
         bool touched_      = false;
         double touch_age_  = 0.0;
         bool carry_        = false;  // dribbling on in the first touch's direction while carry_keys_ are held

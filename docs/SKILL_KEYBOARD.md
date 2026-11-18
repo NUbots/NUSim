@@ -22,7 +22,7 @@ means forward for walking and dribbling alike.
 | --- | --- |
 | `W` `A` `S` `D` | Without the ball (over a metre away, or none rolling in): walk. `W` forward at 0.6 m/s, `S` back at 0.3 m/s, `A`/`D` turn at 0.8 rad/s. Walking up to a ball picks it up. With the ball: dribble away from / left of / towards / right of the camera at 0.8 m/s; release everything to hold it still. |
 | `Q` | Call for a pass: the ball is rolled at the robot from wherever it is. See [Passes](#passes) for what you can do as it comes. |
-| `Space` | With the ball in front of the robot: hold to wind up a shot, release to kick. A tap is 2 m/s, rising to 7 m/s over 2 s. An arrow from the ball shows the aim (it starts at the +x goal) and grows and reddens with the power; `W` `A` `S` `D` swing it while the key is held. |
+| `Space` | With a pass rolling in: shoot it first time (see [Passes](#passes)). With the ball in front of the robot: hold to wind up a shot, release to kick. A tap is 2 m/s, rising to 7 m/s over 2 s. An arrow from the ball shows the aim (it starts at the +x goal) and grows and reddens with the power; `W` `A` `S` `D` swing it while the key is held. |
 | `C` | The same for an air shot: the ball lifts at about 30 degrees. |
 | `X` | Let go of the ball and walk. |
 | `E` | Puts a ball at rest half a metre in front of the robot. |
@@ -46,6 +46,10 @@ with a warning. As it comes:
   straight back to where it came from. The robot stands still afterwards, as after a kick, and a direction key gets
   it moving again a second later. Press it early: the policy was trained running from the moment the pass is played,
   and switching to it late, from receive, is a hand-over it has never seen (see the results below).
+- **Press `Space`** (or `C`): a **first-time shot**. There is no first-time shooting policy, so this is the first-time
+  pass policy at its top trained speed, 4 m/s, aimed at the +x goal, or the way you're holding. Like the pass, it
+  stays within 90 degrees of where the pass came from, and it works best pressed early. There is no first-time air
+  shot, so `C` does the same.
 
 The status line at the top left says what is loaded.
 
@@ -145,6 +149,7 @@ unless noted; passes from 2.5 to 3.5 m in front.
 | First touch, walking | 8 of 8 touched, no falls; 5 to 37 degrees off (median about 20) |
 | First-time pass, `Q` again at once | 6 of 8 within 2 degrees at 2.0 to 2.6 m/s (asked 3); 1 weak; 1 fall |
 | First-time pass, `Q` again 0.4 s later | 5 of 8 within 15 degrees; 3 falls |
+| First-time shot, `Space` at once, from 7 m out | 5 of 8 scored (within 2 degrees, 2.9 to 3.7 m/s); 3 falls, each with the ball arriving at the robot's feet. At 3.5 m/s instead of 4: 2 of 8 scored, 2 falls |
 | Air shot | 4 of 4 within 3 degrees; asked 4.5 m/s, left at 5.6; rose to about 0.4 m |
 
 Before the contact was matched, first touches mostly went the wrong way and the first-time pass managed 2 of 8.

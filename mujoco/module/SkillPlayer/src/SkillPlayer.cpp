@@ -27,7 +27,7 @@ namespace k1sim::module {
         constexpr double CONTROL_DT = 0.02;  // the policies' step; SimStateUpdate arrives at this rate
         constexpr const char* KEY_HELP =
             "No ball: W S walk, A D turn  |  Ball: W A S D dribble, X release  |  Shift faster\n"
-            "Q call for a pass (as it comes: hold a direction = first touch, Q again = first-time pass)  |  E ball at feet\n"
+            "Q call for a pass (as it comes: hold a direction = first touch, Q = first-time pass, Space = first-time shot)  |  E ball at feet\n"
             "Space hold to charge a shot, C an air shot, W A S D aim, release to kick  |  R stand up  |  P pause";
 
         // Ball-skill PD gains from the controller spec (section 4), for files whose metadata gains
@@ -173,6 +173,7 @@ namespace k1sim::module {
         logic.first_pass_enabled        = policies_->first_pass != nullptr;
         logic.first_pass_speed          = first_pass["speed"].as<double>(logic.first_pass_speed);
         logic.first_pass_fast_speed     = first_pass["fast_speed"].as<double>(logic.first_pass_fast_speed);
+        logic.first_shot_speed          = first_pass["shot_speed"].as<double>(logic.first_shot_speed);
         logic.kick_cone  = shoot["cone_deg"].as<double>(logic.kick_cone * 180.0 / 3.14159265358979323846) * 3.14159265358979323846 / 180.0;
         const auto trap  = cfg["receive"];
         logic.settle_time       = trap["settle_time"].as<double>(logic.settle_time);
@@ -644,6 +645,19 @@ namespace k1sim::module {
             command->robot_body = "Trunk";
             emit(command);
         }
+        if ((shoot_down_ || air_down_) && logic_.pass_incoming()) {
+            // The shoot key with a pass rolling in: shoot it first time. There is no first-time air
+            // shot, so C does the same on the ground.
+            if (!logic_.on_first_shot(keys_, sample.world)) {
+                note_       = "no first-time pass policy to shoot it first time with";
+                note_until_ = state.sim_time + 2.0;
+            }
+            else if (air_down_) {
+                note_       = "no first-time air shot: shooting it first time on the ground";
+                note_until_ = state.sim_time + 2.0;
+            }
+            shoot_down_ = air_down_ = false;
+        }
         if (shoot_down_ && !logic_.on_shoot_press(sample.world)) {
             note_       = logic_.skill() == Skill::WALK ? "walk up to the ball first" : "the ball is not in front of the robot";
             note_until_ = state.sim_time + 2.0;
@@ -884,15 +898,20 @@ namespace k1sim::module {
                 }
                 else if (decision_.skill == Skill::FIRST_TOUCH || decision_.skill == Skill::FIRST_PASS) {
                     const bool pass = decision_.skill == Skill::FIRST_PASS;
+                    const bool shot = pass && logic_.first_shot();
+                    if (shot) {
+                        status->skill = "FIRST-TIME SHOT";
+                    }
                     std::snprintf(text,
                                   sizeof(text),
                                   decision_.touched ? "%s at %.1f m/s, done" : "%s loaded: %.1f m/s off the touch; W A S D re-aim",
-                                  pass ? "pass" : "touch",
+                                  shot ? "shot" : pass ? "pass" : "touch",
                                   decision_.aim_speed);
                     status->detail = text;
                 }
                 else if (decision_.skill == Skill::RECEIVE && decision_.pass_incoming) {
-                    status->detail = "pass coming: hold a direction for a first touch, Q to pass it first time, or let it come";
+                    status->detail = "pass coming: hold a direction for a first touch, Q to pass it first time, Space to shoot "
+                                     "it first time, or let it come";
                 }
                 else if (decision_.skill == Skill::WALK) {
                     const auto& t = decision_.twist;
