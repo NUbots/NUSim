@@ -35,6 +35,9 @@ namespace k1sim::module {
             "Rondo: pass it round the triangle, keep it from the robot in the middle. The keys play whoever the ball is going to\n"
             "Space pass (aimed at the open teammate, tap = right power, hold = harder; W A S D re-aim)  |  As it comes: Q pass first time, Space hit it first time, hold a direction = first touch\n"
             "W A S D dribble / walk  |  X release  |  E ball at feet  |  R new round  |  P pause";
+        constexpr const char* DEFEND_HELP =
+            "Rondo, defending: you're the robot in the middle. The three pass it round and dribble away from you; touch the ball to win it\n"
+            "W walk (Shift 2 m/s)  |  S back  |  A D turn  |  R new round  |  P pause";
 
         constexpr double PI = 3.14159265358979323846;
 
@@ -210,12 +213,19 @@ namespace k1sim::module {
         rondo_.ball_ahead     = rondo["ball_ahead"].as<double>(rondo_.ball_ahead);
         rondo_.out_margin     = rondo["out_margin"].as<double>(rondo_.out_margin);
         rondo_.next_round     = rondo["next_round"].as<double>(rondo_.next_round);
-        rondo_.steal_distance = rondo["steal_distance"].as<double>(rondo_.steal_distance);
-        const std::string drill = cfg["drill"].as<std::string>("free");
-        if (drill != "free" && drill != "rondo") {
-            throw std::runtime_error("skills.yaml: drill is free or rondo");
+        rondo_.receive_reach  = rondo["receive_reach"].as<double>(rondo_.receive_reach);
+        rondo_.chase_speed    = rondo["chase_speed"].as<double>(rondo_.chase_speed);
+        if (rondo["ai_hold"] && rondo["ai_hold"].size() == 2) {
+            rondo_.ai_hold = {rondo["ai_hold"][0].as<double>(), rondo["ai_hold"][1].as<double>()};
         }
-        drill_wanted_ = drill == "rondo" ? Drill::RONDO : Drill::FREE;
+        rondo_.ai_pressure   = rondo["ai_pressure"].as<double>(rondo_.ai_pressure);
+        rondo_.ai_lane_open  = rondo["ai_lane_open"].as<double>(rondo_.ai_lane_open);
+        rondo_.ai_first_time = rondo["ai_first_time"].as<double>(rondo_.ai_first_time);
+        const std::string drill = cfg["drill"].as<std::string>("free");
+        if (drill != "free" && drill != "rondo" && drill != "rondo_defend") {
+            throw std::runtime_error("skills.yaml: drill is free, rondo or rondo_defend");
+        }
+        drill_wanted_ = drill == "rondo" ? Drill::RONDO : drill == "rondo_defend" ? Drill::RONDO_DEFEND : Drill::FREE;
         if (const auto park = cfg["park"]; park && park.IsSequence()) {
             rondo_.park.clear();
             for (const auto& spot : park) {
@@ -378,8 +388,10 @@ namespace k1sim::module {
         on<Trigger<KeyEvent>, Sync<SkillPlayer>>().then([this](const KeyEvent& event) { key(event.key, event.down); });
 
         on<Trigger<message::SkillDrill>, Sync<SkillPlayer>>().then([this](const message::SkillDrill& request) {
-            if (request.name == "rondo" || request.name == "free") {
-                drill_wanted_  = request.name == "rondo" ? Drill::RONDO : Drill::FREE;
+            if (request.name == "rondo" || request.name == "rondo_defend" || request.name == "free") {
+                drill_wanted_  = request.name == "rondo"          ? Drill::RONDO
+                                 : request.name == "rondo_defend" ? Drill::RONDO_DEFEND
+                                                                  : Drill::FREE;
                 drill_pending_ = true;
             }
             else {
@@ -496,16 +508,23 @@ namespace k1sim::module {
             // A first touch: a contact between the ball and a body of this robot right now, or (since a
             // touch can begin and end between two 20 ms control steps) a jump in the ball's velocity
             // near the robot that rolling friction can't explain.
-            for (int i = 0; i < data_->ncon && !s.world.ball_touched; ++i) {
+            for (int i = 0; i < data_->ncon && !s.ball_contact; ++i) {
                 const mjContact& c = data_->contact[i];
                 const int other    = c.geom[0] == ball_geom_ ? c.geom[1] : c.geom[1] == ball_geom_ ? c.geom[0] : -1;
-                s.world.ball_touched =
-                    other >= 0 && model_->body_rootid[model_->geom_bodyid[other]] == map.root_body_id;
+                s.ball_contact     = other >= 0 && model_->body_rootid[model_->geom_bodyid[other]] == map.root_body_id;
             }
+            s.world.ball_touched = s.ball_contact;
             const double jump =
                 std::hypot(ball.lin_vel[0] - agent.last_ball_vel[0], ball.lin_vel[1] - agent.last_ball_vel[1]);
             if (jump > touch_velocity_jump_ && s.world.ball_distance() < 0.6) {
                 s.world.ball_touched = true;
+                // Which robot was it? Every robot near the ball sees the same jump; the one that
+                // touched it is the one still (nearly) against it.
+                for (int g = 0; g < model_->ngeom; ++g) {
+                    if (model_->body_rootid[model_->geom_bodyid[g]] == map.root_body_id) {
+                        s.ball_gap = std::min(s.ball_gap, static_cast<double>(mj_geomDistance(model_, data_, ball_geom_, g, 0.3, nullptr)));
+                    }
+                }
             }
             agent.last_ball_vel = {ball.lin_vel[0], ball.lin_vel[1]};
             s.world.ball_radius = model_->geom_size[3 * ball_geom_];
@@ -670,8 +689,8 @@ namespace k1sim::module {
 
         if (reset_pressed_) {
             reset_pressed_ = false;
-            if (drill_ == Drill::RONDO) {
-                drill_wanted_  = Drill::RONDO;
+            if (rondo()) {
+                drill_wanted_  = drill_;
                 drill_pending_ = true;
             }
             else {
@@ -871,15 +890,33 @@ namespace k1sim::module {
 
     void SkillPlayer::run_policy(Agent& agent, const SimStateUpdate& state) {
         const double t      = state.sim_time;
-        const bool played   = &agent == &agents_[active_] && agent.role != Role::DEFENDER;
+        const std::size_t index = static_cast<std::size_t>(&agent - agents_.data());
+        const bool played   = index == active_;
         const auto was      = agent.decision.twist;
-        agent.decision      = agent.role == Role::DEFENDER ? defender_decision(agent, t)
-                                                           : agent.logic.tick(played ? held_keys() : skill::Keys{},
-                                                                              agent.sample.world,
-                                                                              CONTROL_DT);
-        if (drill_ == Drill::RONDO && agent.role == Role::TEAMMATE && !played && agent.decision.skill == Skill::WALK) {
-            // Off the ball: get to where it can be passed to (support_twist), standing still between rounds.
-            agent.decision.twist = ease_twist(was, round_over_at_ < 0.0 ? support_twist(agent) : std::array<double, 3>{});
+        if (agent.role == Role::DEFENDER) {
+            if (played) {
+                // rondo_defend: walked with the keys, never a ball skill (touching the ball wins it).
+                agent.decision       = skill::Decision{};
+                agent.decision.skill = Skill::WALK;
+                agent.decision.twist = agent.logic.walk_twist(held_keys());
+            }
+            else {
+                agent.decision = defender_decision(agent, t);
+            }
+        }
+        else {
+            const skill::Keys keys = played ? held_keys()
+                                     : defending() && agent.role == Role::TEAMMATE && index == owner_ ? computer_keys(agent, t)
+                                                                                                      : skill::Keys{};
+            agent.decision = agent.logic.tick(keys, agent.sample.world, CONTROL_DT);
+        }
+        if (rondo() && agent.role == Role::TEAMMATE && !played && agent.decision.skill == Skill::WALK) {
+            // Off the ball: get to where it can be passed to (support_twist), standing still between
+            // rounds. The computer's teammate with the ball, if it has lost it, walks to it.
+            const std::array<double, 3> want = round_over_at_ >= 0.0               ? std::array<double, 3>{}
+                                               : defending() && index == owner_ ? chase_twist(agent)
+                                                                                : support_twist(agent);
+            agent.decision.twist = ease_twist(was, want);
         }
         const skill::Decision& decision = agent.decision;
         if (decision.skill != agent.logged_skill) {
@@ -1094,7 +1131,7 @@ namespace k1sim::module {
             return;
         }
         const Drill before = drill_;
-        if (drill == Drill::RONDO) {
+        if (drill != Drill::FREE) {
             const char* why = agents_.size() < 4  ? "the rondo needs 4 robots: start with ./b skills --robots 4"
                               : !policies_->walk  ? "the rondo needs the walk policy (policies.walk)"
                               : ball_body_ < 0    ? "no ball on this field"
@@ -1102,7 +1139,7 @@ namespace k1sim::module {
             if (why != nullptr) {
                 log<NUClear::LogLevel::WARN>("SkillPlayer:", why);
                 note(why, sim_time, 4.0);
-                if (drill_ == Drill::RONDO) {
+                if (rondo()) {
                     drill = Drill::FREE;  // can't go on with it
                 }
                 else {
@@ -1110,10 +1147,10 @@ namespace k1sim::module {
                 }
             }
         }
-        if (drill == Drill::RONDO) {
-            drill_ = Drill::RONDO;
-            if (before != Drill::RONDO) {
-                passes_ = steals_ = lost_ = 0;
+        if (drill != Drill::FREE) {
+            drill_ = drill;
+            if (before != drill) {
+                passes_ = best_ = steals_ = lost_ = 0;
                 rondo_holder_ = 0;
             }
             start_rondo_round(sim_time);
@@ -1127,8 +1164,9 @@ namespace k1sim::module {
             camera->azimuth   = 90.0;
             camera->elevation = -55.0;
             emit(camera);
-            log<NUClear::LogLevel::INFO>("SkillPlayer: rondo, triangle of side", rondo_.side, "m about (",
-                                         rondo_.centre[0], ",", rondo_.centre[1], ")");
+            log<NUClear::LogLevel::INFO>(defending() ? "SkillPlayer: rondo, defending: you play the robot in the middle;"
+                                                     : "SkillPlayer: rondo:",
+                                         "triangle of side", rondo_.side, "m about (", rondo_.centre[0], ",", rondo_.centre[1], ")");
             return;
         }
 
@@ -1167,7 +1205,7 @@ namespace k1sim::module {
         for (auto& agent : agents_) {
             restart(agent);
         }
-        if (before == Drill::RONDO) {
+        if (before != Drill::FREE) {
             auto camera  = std::make_unique<message::CameraRequest>();
             camera->mode = 2;  // behind the robot, as free play starts
             emit(camera);
@@ -1178,7 +1216,10 @@ namespace k1sim::module {
     void SkillPlayer::start_rondo_round(double sim_time) {
         round_over_at_    = -1.0;
         pass_live_        = false;
+        pass_handled_     = false;
         defender_stopped_ = false;
+        passes_           = 0;
+        round_start_      = sim_time;
         const int holder  = rondo_holder_ % 3;
         std::array<double, 2> ball{};
         {
@@ -1188,6 +1229,9 @@ namespace k1sim::module {
                 agent.homed           = true;
                 agent.start_with_ball = false;
                 agent.idle_since      = sim_time;
+                agent.computer_since  = -1.0;
+                agent.receiving_since = -1.0;
+                agent.computer_release = false;
                 if (i < 3) {
                     const auto spot = rondo_spot(static_cast<int>(i));
                     agent.role      = Role::TEAMMATE;
@@ -1219,27 +1263,64 @@ namespace k1sim::module {
         for (auto& agent : agents_) {
             restart(agent);
         }
-        active_ = static_cast<std::size_t>(holder);
-        agents_[active_].idle_since = -1.0;
+        owner_  = static_cast<std::size_t>(holder);
+        active_ = defending() ? 3 : owner_;
+        agents_[owner_].idle_since = -1.0;
         masked_ = held_keys();  // whatever is held now waits to be let go
         masked_.fast = masked_.shoot = false;
         pass_pressed_ = drop_pressed_ = shoot_down_ = shoot_up_ = release_pressed_ = air_down_ = air_up_ = false;
-        log<NUClear::LogLevel::INFO>("SkillPlayer: rondo round, robot", agents_[active_].robot_id, "has the ball");
+        log<NUClear::LogLevel::INFO>("SkillPlayer: rondo round, robot", agents_[owner_].robot_id, "has the ball");
     }
 
-    void SkillPlayer::switch_control(std::size_t to, double pass_angle, double sim_time) {
-        agents_[active_].idle_since = sim_time;
-        log<NUClear::LogLevel::INFO>("SkillPlayer: t =", sim_time, "pass from robot", agents_[active_].robot_id,
-                                     "to robot", agents_[to].robot_id, "-- the keys follow it");
-        active_ = to;
-        Agent& receiver     = agents_[to];
-        receiver.idle_since = -1.0;
-        receiver.logic.on_pass(pass_angle);
-        // Keys held for the pass (the aim) are not the receiver's: they wait until let go.
-        masked_       = keys_;
-        masked_.fast  = masked_.shoot = false;
-        pass_pressed_ = drop_pressed_ = shoot_down_ = shoot_up_ = release_pressed_ = air_down_ = air_up_ = false;
-        pass_live_    = true;
+    // The teammate with the ball (or the one it is rolling to, or the one going to fetch it) becomes
+    // `to`. In the passing rondo the keys go with it; keys still held wait until let go.
+    void SkillPlayer::set_owner(std::size_t to, double sim_time) {
+        if (to == owner_) {
+            return;
+        }
+        agents_[owner_].idle_since     = sim_time;
+        agents_[owner_].computer_since = -1.0;
+        owner_                         = to;
+        agents_[to].idle_since         = -1.0;
+        if (!defending()) {
+            active_       = to;
+            masked_       = keys_;
+            masked_.fast  = masked_.shoot = false;
+            pass_pressed_ = drop_pressed_ = shoot_down_ = shoot_up_ = release_pressed_ = air_down_ = air_up_ = false;
+        }
+    }
+
+    void SkillPlayer::end_round(const std::string& text, double sim_time) {
+        pass_live_        = false;
+        defender_stopped_ = true;
+        round_over_at_    = sim_time + rondo_.next_round;
+        note(text, sim_time, rondo_.next_round + 0.5);
+        log<NUClear::LogLevel::INFO>("SkillPlayer: t =", sim_time, "rondo:", text);
+    }
+
+    // Nobody has the ball under control or on its way to them: it is rolling loose or lying somewhere.
+    bool SkillPlayer::ball_loose() const {
+        const Skill skill = agents_[owner_].logic.skill();
+        return !pass_live_ && (skill == Skill::WALK || skill == Skill::KICK || skill == Skill::FIRST_PASS);
+    }
+
+    // The defender touched the ball: a contact now, or a jump in the ball's velocity with the defender
+    // against it (within 10 cm) and nearer it than any teammate. Bumping into a robot doesn't count,
+    // nor a teammate's touch with the defender close by.
+    bool SkillPlayer::defender_touched() const {
+        const Sample& d = agents_[3].sample;
+        if (d.ball_contact) {
+            return true;
+        }
+        if (!d.world.ball_touched || d.ball_gap > 0.1) {
+            return false;
+        }
+        for (std::size_t k = 0; k < 3; ++k) {
+            if (agents_[k].sample.ball_contact || agents_[k].sample.ball_gap < d.ball_gap) {
+                return false;
+            }
+        }
+        return true;
     }
 
     void SkillPlayer::update_rondo(double sim_time) {
@@ -1253,71 +1334,112 @@ namespace k1sim::module {
             }
             return;
         }
-        Agent& active  = agents_[active_];
+        Agent& owner   = agents_[owner_];
         Agent& defender = agents_[3];
-        const auto& w  = active.sample.world;  // the ball is the same in every robot's sample
+        const auto& w  = owner.sample.world;  // the ball is the same in every robot's sample
         if (!w.ball_valid) {
             return;
         }
-        char text[120];
+        char text[160];
+        const char* plural = passes_ == 1 ? "" : "es";
 
-        // The defender wins it: a touch, or the ball at its feet.
+        // The defender wins it: its body touched the ball.
         const auto& dw = defender.sample.world;
-        if (defender.phase == Phase::PLAYING && (dw.ball_touched || dw.ball_distance() < rondo_.steal_distance)) {
+        if (defender.phase == Phase::PLAYING && defender_touched()) {
             ++steals_;
-            pass_live_        = false;
-            defender_stopped_ = true;
-            round_over_at_    = sim_time + rondo_.next_round;
-            std::snprintf(text, sizeof(text), "intercepted after %d pass%s! new round shortly", passes_, passes_ == 1 ? "" : "es");
-            note(text, sim_time, rondo_.next_round + 0.5);
-            log<NUClear::LogLevel::INFO>("SkillPlayer: t =", sim_time, "rondo: the defender won the ball");
+            if (defending()) {
+                std::snprintf(text, sizeof(text), "you won it after %d pass%s in %.1f s!", passes_, plural, sim_time - round_start_);
+            }
+            else {
+                std::snprintf(text, sizeof(text), "intercepted after %d pass%s! new round shortly", passes_, plural);
+            }
+            end_round(text, sim_time);
             return;
         }
         // Out of the rondo altogether.
         const double radius = rondo_.side / std::sqrt(3.0);
         if (std::hypot(w.ball_x - rondo_.centre[0], w.ball_y - rondo_.centre[1]) > radius + rondo_.out_margin) {
             ++lost_;
-            pass_live_        = false;
-            defender_stopped_ = true;
-            round_over_at_    = sim_time + rondo_.next_round;
-            note("the ball got away! new round shortly", sim_time, rondo_.next_round + 0.5);
-            log<NUClear::LogLevel::INFO>("SkillPlayer: t =", sim_time, "rondo: the ball left the rondo");
+            if (defending()) {
+                std::snprintf(text, sizeof(text), "the ball got away: no winner. New round shortly");
+            }
+            else {
+                std::snprintf(text, sizeof(text), "the ball got away after %d pass%s! new round shortly", passes_, plural);
+            }
+            end_round(text, sim_time);
             return;
         }
-        // A pass arriving.
+        // A pass arriving: the teammate it was played to touches it (not after giving up on it).
+        if (pass_live_ && owner.logic.skill() == Skill::WALK) {
+            pass_live_ = false;
+        }
         if (pass_live_ && w.ball_touched) {
             pass_live_ = false;
             ++passes_;
+            best_ = std::max(best_, passes_);
+            log<NUClear::LogLevel::INFO>("SkillPlayer: t =", sim_time, "pass", passes_, "completed to robot", owner.robot_id);
         }
-        // A pass leaving the robot being played: the keys go to the teammate it is rolling at.
-        const double vx = w.ball_vx, vy = w.ball_vy;
-        const bool kicked = active.decision.skill == Skill::KICK
-                            || (active.decision.skill == Skill::FIRST_PASS && active.decision.touched);
-        if (kicked && std::hypot(vx, vy) > 1.0 && w.ball_distance() > 0.35) {
-            const double heading = std::atan2(vy, vx);
-            std::size_t best     = active_;
-            double best_off      = 0.52;  // 30 degrees
+        else if (ball_loose()) {
+            // Another teammate got to it first: it's theirs (a pass only counts for the one it was played to).
             for (std::size_t k = 0; k < 3; ++k) {
-                const auto& tw = agents_[k].sample.world;
-                const double dx = tw.robot_x - w.ball_x, dy = tw.robot_y - w.ball_y;
-                if (k == active_ || std::hypot(dx, dy) < 0.4) {
-                    continue;
+                if (k != owner_ && agents_[k].sample.world.ball_touched) {
+                    set_owner(k, sim_time);
+                    break;
                 }
-                const double off = std::abs(skill::wrap_angle(std::atan2(dy, dx) - heading));
-                if (off < best_off) {
-                    best_off = off;
-                    best     = k;
-                }
-            }
-            if (best != active_) {
-                switch_control(best, heading, sim_time);
             }
         }
-        // Teammates the keys have left: once the ball is well away, back to standing in walk, from
-        // which receive is a trained hand-over.
+        // A pass leaving the teammate with the ball. If it will roll to a teammate (near enough to its
+        // feet, before it stops) that teammate receives it, and in the passing rondo the keys go with
+        // it. If it won't, nobody stands waiting in receive: the teammate nearest where it will stop
+        // walks, to go and get it.
+        const auto& d = agents_[owner_].decision;
+        const bool kicked = d.skill == Skill::KICK || (d.skill == Skill::FIRST_PASS && d.touched);
+        if (!kicked) {
+            pass_handled_ = false;
+        }
+        const double speed = std::hypot(w.ball_vx, w.ball_vy);
+        if (kicked && !pass_handled_ && speed > 1.0 && w.ball_distance() > 0.35) {
+            pass_handled_ = true;
+            const double ux = w.ball_vx / speed, uy = w.ball_vy / speed;
+            const double roll = speed * speed / (2.0 * logic_config_.rolling_decel);
+            std::size_t receiver = owner_, nearest = owner_;
+            double nearest_along = 1e9, nearest_stop = 1e9;
+            for (std::size_t k = 0; k < 3; ++k) {
+                const auto& tw     = agents_[k].sample.world;
+                const double rx    = tw.robot_x - w.ball_x, ry = tw.robot_y - w.ball_y;
+                const double along = rx * ux + ry * uy, side = std::abs(-rx * uy + ry * ux);
+                if (k != owner_ && along > 0.4 && along < roll + 0.5 && side < rondo_.receive_reach && along < nearest_along) {
+                    nearest_along = along;
+                    receiver      = k;
+                }
+                const double stop = std::hypot(w.ball_x + ux * roll - tw.robot_x, w.ball_y + uy * roll - tw.robot_y);
+                if (stop < nearest_stop) {
+                    nearest_stop = stop;
+                    nearest      = k;
+                }
+            }
+            const int from = agents_[owner_].robot_id;
+            if (receiver != owner_) {
+                log<NUClear::LogLevel::INFO>("SkillPlayer: t =", sim_time, "pass from robot", from, "to robot", agents_[receiver].robot_id);
+                set_owner(receiver, sim_time);
+                agents_[receiver].logic.on_pass(std::atan2(uy, ux));
+                pass_live_ = true;
+            }
+            else {
+                log<NUClear::LogLevel::INFO>("SkillPlayer: t =", sim_time, "pass from robot", from, "reaches nobody: robot",
+                                             agents_[nearest].robot_id, "goes for it");
+                set_owner(nearest, sim_time);
+                agents_[nearest].logic.on_release();
+                if (!defending()) {
+                    note("off target: walk to the ball", sim_time);
+                }
+            }
+        }
+        // Teammates without the ball: once it is well away, back to standing in walk, from which
+        // receive is a trained hand-over.
         for (std::size_t k = 0; k < 3; ++k) {
             Agent& mate = agents_[k];
-            if (k != active_ && mate.idle_since >= 0.0 && sim_time - mate.idle_since > 1.0
+            if (k != owner_ && mate.idle_since >= 0.0 && sim_time - mate.idle_since > 1.0
                 && mate.logic.skill() != Skill::WALK && mate.sample.world.ball_distance() > 1.5) {
                 mate.logic.on_release();
             }
@@ -1330,7 +1452,7 @@ namespace k1sim::module {
             mate.support   = {mate.home[0], mate.home[1]};
             const double lx = mate.home[0] - w.ball_x, ly = mate.home[1] - w.ball_y;
             const double length = std::hypot(lx, ly);
-            if (k == active_ || length < 0.5) {
+            if (k == owner_ || length < 0.5) {
                 continue;
             }
             const double ux = lx / length, uy = ly / length;  // along the lane
@@ -1365,12 +1487,110 @@ namespace k1sim::module {
                 lanes.push_back({std::hypot(fx + u * lx - dw.robot_x, fy + u * ly - dw.robot_y), to});
             }
             std::sort(lanes.begin(), lanes.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+            agents_[k].open_lane = lanes.front().first;
             std::vector<std::array<double, 2>> targets;
             for (const auto& lane : lanes) {
                 targets.push_back(lane.second);
             }
             agents_[k].logic.set_pass_targets(std::move(targets));
         }
+    }
+
+    // rondo_defend: what the computer "holds down" for the teammate with the ball. It passes to the
+    // open teammate once it has held the ball a moment, or at once with the defender close, if a lane
+    // is open and the ball sits squarely in front; pressed with no lane open, it dribbles away from
+    // the defender, bending back towards its corner. A pass coming in with the defender near the
+    // receiver is passed on first time. A kick that went nowhere, or a trap that never settled, is
+    // picked up with the dribble; a ball that got away is walked to (chase_twist).
+    skill::Keys SkillPlayer::computer_keys(Agent& agent, double sim_time) {
+        skill::Logic& logic = agent.logic;
+        const auto& w       = agent.sample.world;
+        const auto& dw      = agents_[3].sample.world;
+        const double pressure = std::hypot(dw.robot_x - w.ball_x, dw.robot_y - w.ball_y);
+        const bool open       = agent.open_lane > rondo_.ai_lane_open;
+        const skill::Keys none{};
+        auto steer = [](double angle) {
+            skill::Keys keys;
+            keys.steer = true;
+            keys.angle = angle;
+            return keys;
+        };
+        if (agent.computer_release) {  // a tap of the pass key: pressed last step, released now
+            agent.computer_release = false;
+            logic.on_shoot_release(w);
+            return none;
+        }
+        if (agent.phase != Phase::PLAYING) {
+            return none;
+        }
+        const Skill skill = logic.skill();
+        if (skill != Skill::DRIBBLE) {
+            agent.computer_since = -1.0;
+        }
+        if (skill != Skill::RECEIVE || logic.pass_incoming()) {
+            agent.receiving_since = -1.0;
+        }
+        else if (agent.receiving_since < 0.0) {
+            agent.receiving_since = sim_time;
+        }
+        if (skill == Skill::RECEIVE && logic.pass_incoming()) {
+            const double to_me = std::hypot(dw.robot_x - w.robot_x, dw.robot_y - w.robot_y), distance = w.ball_distance();
+            if (to_me < rondo_.ai_first_time && open && distance > 0.8 && distance < 2.5) {
+                logic.on_first_pass(none, w);
+            }
+            return none;
+        }
+        const auto& cfg = logic.config();
+        if ((skill == Skill::DRIBBLE || skill == Skill::RECEIVE) && w.ball_distance() > cfg.takeover_distance
+            && w.ball_speed < cfg.trap_speed) {
+            logic.on_release();  // lost it: walk to it
+            return none;
+        }
+        if (skill == Skill::RECEIVE && agent.receiving_since >= 0.0 && sim_time - agent.receiving_since > 1.5
+            && w.ball_speed < 0.5) {
+            // Trapped but never quite settled where receive hands over: take it on with the dribble.
+            return steer(std::atan2(w.ball_y - w.robot_y, w.ball_x - w.robot_x));
+        }
+        if ((skill == Skill::KICK || (skill == Skill::FIRST_PASS && logic.touched())) && w.ball_speed < 0.5) {
+            // A kick or first-time pass that went nowhere: once the lockout is over, a direction picks
+            // the ball back up if it is near, or walks.
+            return steer(std::atan2(agent.home[1] - w.ball_y, agent.home[0] - w.ball_x));
+        }
+        if (skill != Skill::DRIBBLE) {
+            return none;
+        }
+        if (agent.computer_since < 0.0) {
+            agent.computer_since = sim_time;
+            agent.computer_hold  = sample_range(rondo_.ai_hold);
+        }
+        const double held = sim_time - agent.computer_since;
+        const auto ball   = w.ball_local();
+        const bool squared = ball[0] > 0.1 && std::abs(std::atan2(ball[1], ball[0])) < 0.5 && w.ball_speed < 0.4;
+        if (open && squared && logic.can_kick(w) && (held > agent.computer_hold || pressure < rondo_.ai_pressure)) {
+            if (logic.on_shoot_press(w)) {
+                agent.computer_release = true;
+            }
+            return none;
+        }
+        if (pressure < rondo_.ai_pressure + 0.4) {
+            const double ax = w.ball_x - dw.robot_x, ay = w.ball_y - dw.robot_y, an = std::max(std::hypot(ax, ay), 1e-6);
+            const double hx = agent.home[0] - w.ball_x, hy = agent.home[1] - w.ball_y, hn = std::max(std::hypot(hx, hy), 1e-6);
+            const double pull = std::clamp(hn - 0.5, 0.0, 1.5);
+            return steer(std::atan2(ay / an + pull * hy / hn, ax / an + pull * hx / hn));
+        }
+        return none;
+    }
+
+    // A teammate going to get a loose ball: turn to it and walk at it, slowing as it gets there so the
+    // walk can pick it up (walking up to a ball in front hands over to receive).
+    std::array<double, 3> SkillPlayer::chase_twist(const Agent& agent) const {
+        const auto& w = agent.sample.world;
+        const double dx = w.ball_x - w.robot_x, dy = w.ball_y - w.robot_y, distance = std::hypot(dx, dy);
+        const double err   = skill::wrap_angle(std::atan2(dy, dx) - w.yaw);
+        const double creep = logic_config_.walk_turn_creep;
+        const double top   = std::min(rondo_.chase_speed, 0.3 + 0.5 * distance);
+        return {std::abs(err) < PI / 2.0 ? std::max(creep, top * std::cos(err) * std::cos(err)) : creep, 0.0,
+                std::clamp(2.0 * err, -logic_config_.walk_turn_rate, logic_config_.walk_turn_rate)};
     }
 
     // The defender walks at the ball as fast as the walk goes, aiming where the ball will be by the
@@ -1492,10 +1712,10 @@ namespace k1sim::module {
         const Agent& agent       = agents_[active_];
         const auto& decision     = agent.decision;
         const auto& sample       = agent.sample;
-        const bool rondo         = drill_ == Drill::RONDO;
+        const bool rondo         = this->rondo();
         auto status              = std::make_unique<message::SkillStatus>();
-        status->keys             = rondo ? RONDO_HELP : KEY_HELP;
-        status->drill            = rondo ? "rondo" : "free";
+        status->keys             = defending() ? DEFEND_HELP : rondo ? RONDO_HELP : KEY_HELP;
+        status->drill            = defending() ? "rondo_defend" : rondo ? "rondo" : "free";
         status->robot_body       = agent.trunk;
         status->marker           = rondo;
         const bool loaded = (decision.skill == Skill::FIRST_TOUCH || decision.skill == Skill::FIRST_PASS) && !decision.touched;
@@ -1594,10 +1814,26 @@ namespace k1sim::module {
                 }
                 break;
         }
-        if (rondo) {
+        if (defending() && agent.phase == Phase::PLAYING) {
+            const auto& t = decision.twist;
+            status->skill = "DEFENDER";
+            if (t[0] != 0.0 || t[2] != 0.0) {
+                std::snprintf(text, sizeof(text), "walking: %.1f m/s, turning %.1f rad/s", t[0], t[2]);
+                status->detail = text;
+            }
+            else {
+                status->detail = "W A S D walk at the ball; touch it to win it";
+            }
+        }
+        if (defending()) {
+            status->skill = "RONDO (DEFENDING): " + status->skill;
+            std::snprintf(text, sizeof(text), "  |  PASSES %d  |  won %d, got away %d", passes_, steals_, lost_);
+            status->detail += text;
+        }
+        else if (rondo) {
             std::snprintf(text, sizeof(text), "RONDO, robot %d: ", agent.robot_id);
             status->skill = text + status->skill;
-            std::snprintf(text, sizeof(text), "  |  passes %d, intercepted %d, lost %d", passes_, steals_, lost_);
+            std::snprintf(text, sizeof(text), "  |  PASSES IN A ROW %d (best %d)  |  intercepted %d, lost %d", passes_, best_, steals_, lost_);
             status->detail += text;
         }
         if (sim_time < note_until_ && sim_time > note_until_ - 10.0) {

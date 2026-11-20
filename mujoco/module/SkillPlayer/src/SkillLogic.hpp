@@ -137,6 +137,15 @@ namespace k1sim::skill {
         double rolling_decel      = 0.9;
         double target_snap        = 0.17;  // rad, 10 degrees
         double target_key_snap    = 0.52;  // rad, 30 degrees
+
+        // A pass that isn't going to be received (it rolls past, away, or stops out of reach): back to
+        // walk at once, so the robot can go and get it, instead of standing in receive until
+        // first_touch_timeout. Missed: further than miss_distance (takeover_distance once no pass is
+        // rolling in) and coming no closer than miss_closing_speed, miss_grace after the pass is played.
+        bool release_missed       = true;
+        double miss_distance      = 0.7;
+        double miss_closing_speed = 0.15;
+        double miss_grace         = 0.4;
     };
 
     // Limits the policies were trained over.
@@ -154,9 +163,13 @@ namespace k1sim::skill {
     struct Keys {
         bool forward = false, back = false, left = false, right = false, fast = false;
         bool shoot = false;  // held: winding up a shot
+        // For a robot the computer plays: a direction (world, rad) to dribble in, as if the keys held
+        // pointed that way.
+        bool steer   = false;
+        double angle = 0.0;
         // Opposite keys cancel.
         bool any_direction() const {
-            return forward != back || left != right;
+            return steer || forward != back || left != right;
         }
     };
 
@@ -172,6 +185,11 @@ namespace k1sim::skill {
 
         double ball_distance() const {
             return std::hypot(ball_x - robot_x, ball_y - robot_y);
+        }
+        // How fast the ball is coming towards the robot (m/s; negative: going away).
+        double ball_closing() const {
+            const double dx = ball_x - robot_x, dy = ball_y - robot_y, d = std::max(std::hypot(dx, dy), 1e-6);
+            return -(ball_vx * dx + ball_vy * dy) / d;
         }
         // Ball position in the robot's yaw frame (x forward, y left).
         std::array<double, 2> ball_local() const {
@@ -420,6 +438,10 @@ namespace k1sim::skill {
                         }
                         break;
                     }
+                    if (missed(world)) {
+                        on_release();
+                        break;
+                    }
                     if (incoming_) {
                         if (world.ball_touched || pass_age_ > cfg_.first_touch_timeout) {
                             incoming_ = false;  // received: from here on, an ordinary receive
@@ -461,6 +483,9 @@ namespace k1sim::skill {
                             touched_   = true;
                             touch_age_ = 0.0;
                             incoming_  = false;
+                        }
+                        else if (missed(world)) {
+                            on_release();
                         }
                         else if (pass_age_ > cfg_.first_touch_timeout) {
                             // Never reached the ball: receive what's left of it.
@@ -518,24 +543,7 @@ namespace k1sim::skill {
             out.pass_incoming = incoming_;
             out.touched       = touched_;
             if (skill_ == Skill::WALK) {
-                if (keys.forward && !keys.back) {
-                    out.twist[0] = keys.fast ? cfg_.walk_fast_speed : cfg_.walk_speed;
-                }
-                else if (keys.back && !keys.forward) {
-                    out.twist[0] = -cfg_.walk_back_speed;
-                }
-                if (keys.left != keys.right) {
-                    const double sign = keys.left ? 1.0 : -1.0;
-                    if (cfg_.walk_side_keys == Config::SideKeys::STRAFE) {
-                        out.twist[1] = sign * cfg_.walk_side_speed;
-                    }
-                    else {
-                        out.twist[2] = sign * cfg_.walk_turn_rate;
-                        if (out.twist[0] == 0.0) {
-                            out.twist[0] = cfg_.walk_turn_creep;
-                        }
-                    }
-                }
+                out.twist = walk_twist(keys);
                 return out;
             }
             if (carry_ && (skill_ != Skill::DRIBBLE || !same_directions(keys, carry_keys_))) {
@@ -571,9 +579,63 @@ namespace k1sim::skill {
             return out;
         }
 
+        // The walk command for the keys held: W/S forward/back, A/D turn (creeping forward, as the walk
+        // won't turn standing still) or, with walk_side_keys = STRAFE, step sideways.
+        std::array<double, 3> walk_twist(const Keys& keys) const {
+            std::array<double, 3> twist{};
+            if (keys.forward && !keys.back) {
+                twist[0] = keys.fast ? cfg_.walk_fast_speed : cfg_.walk_speed;
+            }
+            else if (keys.back && !keys.forward) {
+                twist[0] = -cfg_.walk_back_speed;
+            }
+            if (keys.left != keys.right) {
+                const double sign = keys.left ? 1.0 : -1.0;
+                if (cfg_.walk_side_keys == Config::SideKeys::STRAFE) {
+                    twist[1] = sign * cfg_.walk_side_speed;
+                }
+                else {
+                    twist[2] = sign * cfg_.walk_turn_rate;
+                    if (twist[0] == 0.0) {
+                        twist[0] = cfg_.walk_turn_creep;
+                    }
+                }
+            }
+            return twist;
+        }
+
+        // A first touch or first-time pass has touched the ball.
+        bool touched() const {
+            return touched_;
+        }
+
+        // The ball is where a shot can be wound up (near, and in front).
+        bool can_kick(const World& world) const {
+            return ball_kickable(world);
+        }
+
     private:
+        // Waiting for a ball that isn't coming: out of reach and not getting any closer. Only before
+        // the touch: after it, the ball leaving is the point.
+        bool missed(const World& world) const {
+            if (!cfg_.release_missed || !cfg_.walk_enabled || !world.ball_valid || touched_) {
+                return false;
+            }
+            if (incoming_ && pass_age_ < cfg_.miss_grace) {
+                return false;
+            }
+            if (!incoming_ && skill_ == Skill::RECEIVE && grace_ > 0.0) {
+                return false;
+            }
+            const double reach = incoming_ ? cfg_.miss_distance : std::max(cfg_.miss_distance, cfg_.takeover_distance);
+            return world.ball_distance() > reach && world.ball_closing() < cfg_.miss_closing_speed;
+        }
+
         // Unit vector for the direction keys held, world frame. Needs keys.any_direction().
         std::array<double, 2> key_direction(const Keys& keys, const World& world) const {
+            if (keys.steer) {
+                return {std::cos(keys.angle), std::sin(keys.angle)};
+            }
             double x       = (keys.forward ? 1.0 : 0.0) - (keys.back ? 1.0 : 0.0);
             double y       = (keys.left ? 1.0 : 0.0) - (keys.right ? 1.0 : 0.0);
             const double n = std::max(std::hypot(x, y), 1e-9);

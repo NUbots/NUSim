@@ -43,9 +43,14 @@ namespace k1sim::module {
     //   R        stand the robot back up at its start (rondo: start the round again)
     //
     // Training drills, from the viewer's Training buttons (SkillDrill): free play (the above, one
-    // robot; the others stand on the touchline) and the rondo: three teammates in a triangle pass
-    // the ball round while the fourth, in the middle, walks at it. The keys play whichever teammate
-    // the ball is going to, and a pass or shot aims at the most open teammate.
+    // robot; the others stand on the touchline) and two rondos, where three teammates in a triangle
+    // pass the ball round while the fourth, in the middle, walks at it:
+    //   rondo         you pass: the keys play whichever teammate the ball is going to, a pass aims at
+    //                 the most open teammate, and the computer plays the defender
+    //   rondo_defend  you are the defender: the keys walk the robot in the middle, and the computer
+    //                 plays the three, passing when a lane is open and dribbling away when pressed
+    // A round ends when the defender's body touches the ball (bumping a robot doesn't count), or
+    // when the ball rolls out of the rondo.
     //
     // Settings and the policy files are in config/skills.yaml; see docs/SKILL_KEYBOARD.md.
     class SkillPlayer : public NUClear::Reactor {
@@ -55,9 +60,10 @@ namespace k1sim::module {
 
     private:
         enum class Phase { WAITING, BLENDING, PLAYING, FALLEN };
-        enum class Drill { FREE, RONDO };
+        enum class Drill { FREE, RONDO, RONDO_DEFEND };
         // PLAYER: free play's robot. TEAMMATE: one of the rondo's three passers, played whenever
-        // the ball is theirs. DEFENDER: the rondo's middle robot, walking at the ball by itself.
+        // the ball is theirs (rondo) or by the computer (rondo_defend). DEFENDER: the rondo's middle
+        // robot, walking at the ball by itself (rondo) or with the keys (rondo_defend).
         // PARKED: standing on the touchline out of the way (free play's other robots).
         enum class Role { PLAYER, TEAMMATE, DEFENDER, PARKED };
 
@@ -68,6 +74,10 @@ namespace k1sim::module {
             std::array<double, JOINT_COUNT> q{}, dq{};
             std::array<double, 4> ball_camera{};  // ball in the head camera frame + visible flag
             skill::World world{};
+            bool ball_contact = false;  // a geom of this robot is in contact with the ball now
+            // With a touch spotted only from the ball's velocity jumping near the robot: the gap
+            // (m) from the ball to the nearest part of this robot, to tell which robot touched it.
+            double ball_gap = 1e9;
         };
 
         // One control step of every observation term; the policy sees the last three.
@@ -121,6 +131,12 @@ namespace k1sim::module {
             double idle_since = -1.0;  // rondo: when the keys last left it
             std::array<double, 2> support{};  // rondo, off the ball: where to stand to be passed to
             bool repositioning = false, turning = false;  // support_twist's hysteresis
+            double open_lane = 0.0;  // rondo: how far the defender is from its best passing lane (m)
+            // rondo_defend, the computer playing it: since when it has dribbled (-1: not) and how long
+            // it means to before passing, since when it has sat in receive with no pass coming, and a
+            // pass key pressed last step to release this one.
+            double computer_since = -1.0, computer_hold = 1.0, receiving_since = -1.0;
+            bool computer_release = false;
             double log_next   = 0.0;   // sim time of its next SKILL line
             double jitter_sum = 0.0;   // mean leg target change per step since the last log line
             int jitter_count  = 0;
@@ -148,7 +164,18 @@ namespace k1sim::module {
         void start_drill(Drill drill, double sim_time);
         void start_rondo_round(double sim_time);
         void update_rondo(double sim_time);
-        void switch_control(std::size_t to, double pass_angle, double sim_time);
+        bool rondo() const {
+            return drill_ != Drill::FREE;
+        }
+        bool defending() const {
+            return drill_ == Drill::RONDO_DEFEND;
+        }
+        void set_owner(std::size_t to, double sim_time);
+        void end_round(const std::string& text, double sim_time);
+        bool ball_loose() const;
+        bool defender_touched() const;
+        skill::Keys computer_keys(Agent& agent, double sim_time);
+        std::array<double, 3> chase_twist(const Agent& agent) const;
         skill::Decision defender_decision(const Agent& agent, double sim_time);
         std::array<double, 3> support_twist(Agent& agent);
         std::array<double, 3> ease_twist(const std::array<double, 3>& was, const std::array<double, 3>& want) const;
@@ -220,19 +247,29 @@ namespace k1sim::module {
             double ball_ahead      = 0.3;   // m in front of the starting teammate the ball is put
             double out_margin      = 2.0;   // m beyond the triangle's corners: the ball is lost
             double next_round      = 1.5;   // s after an interception or a lost ball
-            double steal_distance  = 0.3;   // m from the defender's trunk: the ball is won
+            double receive_reach   = 0.6;   // m to the side of a pass's path a teammate can still receive it
+            double chase_speed     = 0.8;   // m/s a computer teammate walks to a loose ball at
+            // The computer playing the three (rondo_defend):
+            Range ai_hold{0.6, 1.8};        // s it keeps the ball before passing, nobody close
+            double ai_pressure   = 1.6;     // m: the defender this close to the ball, it passes now...
+            double ai_lane_open  = 0.7;     // m: ...if a lane is this far from the defender
+            double ai_first_time = 1.8;     // m: the defender this close to a teammate, it passes first time
             std::vector<std::array<double, 2>> park{{2.5, -5.0}, {3.5, -5.0}, {4.5, -5.0}};
         } rondo_;
 
         // -- state (all touched only inside Sync<SkillPlayer> reactions) --
         std::vector<Agent> agents_;
         std::size_t active_ = 0;  // the agent the keys play
+        std::size_t owner_  = 0;  // rondo: the teammate with the ball, or it's rolling to, or fetching it
         Drill drill_        = Drill::FREE;
         bool drill_pending_ = true;  // (re)start drill_ on the next control step
         Drill drill_wanted_ = Drill::FREE;
         int rondo_holder_   = 0;     // the teammate the next round starts with
-        int passes_ = 0, steals_ = 0, lost_ = 0;
+        // passes_: completed this round, in a row; best_: the most in a round since the drill started.
+        int passes_ = 0, best_ = 0, steals_ = 0, lost_ = 0;
         bool pass_live_     = false;   // a pass between teammates is rolling, not yet touched
+        bool pass_handled_  = false;   // the pass leaving the owner has been given to someone
+        double round_start_ = 0.0;
         double round_over_at_ = -1.0;  // sim time the next round starts; < 0 = playing
         bool defender_stopped_ = false;
 

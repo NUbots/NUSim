@@ -1,5 +1,6 @@
 """./b skills [args] — play one K1 from the keyboard with the mjlab policies (role sim/skills).
-./b skills sync [--mjlab DIR] — copy the policies mjlab's controller spec names into mujoco/policies/skills.
+./b skills sync [--mjlab DIR] — copy mjlab's current best policies into mujoco/policies/skills: the files
+policies/BENCHMARKS.md's "use this one" table names, and for a skill it doesn't name (the walk) the spec's.
 
 Keys, in the sim window: W = walk to a ball / dribble, Q = pass at the robot, E = ball at its feet,
 W/A/S/D = dribble (Shift faster), Space = hold to charge a shot and release to kick, R = stand the
@@ -21,6 +22,17 @@ import b
 
 DEST = os.path.join(b.mujoco_dir, "policies", "skills")
 SPEC = "policies/CONTROLLER_INTERFACE.md"
+BENCHMARKS = "policies/BENCHMARKS.md"
+
+# Our file name -> how BENCHMARKS.md's "| Skill | File |" table names that skill.
+BEST = {
+    "receive": "Receive",
+    "dribble": "Dribble",
+    "kick": "Kick (ground)",
+    "kick_air": "Air shot",
+    "first_touch": "Directional first touch",
+    "first_pass": "First-time pass",
+}
 
 # Our file name -> how the spec's policy table names that skill (the start of its first cell).
 SKILLS = {
@@ -62,6 +74,45 @@ def _spec_files(mjlab):
     return found
 
 
+def _best_files(policies):
+    """Skill -> the .onnx path BENCHMARKS.md's first "| Skill | File |" table picks, where it resolves.
+
+    A cell's first `...` names a checkpoint (`folder/model_<n>`, exported as model_<n>.onnx next to
+    it) or a folder with one top-level export. A checkpoint without its own export falls back to the
+    folder's only top-level .onnx when the folder holds that checkpoint and no other (the run's
+    final export). Anything else is left to the spec.
+    """
+    try:
+        with open(os.path.join(os.path.dirname(policies), BENCHMARKS)) as file:
+            lines = file.read().splitlines()
+    except OSError:
+        return {}
+    found, in_table = {}, False
+    for line in lines:
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if cells[:2] == ["Skill", "File"]:
+            in_table = True
+            continue
+        if in_table and not line.startswith("|"):
+            break
+        if not in_table or len(cells) < 2:
+            continue
+        name = next((n for n, label in BEST.items() if cells[0] == label), None)
+        named = re.findall(r"`([^`]+)`", cells[1])
+        if not name or not named:
+            continue
+        target = os.path.join(policies, named[0].removesuffix(".onnx"))
+        folder = target if os.path.isdir(target) else os.path.dirname(target)
+        exports = glob.glob(os.path.join(folder, "*.onnx"))
+        if os.path.isfile(target + ".onnx"):
+            found[name] = target + ".onnx"
+        elif len(exports) == 1 and (
+            os.path.isdir(target) or glob.glob(os.path.join(folder, "*.pt")) == [target + ".pt"]
+        ):
+            found[name] = exports[0]
+    return found
+
+
 def _sync(mjlab):
     mjlab = os.path.expanduser(mjlab)
     policies = os.path.join(mjlab, "policies")
@@ -69,11 +120,12 @@ def _sync(mjlab):
         wanted = _spec_files(mjlab)
     except OSError as error:
         raise SystemExit(f"cannot read the spec: {error}")
+    best = _best_files(policies)
     os.makedirs(DEST, exist_ok=True)
     sources = []
     for name in SKILLS:
-        candidates = []
-        for pattern in wanted.get(name, []):
+        candidates = [best[name]] if name in best else []
+        for pattern in [] if candidates else wanted.get(name, []):
             candidates += glob.glob(os.path.join(policies, pattern))
         if not candidates:
             print(f"{name:8s} the spec names {wanted.get(name) or 'nothing'}, not found under {policies}; left as it is")
@@ -84,7 +136,7 @@ def _sync(mjlab):
         print(f"{name:8s} <- {newest} ({stamp})")
         sources.append(f"{name}.onnx <- {newest} ({stamp})")
     with open(os.path.join(DEST, "SOURCES.txt"), "w") as file:
-        file.write(f"Copied by ./b skills sync from {mjlab}/{SPEC}\n" + "\n".join(sources) + "\n")
+        file.write(f"Copied by ./b skills sync from {mjlab}/{BENCHMARKS} (else {SPEC})\n" + "\n".join(sources) + "\n")
 
 
 def run(mjlab, args, **kwargs):

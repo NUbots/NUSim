@@ -381,9 +381,9 @@ void ViewerUI::render_simulation_controls(UIState& state) {
     if (state.skill_keys) {
         // Keyboard play's drills. Pressing the one running starts it again.
         section(font_small_, "TRAINING");
-        static constexpr const char* drills[2][2] = {{"Free play", "free"}, {"Rondo", "rondo"}};
-        const float tw = std::floor((ImGui::GetContentRegionAvail().x - gap) / 2.0f);
-        for (int i = 0; i < 2; ++i) {
+        static constexpr const char* drills[3][2] = {{"Free play", "free"}, {"Rondo", "rondo"}, {"Defend", "rondo_defend"}};
+        const float tw = std::floor((ImGui::GetContentRegionAvail().x - 2 * gap) / 3.0f);
+        for (int i = 0; i < 3; ++i) {
             if (i > 0) {
                 ImGui::SameLine(0.0f, gap);
             }
@@ -393,6 +393,9 @@ void ViewerUI::render_simulation_controls(UIState& state) {
         }
         if (state.skill_drill == "rondo") {
             note(font_small_, C_MUTED, "3 pass round the robot in the middle; the keys play whoever the ball is going to. Rondo again: new round.");
+        }
+        else if (state.skill_drill == "rondo_defend") {
+            note(font_small_, C_MUTED, "You're the robot in the middle: W A S D walk, touch the ball to win it. Defend again: new round.");
         }
     }
 

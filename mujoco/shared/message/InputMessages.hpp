@@ -45,14 +45,14 @@ namespace k1sim::message {
         double aim_angle = 0.0;             // world frame (rad)
         double charge    = 0.0;             // 0 = a tap, 1 = full power
 
-        // The training drill running ("free" or "rondo") and the robot the keys play: the camera's
+        // The training drill running ("free", "rondo" or "rondo_defend") and the robot the keys play: the camera's
         // Follow and Behind track its trunk, and in a drill a marker hangs over it.
         std::string drill      = "free";
         std::string robot_body = "Trunk";
         bool marker            = false;
     };
 
-    // From the viewer's Training buttons to module::SkillPlayer: start a drill ("free", "rondo").
+    // From the viewer's Training buttons to module::SkillPlayer: start a drill ("free", "rondo", "rondo_defend").
     // Asking for the one already running starts it again.
     struct SkillDrill {
         std::string name;

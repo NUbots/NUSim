@@ -17,11 +17,12 @@
 #   R        stand the robot back up at its start
 #   P        pause (Space is taken)
 #
-# The interface these settings follow is mjlab's policies/CONTROLLER_INTERFACE.md (2026-11-18).
+# The interface these settings follow is mjlab's policies/CONTROLLER_INTERFACE.md (2026-11-18); the
+# policies are the 2026-11-20 real-gains set in its policies/BENCHMARKS.md.
 
 # Exported policies (ONNX -> `actions` [1, 22]), relative to mujoco/. Joint order, default pose,
 # action scale and PD gains are read from each file's metadata. Refresh them from an mjlab checkout
-# with `./b skills sync`, which copies the files the spec names.
+# with `./b skills sync`, which copies the files BENCHMARKS.md picks (the walk: the spec's).
 policies:
   walk: policies/skills/walk.onnx # 75 inputs, its own gains; empty = no walking
   receive: policies/skills/receive.onnx # the walking version: works from standing and walking
@@ -34,14 +35,17 @@ policies:
   # everything, which is what the spec now says (the kick is trained out of a dribble too).
   kick_moving: ""
 
-# PD gains for the ball skills (receive, dribble, kick), JointIndexK1 order, from the spec's section
-# 4. Used only for a policy file whose own metadata gains are placeholders (kp 1, kd 0), as the
-# exports with the motor torque-speed model have. Walk always uses its file's own gains.
+# PD gains for the ball skills (receive, dribble, kick), JointIndexK1 order. Used only for a policy
+# file whose own metadata gains are placeholders (kp 1, kd 0), as the exports with the motor
+# torque-speed model have. Walk always uses its file's own gains. The 2026-11-20 set was trained on
+# the real robot's gains (mjlab policies/BENCHMARKS.md): head 4 / 0.25, arms 10 / 1, legs 80 / 4,
+# ankles 50 / 2, the same as the walk's, so there is no gain switch at a hand-over. (The 2026-11-19
+# set's were the spec's section 4: legs about 18-60 / 2-5, everything else 3.948 / 0.251.)
 ball_skill_gains:
-  kp: [3.948, 3.948, 3.948, 3.948, 3.948, 3.948, 3.948, 3.948, 3.948, 3.948,
-       30.201, 21.448, 17.846, 60.402, 35.692, 35.692, 30.201, 21.448, 17.846, 60.402, 35.692, 35.692]
-  kd: [0.251, 0.251, 0.251, 0.251, 0.251, 0.251, 0.251, 0.251, 0.251, 0.251,
-       3.605, 2.560, 2.130, 4.807, 4.260, 4.260, 3.605, 2.560, 2.130, 4.807, 4.260, 4.260]
+  kp: [4, 4, 10, 10, 10, 10, 10, 10, 10, 10,
+       80, 80, 80, 80, 50, 50, 80, 80, 80, 80, 50, 50]
+  kd: [0.25, 0.25, 1, 1, 1, 1, 1, 1, 1, 1,
+       4, 4, 4, 4, 2, 2, 4, 4, 4, 4, 2, 2]
 
 # Seconds between a ball skill's step and its joint targets reaching the servos. They were trained
 # with 10 to 40 ms here; with none they over-correct and the gait is visibly jittery.
@@ -155,9 +159,16 @@ ball_contact:
 # teammate the ball is rolling to: a shot (Space) aims at the teammate whose passing lane is further
 # from the defender, powered so a tap reaches them at arrival_speed; W A S D still swing it, and let
 # go within snap_deg of a teammate it locks onto them. A first-time pass (Q as it comes) goes to the
-# same teammate, or with a direction held to the teammate within key_snap_deg of it. The round
-# starts again when the defender touches the ball or it rolls out_margin beyond the corners; R
-# starts it again at once.
+# same teammate, or with a direction held to the teammate within key_snap_deg of it. A pass only
+# goes into receive for a teammate it will roll to (within receive_reach m of its feet, before it
+# stops); one that reaches nobody goes to whoever is nearest where it stops, in walk, to go and get
+# it. The round starts again when the defender's body touches the ball (bumping a robot doesn't
+# count) or it rolls out_margin beyond the corners; R starts it again at once.
+#
+# rondo_defend (the Defend button): you play the robot in the middle with W A S D, and the computer
+# plays the three. It passes to the open teammate (a lane at least ai_lane_open m from you) after
+# holding the ball ai_hold s, or at once with you within ai_pressure m; pressed with no lane open it
+# dribbles away from you; with you within ai_first_time m of the receiver it passes first time.
 rondo:
   centre: [0.0, 0.0]
   side: 4.0 # m between teammates (receive was trained on passes from up to 4 m)
@@ -168,7 +179,7 @@ rondo:
   defender_accel: 3.0 # m/s^2: its walking speed changes no faster (the walk falls on a jump to standing)
   defender_close_speed: 0.6 # m/s at the ball, rising 1.5 m/s per metre away, so it doesn't run through robots
   defender_lead: 1.0 # s it looks ahead along the ball's roll, at most
-  steal_distance: 0.3 # m from the defender's trunk: the ball is won
+  receive_reach: 0.6 # m to the side of a pass's path a teammate can still receive it (trained to 0.45)
   out_margin: 2.0
   next_round: 1.5 # s after an interception or a lost ball
   # Teammates off the ball walk back to their corner, facing the ball, and step sideways off it
@@ -180,8 +191,13 @@ rondo:
   arrival_speed: 1.8 # m/s
   snap_deg: 10
   key_snap_deg: 30
+  chase_speed: 0.8 # m/s a computer teammate walks to a loose ball at
+  ai_hold: [0.6, 1.8] # s
+  ai_pressure: 1.6 # m
+  ai_lane_open: 0.7 # m
+  ai_first_time: 1.8 # m
 
-# The drill to start in: free or rondo (then switch with the Training buttons).
+# The drill to start in: free, rondo or rondo_defend (then switch with the Training buttons).
 drill: free
 
 # Where the robots free play doesn't use stand (x, y), facing the field: off the -y touchline.
@@ -192,7 +208,7 @@ camera:
   offset: [0.06, 0.0, 0.07] # m, in the Head_2 body frame
   hfov_deg: 106.2 # the K1 head camera's calibration, as the 2026-11-18 policies were trained with
   vfov_deg: 95.0
-  range: 5.0
+  range: 9.0 # m: the 2026-11-20 receive / first-touch policies were trained to 9 m (5 m before)
 
 # Key presses at given sim times, for running without a keyboard (e.g. --headless):
 #   script:

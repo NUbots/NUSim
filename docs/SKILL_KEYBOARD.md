@@ -55,21 +55,25 @@ The status line at the top left says what is loaded.
 
 ## Training drills
 
-When keyboard play is running, the Simulation panel has a **Training** section with two buttons. Pressing the one
-already running starts it again.
+When keyboard play is running, the Simulation panel has a **Training** section with three buttons. Pressing the
+one already running starts it again.
 
 - **Free play** is everything above: one robot, the ball where the scene puts it. The other robots stand on the -y
   touchline out of the way (`park` in the config).
 - **Rondo**: three teammates stand at the corners of a 4 m triangle facing in, one with the ball at its feet, and
   the fourth stands in the middle. Pass it round and keep it away from the robot in the middle.
+- **Defend**: the same rondo the other way round: you play the robot in the middle, the computer plays the three
+  (see [Defending](#defending)).
 
 The rondo needs four robots, so `./b skills` now spawns four unless you pass `--robots` (`--robots 1` gives the
 single-robot scene, and the Rondo button then says why it can't start).
 
 In the rondo:
 
-- **The keys play whoever the ball is going to.** When a pass or first-time pass leaves the robot you're playing
-  and rolls towards a teammate (within 30 degrees), the keys switch to that teammate. A cyan arrow hangs over the
+- **The keys play whoever the ball is going to.** When a pass or first-time pass leaves the robot you're playing,
+  its roll is predicted (rolling at 0.9 m/s²), and the teammate it will pass within 0.6 m of (`rondo.receive_reach`)
+  before it stops receives it; the keys switch to that teammate. A pass that will reach nobody puts nobody in
+  receive: the keys go, in walk, to the teammate nearest where it will stop, with "off target: walk to the ball". A cyan arrow hangs over the
   robot you're playing. Direction keys still held from the pass don't count for the new robot until you let them
   go, so a key held to aim the pass doesn't turn into a first touch.
 - **Passes auto-aim at a teammate.** `Space` aims at whichever of the other two has the passing lane further from
@@ -81,12 +85,19 @@ In the rondo:
 - **The defender** walks at the ball with the walk policy, as fast as it goes (2 m/s), aiming where the ball will be
   when it gets there. It waits 2 s after a round starts, eases off near the ball so it doesn't run through the robot
   holding it, and changes speed at no more than 3 m/s². It doesn't kick: touching the ball wins it.
-- **A round ends** when the defender touches the ball (or gets within 0.3 m of its trunk), or the ball rolls 2 m
-  past the triangle's corners. The next round starts 1.5 s later with the next teammate on the ball. `R` starts a
-  new round at once. The status line counts passes completed, interceptions and lost balls.
+- **A round ends** when the defender's body touches the ball, or the ball rolls 2 m past the triangle's corners.
+  Bumping into a robot doesn't count: a contact between the ball and the defender does, and so does a jump in the
+  ball's speed between two control steps if the defender is then within 10 cm of it and nearer it than any teammate
+  (`mj_geomDistance`). The next round starts 1.5 s later with the next teammate on the ball. `R` starts a new round at
+  once. The status line counts the passes completed this round in a row (a pass counts when the teammate it was
+  played to touches it), the best round, interceptions and lost balls.
 - **The camera** switches to Free, looking over the triangle. Follow and Behind follow the robot you're playing.
   Switching back to free play puts the camera behind the robot again.
 - A robot that falls is stood back up at its spot after 3 s.
+
+A robot waiting on a pass that rolls past it, away from it, or stops out of its reach goes straight back to walk, in
+free play too (`release_missed` in `SkillLogic.hpp`'s config: further than 0.7 m, coming no closer than 0.15 m/s,
+0.4 s after the pass is played), so you can walk to the ball instead of standing in receive until it times out.
 
 Teammates you're not playing stay available. After a pass they go back to walk and head for their corner of the
 triangle, turned to face the ball so the next pass comes from in front, as receive was trained. Far from their corner
@@ -97,6 +108,26 @@ is clear (by up to 1.2 m), and goes back to the corner once it is. A pass played
 trained walk-to-receive hand-over. `rondo:` in the config sets the triangle's size and centre, the
 defender's speed, turn rate, head start and lead, the support movement (`support_speed`, `support_tolerance`,
 `lane_clear`, `support_shift`) and the auto-aim. `drill: rondo` starts in the rondo.
+
+## Defending
+
+The **Defend** button (`drill: rondo_defend`) puts you in the middle. `W A S D` walk the robot there (`Shift` at
+2 m/s), always with the walk policy: it never takes the ball, touching it wins it ("you won it after 3 passes in
+6.2 s!"). The cyan arrow hangs over it, and Follow and Behind follow it.
+
+The computer plays the three teammates with the same policies and switching rules, through the same keys a person
+would press:
+
+- With the ball, it holds it for 0.6 to 1.8 s (`rondo.ai_hold`), then passes to the open teammate, with a tap of the
+  pass key, if the defender is at least 0.7 m from that lane (`ai_lane_open`) and the ball sits still in front. With
+  the defender within 1.6 m of the ball (`ai_pressure`) it passes at once if a lane is open; otherwise, within 2 m, it
+  dribbles away from the defender, bending back towards its corner.
+- A pass coming in with the defender within 1.8 m of the receiver (`ai_first_time`) is passed on first time.
+- A kick that went nowhere, or a trap that never settled, is picked up with the dribble; a ball that got away is
+  walked to at up to 0.8 m/s (`chase_speed`) and picked up.
+
+Headless, with nobody defending, four 120 s runs in the web port made 16 to 23 passes each, with a pass reaching
+nobody about once in five; rounds mostly ended with a poorly trapped pass rolling out.
 
 ## Camera
 
@@ -173,14 +204,17 @@ the robot and ball are.
 
 ## Policies
 
-`./b skills sync` reads the spec's policy table and copies each file it names into `mujoco/policies/skills/` as
-`walk`, `receive`, `dribble`, `kick`, `kick_air`, `first_touch` and `first_pass` `.onnx`, and records where each came
-from in `SOURCES.txt`. Leave `kick_air`, `first_touch` or `first_pass` empty in the config and that action is off.
+`./b skills sync` copies mjlab's current best set into `mujoco/policies/skills/` as `walk`, `receive`, `dribble`,
+`kick`, `kick_air`, `first_touch` and `first_pass` `.onnx`, and records where each came from in `SOURCES.txt`. The
+ball skills are the checkpoints the first `| Skill | File |` table of mjlab's `policies/BENCHMARKS.md` names (a
+`folder/model_<n>` is its `model_<n>.onnx`, or the folder's one export when that is the checkpoint's); a skill that
+table doesn't name (the walk) comes from the spec's policy table. Leave `kick_air`, `first_touch` or `first_pass` empty in the config and that action is off.
 
 Joint order, default pose and action scale are read from each file's metadata. So are the PD gains, except that the
 ball-skill files exported with the motor torque-speed model carry placeholder gains (kp 1, kd 0). For those the
-module uses `ball_skill_gains` from the config, which are the spec's section 4 values, and says so in the log at
-start-up. A file with a different joint order or input size stops the sim at start-up with the reason.
+module uses `ball_skill_gains` from the config, and says so in the log at start-up. The 2026-11-20 set was trained
+on the real robot's gains (legs 80 / 4, ankles 50 / 2, arms 10 / 1, head 4 / 0.25, the same as the walk's), which is
+what the config now has; the 2026-11-19 set needed the spec's section 4 values instead. A file with a different joint order or input size stops the sim at start-up with the reason.
 
 ## What to expect
 

@@ -61,7 +61,7 @@ struct UIState {
     int camera_mode = 0;
     // Keyboard play is running (module::SkillPlayer): Space is its shoot key, so P pauses.
     bool skill_keys = false;
-    // The training drill keyboard play is running ("free" or "rondo").
+    // The training drill keyboard play is running ("free", "rondo" or "rondo_defend").
     std::string skill_drill = "free";
 
     // Latest report from module::MatchReferee; has_game stays false in roles without it.
@@ -131,7 +131,7 @@ struct UIActions {
     std::optional<bool> pause;
     std::optional<double> speed;
     bool reset_sim      = false;
-    std::string skill_drill;  // keyboard play: start this training drill ("free", "rondo")
+    std::string skill_drill;  // keyboard play: start this training drill ("free", "rondo", "rondo_defend")
     bool match_primary  = false;  // the referee's main button: Start / Pause / Resume
     bool match_new_game = false;
     bool match_ready    = false;  // Game mode: step the kick-off by hand

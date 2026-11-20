@@ -10,6 +10,10 @@
 //   F. a new pass returns to receive
 //   J. passing to teammates: aimed and powered at the preferred one, re-aimed and locked on with
 //      the keys, and first-time passes to them
+//   K. a pass that won't be received (rolling past or away, or stopped out of reach) goes back to
+//      walk at once, from receive or a loaded first touch; one still coming in does not
+//   L. a direction given as an angle (the computer playing a robot) dribbles that way
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 
@@ -34,6 +38,7 @@ namespace {
 
     constexpr double DT = 0.02;
 
+    // A ball at (ball_x, ball_y), the robot at the origin. Moving, it rolls straight at the robot.
     World world_with_ball(double ball_x, double ball_y, double speed = 0.0, double yaw = 0.0) {
         World w;
         w.yaw        = yaw;
@@ -42,6 +47,9 @@ namespace {
         w.ball_y     = ball_y;
         w.ball_z     = w.ball_radius;
         w.ball_speed = speed;
+        const double d = std::max(std::hypot(ball_x, ball_y), 1e-9);
+        w.ball_vx      = -speed * ball_x / d;
+        w.ball_vy      = -speed * ball_y / d;
         return w;
     }
 
@@ -395,12 +403,20 @@ int main() {
         check(near(std::atan2(d.command_world[1], d.command_world[0]), std::atan2(-6.0, 7.0), 1e-6),
               "I: aimed at the goal from where the robot is");
 
-        // Never reached: back to receiving.
+        // Never reached, the ball lying out of reach: walk, to go and get it (K).
         Logic missed(cfg);
         missed.on_pass(M_PI);
         run(missed, none, coming, 0.4);
         missed.tick(left, coming, DT);
-        check(run(missed, none, world_with_ball(3.0, 2.0), 4.0).skill == Skill::RECEIVE, "I: no touch, back to receive");
+        check(run(missed, none, world_with_ball(3.0, 2.0), 0.1).skill == Skill::WALK, "I: no touch, the ball out of reach: walk");
+        // With release_missed off, the timeout puts it back to receiving.
+        Config waiting = cfg;
+        waiting.release_missed = false;
+        Logic timed_out(waiting);
+        timed_out.on_pass(M_PI);
+        run(timed_out, none, coming, 0.4);
+        timed_out.tick(left, coming, DT);
+        check(run(timed_out, none, world_with_ball(3.0, 2.0), 4.0).skill == Skill::RECEIVE, "I: no touch, back to receive");
 
         // The air shot: its own key, its own kind of kick; the other key's release doesn't fire it.
         Logic air(cfg);
@@ -470,6 +486,61 @@ int main() {
         check(keyed.on_first_pass(aim_right, coming), "J: Q with a direction held");
         d = keyed.tick(aim_right, coming, DT);
         check(near(d.aim_angle, std::atan2(-1.7, 3.0), 1e-6), "J: the direction held picks the teammate near it");
+    }
+
+    {  // K
+        Config cfg;
+        cfg.walk_enabled = cfg.start_walking = cfg.first_touch_enabled = true;
+        cfg.frame        = Config::Frame::FIELD;
+        const Keys none;
+        auto rolling = [](double x, double y, double vx, double vy) {
+            World w    = world_with_ball(x, y, std::hypot(vx, vy));
+            w.ball_vx  = vx;
+            w.ball_vy  = vy;
+            return w;
+        };
+        // Coming straight in: still receiving after the grace.
+        Logic coming(cfg);
+        coming.on_pass(std::acos(-1.0));  // rolling towards -x
+        check(run(coming, none, rolling(2.0, 0.0, -2.0, 0.0), 1.0).skill == Skill::RECEIVE, "K: a pass coming in is received");
+        // Rolled past (now behind the robot, going away): walk.
+        Logic past(cfg);
+        past.on_pass(std::acos(-1.0));
+        run(past, none, rolling(2.0, 0.0, -2.0, 0.0), 0.5);
+        check(run(past, none, rolling(-1.0, 0.9, -1.5, 0.0), DT).skill == Skill::WALK, "K: a pass that rolled past: walk");
+        // Stopped short, out of reach: walk.
+        Logic short_(cfg);
+        short_.on_pass(std::acos(-1.0));
+        check(run(short_, none, rolling(1.5, 0.0, 0.0, 0.0), 0.5).skill == Skill::WALK, "K: a pass that stopped short: walk");
+        // Not within the grace after the pass is played (the ball hasn't been moved yet).
+        Logic early(cfg);
+        early.on_pass(std::acos(-1.0));
+        check(run(early, none, rolling(1.5, 0.0, 0.0, 0.0), 0.2).skill == Skill::RECEIVE, "K: no miss within miss_grace");
+        // A first touch loaded, the ball rolling past: walk too.
+        Logic touch(cfg);
+        touch.on_pass(std::acos(-1.0));
+        Keys left_key;
+        left_key.left = true;
+        run(touch, left_key, rolling(2.0, 0.0, -2.0, 0.0), 0.5);
+        check(touch.skill() == Skill::FIRST_TOUCH, "K: first touch loaded");
+        check(run(touch, none, rolling(-1.0, 0.9, -1.5, 0.0), DT).skill == Skill::WALK, "K: a first touch that missed: walk");
+        // Off: stays in receive as before.
+        Config off = cfg;
+        off.release_missed = false;
+        Logic kept(off);
+        kept.on_pass(std::acos(-1.0));
+        check(run(kept, none, rolling(1.5, 0.0, 0.0, 0.0), 0.5).skill == Skill::RECEIVE, "K: release_missed off keeps receiving");
+    }
+
+    {  // L
+        Logic logic;
+        run(logic, {}, world_with_ball(0.2, 0.0), 0.7);
+        Keys steer;
+        steer.steer = true;
+        steer.angle = std::acos(-1.0) / 2.0;  // +y
+        const Decision d = logic.tick(steer, world_with_ball(0.2, 0.0), DT);
+        check(d.skill == Skill::DRIBBLE && near(d.command_world[0], 0.0, 1e-9) && near(d.command_world[1], logic.config().dribble_speed),
+              "L: an angle dribbles that way");
     }
 
     if (failures == 0) {
