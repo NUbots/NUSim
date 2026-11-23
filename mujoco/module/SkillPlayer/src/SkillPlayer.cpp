@@ -1214,6 +1214,19 @@ namespace k1sim::module {
             camera->distance  = 2.6 * rondo_side();
             camera->azimuth   = 90.0;
             camera->elevation = -55.0;
+            if (tracking()) {
+                // The tracking rondos: low and close, 2 m behind the teammate on the halfway line,
+                // looking over it into the triangle.
+                const auto spot     = rondo_spot(0);
+                const double length = std::max(std::hypot(rondo_.centre[0] - spot[0], rondo_.centre[1] - spot[1]), 1e-6);
+                const double ux = (rondo_.centre[0] - spot[0]) / length, uy = (rondo_.centre[1] - spot[1]) / length;
+                const double behind = 2.0, height = 3.2, ahead = 0.8 * length, flat = behind + ahead;
+                camera->x         = spot[0] + ahead * ux;
+                camera->y         = spot[1] + ahead * uy;
+                camera->distance  = std::hypot(flat, height);
+                camera->azimuth   = std::atan2(uy, ux) * 180.0 / PI;
+                camera->elevation = -std::atan2(height, flat) * 180.0 / PI;
+            }
             emit(camera);
             log<NUClear::LogLevel::INFO>(sharing()      ? "SkillPlayer: rondo vs the EKF: you play the robot in the middle, the three track you with their cameras;"
                                          : tracking()  ? "SkillPlayer: rondo vs solo eyes: you play the robot in the middle, each of the three tracks you with its own camera alone;"
