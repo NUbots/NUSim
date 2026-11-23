@@ -1215,12 +1215,12 @@ namespace k1sim::module {
             camera->azimuth   = 90.0;
             camera->elevation = -55.0;
             if (tracking()) {
-                // The tracking rondos: close and steep, 1 m behind the teammate on the halfway line,
+                // The tracking rondos: close and steep, 1.4 m behind the teammate on the halfway line,
                 // looking over it into the triangle.
                 const auto spot     = rondo_spot(0);
                 const double length = std::max(std::hypot(rondo_.centre[0] - spot[0], rondo_.centre[1] - spot[1]), 1e-6);
                 const double ux = (rondo_.centre[0] - spot[0]) / length, uy = (rondo_.centre[1] - spot[1]) / length;
-                const double behind = 1.0, height = 3.0, ahead = 0.6 * length, flat = behind + ahead;  // about 46 deg down
+                const double behind = 1.4, height = 3.4, ahead = 0.6 * length, flat = behind + ahead;  // about 46 deg down
                 camera->x         = spot[0] + ahead * ux;
                 camera->y         = spot[1] + ahead * uy;
                 camera->distance  = std::hypot(flat, height);
