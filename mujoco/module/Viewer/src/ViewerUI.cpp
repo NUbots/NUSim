@@ -391,11 +391,30 @@ void ViewerUI::render_simulation_controls(UIState& state) {
                 pending_.skill_drill = drills[i][1];
             }
         }
+        // The rondo again, defended against three who only know where you are from their cameras: sharing
+        // their detections in one EKF, or each on its own.
+        ImGui::Dummy({0.0f, dp(2)});
+        const float hw = std::floor((ImGui::GetContentRegionAvail().x - gap) / 2.0f);
+        if (button("Shared eyes (EKF)", hw, dp(30), state.skill_drill == "rondo_ekf" ? Kind::Selected : Kind::Secondary)) {
+            pending_.skill_drill = "rondo_ekf";
+        }
+        ImGui::SameLine(0.0f, gap);
+        if (button("Solo eyes", hw, dp(30), state.skill_drill == "rondo_solo" ? Kind::Selected : Kind::Secondary)) {
+            pending_.skill_drill = "rondo_solo";
+        }
         if (state.skill_drill == "rondo") {
             note(font_small_, C_MUTED, "3 pass round the robot in the middle; the keys play whoever the ball is going to. Rondo again: new round.");
         }
         else if (state.skill_drill == "rondo_defend") {
             note(font_small_, C_MUTED, "You're the robot in the middle: W A S D walk, touch the ball to win it. Defend again: new round.");
+        }
+        else if (state.skill_drill == "rondo_solo") {
+            note(font_small_, C_MUTED, "No communication: each of the three tracks you with its own camera alone (its own coloured "
+                                       "track) and decides from that. Come at the one with the ball from outside its view.");
+        }
+        else if (state.skill_drill == "rondo_ekf") {
+            note(font_small_, C_MUTED, "You're in the middle of a wider triangle. The three share one EKF of what their cameras see of you "
+                                       "(views down the left, track in orange): hide behind a robot or out of view and they pass into you.");
         }
     }
 

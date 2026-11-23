@@ -116,6 +116,155 @@ namespace k1sim::module {
         message::SkillStatus g_skill_status;
         // A camera change keyboard play asked for (a drill starting), applied by the render loop.
         std::optional<message::CameraRequest> g_camera_request;
+        // Keyboard play's rondo_ekf: the teammates' shared track of the defender and what their head
+        // cameras see (under g_skill_mutex), drawn into the scene and as camera views down the left.
+        message::DefenderTrack g_track;
+        struct InsetView {
+            message::DefenderTrack::View view;
+            mjvGLCamera camera[2];
+        };
+        std::vector<InsetView> g_insets;  // built under the sim lock, drawn after the main view
+
+        // Draws an outline of `rect` `thick` pixels wide.
+        void outline(const mjrRect& rect, int thick, float r, float g, float b, float a) {
+            mjr_rectangle({rect.left, rect.bottom, rect.width, thick}, r, g, b, a);
+            mjr_rectangle({rect.left, rect.bottom + rect.height - thick, rect.width, thick}, r, g, b, a);
+            mjr_rectangle({rect.left, rect.bottom, thick, rect.height}, r, g, b, a);
+            mjr_rectangle({rect.left + rect.width - thick, rect.bottom, thick, rect.height}, r, g, b, a);
+        }
+
+        // The track(s) in the scene: a flat 2-sigma ellipse and a see-through ghost of the robot where
+        // the three (or each one) think the defender is, an arrow for its velocity, and each camera's last
+        // detection as a dot with a line back to the camera (bright while fresh).
+        void draw_track(const message::DefenderTrack& t) {
+            auto room = [] { return scn.ngeom < scn.maxgeom; };
+            static constexpr float colours[3][3] = {{0.25f, 0.6f, 1.0f}, {0.3f, 0.9f, 0.4f}, {0.95f, 0.4f, 0.9f}};
+            for (std::size_t k = 0; k < t.views.size() && k < 3; ++k) {
+                const auto& v = t.views[k];
+                if (!v.detected || v.age > 1.0 || !room()) {
+                    continue;
+                }
+                const float fade    = static_cast<float>(1.0 - 0.7 * std::min(v.age / 1.0, 1.0));
+                const float rgba[4] = {colours[k][0], colours[k][1], colours[k][2], 0.9f * fade};
+                const mjtNum size[3] = {0.06, 0.06, 0.06};
+                const mjtNum pos[3]  = {v.det_x, v.det_y, 0.06};
+                mjvGeom& dot = scn.geoms[scn.ngeom++];
+                mjv_initGeom(&dot, mjGEOM_SPHERE, size, pos, nullptr, rgba);
+                if (room()) {
+                    const mjtNum from[3] = {v.cam_x, v.cam_y, 0.9}, to[3] = {v.det_x, v.det_y, 0.06};
+                    const float line[4]  = {colours[k][0], colours[k][1], colours[k][2], 0.5f * fade};
+                    mjvGeom& ray         = scn.geoms[scn.ngeom++];
+                    mjv_initGeom(&ray, mjGEOM_LINE, nullptr, nullptr, nullptr, line);
+                    mjv_connector(&ray, mjGEOM_LINE, 2.0, from, to);
+                }
+            }
+            // One orange track when they share it, else each teammate's own in its camera's colour.
+            for (std::size_t k = 0; k < t.tracks.size() && k < 3; ++k) {
+                const auto& tr = t.tracks[k];
+                if (!tr.valid) {
+                    continue;
+                }
+                const float* col = t.shared ? nullptr : colours[k];
+                const float r = col ? col[0] : 1.0f, g = col ? col[1] : 0.55f, b = col ? col[2] : 0.1f;
+                // The covariance's axes: eigenvectors of [[cxx, cxy], [cxy, cyy]].
+                const double mean = 0.5 * (tr.cxx + tr.cyy), diff = std::sqrt(0.25 * (tr.cxx - tr.cyy) * (tr.cxx - tr.cyy) + tr.cxy * tr.cxy);
+                const double l1 = std::max(mean + diff, 1e-6), l2 = std::max(mean - diff, 1e-6);
+                const double angle = 0.5 * std::atan2(2.0 * tr.cxy, tr.cxx - tr.cyy);
+                const double c = std::cos(angle), sn = std::sin(angle);
+                const mjtNum mat[9] = {c, -sn, 0.0, sn, c, 0.0, 0.0, 0.0, 1.0};
+                if (room()) {
+                    const mjtNum size[3] = {std::min(2.0 * std::sqrt(l1), 4.0), std::min(2.0 * std::sqrt(l2), 4.0), 0.005};
+                    const mjtNum pos[3]  = {tr.x, tr.y, 0.012 + 0.002 * k};
+                    const float rgba[4]  = {r, g, b, 0.3f};
+                    mjvGeom& ellipse     = scn.geoms[scn.ngeom++];
+                    mjv_initGeom(&ellipse, mjGEOM_ELLIPSOID, size, pos, mat, rgba);
+                }
+                if (room()) {
+                    const mjtNum size[3] = {0.16, 0.25, 0.0};
+                    const mjtNum pos[3]  = {tr.x, tr.y, 0.42};
+                    const float rgba[4]  = {r, g, b, 0.3f};
+                    mjvGeom& body        = scn.geoms[scn.ngeom++];
+                    mjv_initGeom(&body, mjGEOM_CAPSULE, size, pos, nullptr, rgba);
+                }
+                if (room() && std::hypot(tr.vx, tr.vy) > 0.1) {
+                    const mjtNum from[3] = {tr.x, tr.y, 0.05}, to[3] = {tr.x + tr.vx, tr.y + tr.vy, 0.05};
+                    const float rgba[4]  = {r, g, b, 0.9f};
+                    mjvGeom& arrow       = scn.geoms[scn.ngeom++];
+                    mjv_initGeom(&arrow, mjGEOM_ARROW, nullptr, nullptr, nullptr, rgba);
+                    mjv_connector(&arrow, mjGEOM_ARROW, 0.025, from, to);
+                }
+                if (room() && (t.truth_x != 0.0 || t.truth_y != 0.0)) {
+                    // The error, as a thin red line from the truth to the track.
+                    const mjtNum from[3] = {t.truth_x, t.truth_y, 0.03}, to[3] = {tr.x, tr.y, 0.03};
+                    const float red[4]   = {1.0f, 0.15f, 0.1f, 0.8f};
+                    mjvGeom& error       = scn.geoms[scn.ngeom++];
+                    mjv_initGeom(&error, mjGEOM_LINE, nullptr, nullptr, nullptr, red);
+                    mjv_connector(&error, mjGEOM_LINE, 3.0, from, to);
+                }
+            }
+        }
+
+        // The teammates' camera views, stacked down the left edge (the first on top, the last at the bottom), each with the
+        // defender's box (green: seen; yellow: in view but hidden) and a caption.
+        void draw_insets(int width, int height, int scene_geoms, double aspect) {
+            if (g_insets.empty()) {
+                return;
+            }
+            const int margin = std::max(8, height / 120);
+            int w            = std::clamp(width / 5, 160, 480);
+            int h            = static_cast<int>(w / std::max(aspect, 0.5));
+            const int room   = height - height / 6;  // keep the status text at the top clear
+            const int n      = static_cast<int>(g_insets.size());
+            if (n * (h + margin) + margin > room) {
+                h = std::max(60, (room - margin) / n - margin);
+                w = static_cast<int>(h * aspect);
+            }
+            mjvGLCamera saved[2] = {scn.camera[0], scn.camera[1]};
+            const int all_geoms  = scn.ngeom;
+            scn.ngeom            = scene_geoms;  // the robots' views without the overlays
+            static constexpr float colours[3][3] = {{0.25f, 0.6f, 1.0f}, {0.3f, 0.9f, 0.4f}, {0.95f, 0.4f, 0.9f}};
+            for (int i = 0; i < n; ++i) {
+                const InsetView& inset = g_insets[static_cast<std::size_t>(i)];
+                const mjrRect rect{margin, margin + (n - 1 - i) * (h + margin), w, h};  // the first on top
+                const auto* colour = colours[i % 3];
+                mjr_rectangle({rect.left - 3, rect.bottom - 3, rect.width + 6, rect.height + 6}, colour[0], colour[1], colour[2], 1.0f);
+                scn.camera[0] = inset.camera[0];
+                scn.camera[1] = inset.camera[1];
+                mjr_render(rect, &scn, &con);
+                const auto& v = inset.view;
+                if (v.seen || v.occluded) {
+                    auto px = [&](double u) { return rect.left + static_cast<int>((u / aspect + 1.0) * 0.5 * rect.width); };
+                    auto py = [&](double vv) { return rect.bottom + static_cast<int>((vv + 1.0) * 0.5 * rect.height); };
+                    const int x0 = std::clamp(px(v.u0), rect.left, rect.left + rect.width - 2);
+                    const int x1 = std::clamp(px(v.u1), x0 + 2, rect.left + rect.width);
+                    const int y0 = std::clamp(py(v.v0), rect.bottom, rect.bottom + rect.height - 2);
+                    const int y1 = std::clamp(py(v.v1), y0 + 2, rect.bottom + rect.height);
+                    if (v.seen) {
+                        outline({x0, y0, x1 - x0, y1 - y0}, 2, 0.2f, 1.0f, 0.3f, 1.0f);
+                    }
+                    else {
+                        outline({x0, y0, x1 - x0, y1 - y0}, 2, 1.0f, 0.85f, 0.1f, 0.8f);
+                    }
+                }
+                char caption[96];
+                if (v.seen) {
+                    std::snprintf(caption, sizeof(caption), "Robot %d: sees you", v.robot_id);
+                }
+                else if (v.occluded) {
+                    std::snprintf(caption, sizeof(caption), "Robot %d: you're hidden", v.robot_id);
+                }
+                else if (v.detected) {
+                    std::snprintf(caption, sizeof(caption), "Robot %d: lost you %.1f s ago", v.robot_id, v.age);
+                }
+                else {
+                    std::snprintf(caption, sizeof(caption), "Robot %d: hasn't seen you", v.robot_id);
+                }
+                mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, rect, caption, nullptr, &con);
+            }
+            scn.ngeom     = all_geoms;
+            scn.camera[0] = saved[0];
+            scn.camera[1] = saved[1];
+        }
 
         MatchPanel match_panel;
         std::function<void(const message::MatchCommand&)> g_send_match_command;
@@ -1016,6 +1165,11 @@ namespace k1sim::module {
             g_camera_request = request;
         });
 
+        on<Trigger<message::DefenderTrack>>().then([](const message::DefenderTrack& track) {
+            std::lock_guard<std::mutex> lock(g_skill_mutex);
+            g_track = track;
+        });
+
         on<Trigger<message::SkillStatus>>().then([](const message::SkillStatus& status) {
             std::lock_guard<std::mutex> lock(g_skill_mutex);
             g_skill_status = status;
@@ -1066,6 +1220,8 @@ namespace k1sim::module {
             // Keyboard play: the robot the keys play (the camera follows it) and any camera change it
             // asked for, taken before the sim lock.
             std::string tracked_body = "Trunk";
+            int scene_geoms          = 0;     // scn's geoms before the overlays are added
+            double inset_aspect      = 1.22;
             std::optional<message::CameraRequest> camera_request;
             if (g_skill_keys.load(std::memory_order_relaxed)) {
                 std::lock_guard<std::mutex> skill_lock(g_skill_mutex);
@@ -1111,6 +1267,30 @@ namespace k1sim::module {
                 }
                 apply_camera_mode(tracked_body);
                 mjv_updateScene(g_model, g_data, &opt, &pert, &cam, mjCAT_ALL, &scn);
+                scene_geoms = scn.ngeom;
+                // rondo_ekf: each teammate's head camera, for its view down the left.
+                g_insets.clear();
+                if (g_skill_keys.load(std::memory_order_relaxed)) {
+                    std::lock_guard<std::mutex> skill_lock(g_skill_mutex);
+                    if (g_track.active) {
+                        inset_aspect = g_track.aspect;
+                        const mjvGLCamera saved[2] = {scn.camera[0], scn.camera[1]};
+                        for (const auto& view : g_track.views) {
+                            if (view.camera < 0 || view.camera >= g_model->ncam) {
+                                continue;
+                            }
+                            mjvCamera fixed;
+                            mjv_defaultCamera(&fixed);
+                            fixed.type       = mjCAMERA_FIXED;
+                            fixed.fixedcamid = view.camera;
+                            mjv_updateCamera(g_model, g_data, &fixed, &scn);
+                            g_insets.push_back({view, {scn.camera[0], scn.camera[1]}});
+                        }
+                        scn.camera[0] = saved[0];
+                        scn.camera[1] = saved[1];
+                        draw_track(g_track);
+                    }
+                }
                 if (!video) {
                     match_panel.add_labels(g_model, g_data, &scn);
                 }
@@ -1201,6 +1381,7 @@ namespace k1sim::module {
 
             if (scene_ready) {
                 mjr_render(viewport, &scn, &con);
+                draw_insets(width, height, scene_geoms, inset_aspect);
 
                 if (g_skill_keys.load(std::memory_order_relaxed)) {
                     std::string text;

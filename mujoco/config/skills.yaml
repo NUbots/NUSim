@@ -197,7 +197,37 @@ rondo:
   ai_lane_open: 0.7 # m
   ai_first_time: 1.8 # m
 
-# The drill to start in: free, rondo or rondo_defend (then switch with the Training buttons).
+# rondo_ekf (the "Shared eyes (EKF)" button): rondo_defend on a wider triangle, where the three
+# don't know where you are. Each one's head camera (the model's, as its view down the left of the
+# window shows) detects you when your trunk is in its image, within `range`, and not hidden behind
+# another robot or the ball, missing you anyway a `miss` fraction of frames; each reports `rate`
+# times a second, a range (sigma_range + sigma_range_per_m per metre: from your size in the image)
+# and a bearing (sigma_bearing_deg). All three feed one shared EKF of your position and velocity
+# (constant velocity, white acceleration accel_sigma, the velocity fading over velocity_tau s,
+# detections gated at Mahalanobis^2 `gate`, a new track after reinit_after gated out in a row), and
+# the computer plays against that track, keeping its lanes clear by its 1-sigma doubt too. A track
+# vaguer than lost_sigma m is no use: they assume you're in the middle.
+rondo_ekf:
+  side: 5.5 # m between teammates (rondo.side is 4)
+  rate: 15 # Hz per camera
+  range: 8.0 # m
+  sigma_bearing_deg: 1.7
+  sigma_range: 0.10 # m
+  sigma_range_per_m: 0.12 # m per m away
+  miss: 0.1
+  accel_sigma: 2.5 # m/s^2
+  velocity_tau: 1.5 # s
+  init_speed_sigma: 1.0 # m/s
+  gate: 13.8
+  reinit_after: 8
+  lost_sigma: 2.0 # m
+  aspect: 1.22 # the camera views' width / height (the K1's 106 x 95 degree lens)
+  truth_marker: true # draw the track's error, a red line from where you really are
+
+# rondo_solo (the "Solo eyes" button): the same with no communication. Each teammate keeps its own EKF
+# (the same settings) of only what its own camera sees, and makes its own decisions from that alone.
+
+# The drill to start in: free, rondo, rondo_defend, rondo_ekf or rondo_solo (then switch with the Training buttons).
 drill: free
 
 # Where the robots free play doesn't use stand (x, y), facing the field: off the -y touchline.

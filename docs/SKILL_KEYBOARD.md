@@ -129,6 +129,37 @@ would press:
 Headless, with nobody defending, four 120 s runs in the web port made 16 to 23 passes each, with a pass reaching
 nobody about once in five; rounds mostly ended with a poorly trapped pass rolling out.
 
+## Defending against EKF tracking
+
+The **Shared eyes (EKF)** button (`drill: rondo_ekf`) is the same defending rondo on a wider triangle (5.5 m,
+`rondo_ekf.side`), except the three passers don't know where you are. All they have is what their head cameras see
+of you, fused into one shared extended Kalman filter:
+
+- **Detections.** Each teammate's head camera (the model's `head` camera, the K1's lens) sees you when your trunk is
+  in its image, within 8 m, and a ray from the camera to your trunk or head isn't blocked by another robot or the
+  ball. Even in plain view it misses 1 frame in 10. Each camera reports 15 times a second: a bearing (1.7 degrees of
+  noise) and a range from your size in the image (0.1 m + 0.12 m per metre away). Each teammate knows where its own
+  camera is.
+- **The shared EKF** (`module/SkillPlayer/src/DefenderEkf.hpp`) tracks your position and velocity on the ground with
+  a constant-velocity model (white acceleration noise, the velocity fading over 1.5 s with nobody seeing you). Every
+  detection, from any of the three, is a range-bearing update from that camera's spot; one that is too far off the
+  track (Mahalanobis gate) is thrown away, and after 8 in a row the track starts again from the latest.
+- **The computer plays against the track,** not against you: the pressure, first-time and open-lane checks and the
+  support movement all use the track, and lanes must be clear of it by its 1-sigma doubt as well. With a track vaguer
+  than 2 m (`lost_sigma`) they assume you're in the middle. So standing behind one of them, or where none of them is
+  looking, gets passes played into you.
+
+What you see: the three cameras' views down the left of the window (the robot's number and whether it sees you,
+with a box round you: green seen, yellow in view but hidden), and in the scene the track as an orange 2-sigma ellipse
+with a see-through orange robot at its middle and an arrow for its velocity, each camera's last detection as a dot
+in that camera's colour with a line back to it, and a red line from where you really are to the track. The status
+line counts the cameras that see you and how far off the track is. All of it is in `rondo_ekf:` in the config.
+
+**Solo eyes** (`drill: rondo_solo`) is the same with no communication: each teammate keeps its own EKF of only what
+its own camera sees (drawn in that camera's colour) and makes its own decisions (passing, open lanes, where to
+stand) from that alone. Nothing the three do uses the ground truth; only the referee does (the ball touched, the ball
+gone). The browser build (k1-skills-web) has both, as Shared eyes and Solo eyes.
+
 ## Camera
 
 The Simulation panel has three camera buttons:

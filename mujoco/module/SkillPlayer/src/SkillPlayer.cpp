@@ -38,6 +38,14 @@ namespace k1sim::module {
         constexpr const char* DEFEND_HELP =
             "Rondo, defending: you're the robot in the middle. The three pass it round and dribble away from you; touch the ball to win it\n"
             "W walk (Shift 2 m/s)  |  S back  |  A D turn  |  R new round  |  P pause";
+        constexpr const char* SOLO_HELP =
+            "Rondo vs solo eyes: no communication. Each of the three knows only what its own camera sees (its own coloured track)\n"
+            "and decides from that alone. Come at the one with the ball from outside its view. Touch the ball to win it\n"
+            "W walk (Shift 2 m/s)  |  S back  |  A D turn  |  R new round  |  P pause";
+        constexpr const char* EKF_HELP =
+            "Rondo vs EKF: the three only know where you are from what their cameras see, fused in one shared EKF (orange).\n"
+            "Hide behind one of them, or stay out of their views, and they pass into you. Touch the ball to win it\n"
+            "W walk (Shift 2 m/s)  |  S back  |  A D turn  |  R new round  |  P pause";
 
         constexpr double PI = 3.14159265358979323846;
 
@@ -221,11 +229,35 @@ namespace k1sim::module {
         rondo_.ai_pressure   = rondo["ai_pressure"].as<double>(rondo_.ai_pressure);
         rondo_.ai_lane_open  = rondo["ai_lane_open"].as<double>(rondo_.ai_lane_open);
         rondo_.ai_first_time = rondo["ai_first_time"].as<double>(rondo_.ai_first_time);
+        const auto ekf = cfg["rondo_ekf"];
+        tracking_.side              = ekf["side"].as<double>(tracking_.side);
+        tracking_.rate              = ekf["rate"].as<double>(tracking_.rate);
+        tracking_.range             = ekf["range"].as<double>(tracking_.range);
+        tracking_.sigma_bearing     = ekf["sigma_bearing_deg"].as<double>(tracking_.sigma_bearing * 180.0 / PI) * PI / 180.0;
+        tracking_.sigma_range       = ekf["sigma_range"].as<double>(tracking_.sigma_range);
+        tracking_.sigma_range_per_m = ekf["sigma_range_per_m"].as<double>(tracking_.sigma_range_per_m);
+        tracking_.miss              = ekf["miss"].as<double>(tracking_.miss);
+        tracking_.lost_sigma        = ekf["lost_sigma"].as<double>(tracking_.lost_sigma);
+        tracking_.aspect            = ekf["aspect"].as<double>(tracking_.aspect);
+        tracking_.truth_marker      = ekf["truth_marker"].as<bool>(tracking_.truth_marker);
+        skill::EkfConfig ekf_config;
+        ekf_config.accel_sigma      = ekf["accel_sigma"].as<double>(ekf_config.accel_sigma);
+        ekf_config.velocity_tau     = ekf["velocity_tau"].as<double>(ekf_config.velocity_tau);
+        ekf_config.init_speed_sigma = ekf["init_speed_sigma"].as<double>(ekf_config.init_speed_sigma);
+        ekf_config.gate             = ekf["gate"].as<double>(ekf_config.gate);
+        ekf_config.reinit_after     = ekf["reinit_after"].as<int>(ekf_config.reinit_after);
+        ekf_                        = skill::DefenderEkf(ekf_config);
+        ekf_config_                 = ekf_config;
+
         const std::string drill = cfg["drill"].as<std::string>("free");
-        if (drill != "free" && drill != "rondo" && drill != "rondo_defend") {
-            throw std::runtime_error("skills.yaml: drill is free, rondo or rondo_defend");
+        if (drill != "free" && drill != "rondo" && drill != "rondo_defend" && drill != "rondo_ekf" && drill != "rondo_solo") {
+            throw std::runtime_error("skills.yaml: drill is free, rondo, rondo_defend, rondo_ekf or rondo_solo");
         }
-        drill_wanted_ = drill == "rondo" ? Drill::RONDO : drill == "rondo_defend" ? Drill::RONDO_DEFEND : Drill::FREE;
+        drill_wanted_ = drill == "rondo"          ? Drill::RONDO
+                        : drill == "rondo_defend" ? Drill::RONDO_DEFEND
+                        : drill == "rondo_ekf"    ? Drill::RONDO_EKF
+                        : drill == "rondo_solo"   ? Drill::RONDO_SOLO
+                                                  : Drill::FREE;
         if (const auto park = cfg["park"]; park && park.IsSequence()) {
             rondo_.park.clear();
             for (const auto& spot : park) {
@@ -327,6 +359,16 @@ namespace k1sim::module {
                 if (agent.head_body < 0) {
                     throw std::runtime_error("SkillPlayer: the model has no " + prefix + "Head_2 body to carry the camera");
                 }
+                // Its head camera: the one on a body of this robot, "head" by preference.
+                for (int c = 0; c < m->ncam; ++c) {
+                    if (m->body_rootid[m->cam_bodyid[c]] == agent.map.root_body_id) {
+                        const char* name = mj_id2name(m, mjOBJ_CAMERA, c);
+                        if (agent.camera < 0 || (name != nullptr && std::string(name).find("head") != std::string::npos)) {
+                            agent.camera = c;
+                        }
+                    }
+                }
+                agent.ekf          = skill::DefenderEkf(ekf_config_);
                 agent.logic        = skill::Logic(logic_config_);
                 agent.logged_skill = agent.logic.skill();
                 agent.role         = agents_.empty() ? Role::PLAYER : Role::PARKED;
@@ -388,9 +430,12 @@ namespace k1sim::module {
         on<Trigger<KeyEvent>, Sync<SkillPlayer>>().then([this](const KeyEvent& event) { key(event.key, event.down); });
 
         on<Trigger<message::SkillDrill>, Sync<SkillPlayer>>().then([this](const message::SkillDrill& request) {
-            if (request.name == "rondo" || request.name == "rondo_defend" || request.name == "free") {
+            if (request.name == "rondo" || request.name == "rondo_defend" || request.name == "rondo_ekf" || request.name == "rondo_solo"
+                || request.name == "free") {
                 drill_wanted_  = request.name == "rondo"          ? Drill::RONDO
                                  : request.name == "rondo_defend" ? Drill::RONDO_DEFEND
+                                 : request.name == "rondo_ekf"    ? Drill::RONDO_EKF
+                                 : request.name == "rondo_solo"   ? Drill::RONDO_SOLO
                                                                   : Drill::FREE;
                 drill_pending_ = true;
             }
@@ -726,7 +771,12 @@ namespace k1sim::module {
             check_goal(agents_[active_].sample, sim_time_);
         }
         else {
+            update_tracking(sim_time_);
             update_rondo(sim_time_);
+        }
+        if (!tracking() && track_sent_) {
+            track_sent_ = false;
+            emit(std::make_unique<message::DefenderTrack>());  // inactive: the viewer drops the camera views
         }
         for (std::size_t i = 0; i < agents_.size(); ++i) {
             if (robot_states[i] != nullptr) {
@@ -1121,7 +1171,7 @@ namespace k1sim::module {
     std::array<double, 2> SkillPlayer::rondo_spot(int k) const {
         // The corners of an equilateral triangle about the centre, the first nearest the camera's
         // starting side (-y).
-        const double radius = rondo_.side / std::sqrt(3.0);
+        const double radius = rondo_side() / std::sqrt(3.0);
         const double angle  = -PI / 2.0 + k * 2.0 * PI / 3.0;
         return {rondo_.centre[0] + radius * std::cos(angle), rondo_.centre[1] + radius * std::sin(angle)};
     }
@@ -1160,13 +1210,15 @@ namespace k1sim::module {
             camera->place     = true;
             camera->x         = rondo_.centre[0];
             camera->y         = rondo_.centre[1];
-            camera->distance  = 2.6 * rondo_.side;
+            camera->distance  = 2.6 * rondo_side();
             camera->azimuth   = 90.0;
             camera->elevation = -55.0;
             emit(camera);
-            log<NUClear::LogLevel::INFO>(defending() ? "SkillPlayer: rondo, defending: you play the robot in the middle;"
-                                                     : "SkillPlayer: rondo:",
-                                         "triangle of side", rondo_.side, "m about (", rondo_.centre[0], ",", rondo_.centre[1], ")");
+            log<NUClear::LogLevel::INFO>(sharing()      ? "SkillPlayer: rondo vs the EKF: you play the robot in the middle, the three track you with their cameras;"
+                                         : tracking()  ? "SkillPlayer: rondo vs solo eyes: you play the robot in the middle, each of the three tracks you with its own camera alone;"
+                                         : defending() ? "SkillPlayer: rondo, defending: you play the robot in the middle;"
+                                                       : "SkillPlayer: rondo:",
+                                         "triangle of side", rondo_side(), "m about (", rondo_.centre[0], ",", rondo_.centre[1], ")");
             return;
         }
 
@@ -1220,6 +1272,15 @@ namespace k1sim::module {
         defender_stopped_ = false;
         passes_           = 0;
         round_start_      = sim_time;
+        ekf_.reset();
+        track_time_       = sim_time;
+        for (std::size_t k = 0; k < std::min<std::size_t>(3, agents_.size()); ++k) {
+            // Staggered, so the three cameras' frames don't all land on one control step.
+            agents_[k].next_detect = sim_time + double(k) / (3.0 * std::max(tracking_.rate, 1e-3));
+            agents_[k].detected_at = -1e9;
+            agents_[k].sight       = {};
+            agents_[k].ekf.reset();
+        }
         const int holder  = rondo_holder_ % 3;
         std::array<double, 2> ball{};
         {
@@ -1323,6 +1384,209 @@ namespace k1sim::module {
         return true;
     }
 
+    // rondo_ekf: each teammate's head camera looks for the defender, and every detection goes into
+    // the one EKF the three share. A camera sees the defender when its trunk is in the image (the
+    // model's head camera, the K1's lens), within tracking_.range, and not hidden: a ray to its
+    // trunk or its head reaches it before any other robot or the ball. A camera in view still misses
+    // it now and then (tracking_.miss). A detection is a range, from the robot's size in the image,
+    // so poor and worse further off, and a bearing, from where it is in the image; each camera
+    // reports at tracking_.rate. Every teammate knows where its own camera is (no self-localisation
+    // error). The viewer gets the track and what each camera sees, every control step.
+    void SkillPlayer::update_tracking(double sim_time) {
+        if (!tracking() || agents_.size() < 4) {
+            return;
+        }
+        if (track_time_ >= 0.0 && sim_time > track_time_) {
+            const double dt = std::min(sim_time - track_time_, 0.5);
+            if (sharing()) {
+                ekf_.predict(dt);
+            }
+            else {
+                for (std::size_t k = 0; k < 3; ++k) {
+                    agents_[k].ekf.predict(dt);
+                }
+            }
+        }
+        track_time_ = sim_time;
+
+        const Agent& defender = agents_[3];
+        const int target_root = defender.map.root_body_id;
+        auto track            = std::make_unique<message::DefenderTrack>();
+        track->active         = true;
+        track->aspect         = tracking_.aspect;
+        std::normal_distribution<double> unit(0.0, 1.0);
+        std::uniform_real_distribution<double> chance(0.0, 1.0);
+        {
+            std::lock_guard<std::mutex> lock(*mutex_);
+            const mjtNum* trunk = data_->xpos + 3 * target_root;
+            const mjtNum* head  = data_->xpos + 3 * defender.head_body;
+            track->truth_x      = trunk[0];
+            track->truth_y      = trunk[1];
+            for (std::size_t k = 0; k < 3; ++k) {
+                Agent& mate = agents_[k];
+                auto& sight = mate.sight;
+                sight          = {};
+                sight.robot_id = mate.robot_id;
+                sight.camera   = mate.camera;
+                const int c    = mate.camera;
+                if (c >= 0) {
+                    const mjtNum* cp  = data_->cam_xpos + 3 * c;
+                    const mjtNum* cm  = data_->cam_xmat + 9 * c;
+                    const double tanh = std::tan(0.5 * model_->cam_fovy[c] * PI / 180.0);
+                    // A world point in the image: (u, v) in half image heights about the centre
+                    // (MuJoCo cameras look down -z, x right, y up); false if behind the camera.
+                    auto project = [&](const mjtNum p[3], double& u, double& v) {
+                        mjtNum rel[3] = {p[0] - cp[0], p[1] - cp[1], p[2] - cp[2]}, local[3];
+                        mju_mulMatTVec3(local, cm, rel);
+                        const double depth = -local[2];
+                        if (depth < 0.05) {
+                            return false;
+                        }
+                        u = local[0] / depth / tanh;
+                        v = local[1] / depth / tanh;
+                        return true;
+                    };
+                    // Hidden from the camera: something other than the defender (and the camera's own
+                    // robot) is hit first on the way to p.
+                    auto hidden = [&](const mjtNum p[3]) {
+                        mjtNum ray[3]         = {p[0] - cp[0], p[1] - cp[1], p[2] - cp[2]};
+                        const double distance = mju_normalize3(ray);
+                        int geom              = -1;
+                        const double hit = mj_ray(model_, data_, cp, ray, nullptr, 1, mate.head_body, &geom, nullptr);
+                        if (geom < 0 || hit < 0.0 || hit > distance - 0.05) {
+                            return false;
+                        }
+                        const int root = model_->body_rootid[model_->geom_bodyid[geom]];
+                        return root != target_root && root != mate.map.root_body_id && root != 0;
+                    };
+                    double uc = 0.0, vc = 0.0;
+                    const double ground = std::hypot(trunk[0] - cp[0], trunk[1] - cp[1]);
+                    const bool in_view  = project(trunk, uc, vc) && std::abs(uc) < tracking_.aspect && std::abs(vc) < 1.0
+                                         && ground < tracking_.range;
+                    if (in_view) {
+                        const bool ball_or_robot_between = hidden(trunk) && hidden(head);
+                        sight.occluded = ball_or_robot_between;
+                        sight.seen     = !ball_or_robot_between;
+                    }
+                    if (sight.seen || sight.occluded) {
+                        // Its box in the image: the head's top, the feet, and the trunk's width either side.
+                        const double hx = -(trunk[1] - cp[1]) / std::max(ground, 1e-6), hy = (trunk[0] - cp[0]) / std::max(ground, 1e-6);
+                        const mjtNum points[4][3] = {{head[0], head[1], head[2] + 0.12},
+                                                     {trunk[0], trunk[1], 0.0},
+                                                     {trunk[0] + 0.18 * hx, trunk[1] + 0.18 * hy, trunk[2]},
+                                                     {trunk[0] - 0.18 * hx, trunk[1] - 0.18 * hy, trunk[2]}};
+                        sight.u0 = sight.v0 = 1e9;
+                        sight.u1 = sight.v1 = -1e9;
+                        for (const auto& p : points) {
+                            double u = 0.0, v = 0.0;
+                            if (project(p, u, v)) {
+                                sight.u0 = std::min(sight.u0, u);
+                                sight.u1 = std::max(sight.u1, u);
+                                sight.v0 = std::min(sight.v0, v);
+                                sight.v1 = std::max(sight.v1, v);
+                            }
+                        }
+                    }
+                    if (sight.seen && sim_time >= mate.next_detect) {
+                        mate.next_detect = sim_time + 1.0 / std::max(tracking_.rate, 1e-3);
+                        if (chance(rng_) >= tracking_.miss) {
+                            skill::Detection z;
+                            z.cam_x         = cp[0];
+                            z.cam_y         = cp[1];
+                            z.sigma_bearing = tracking_.sigma_bearing;
+                            z.sigma_range   = tracking_.sigma_range + tracking_.sigma_range_per_m * ground;
+                            z.range   = std::max(0.2, ground + z.sigma_range * unit(rng_));
+                            z.bearing = std::atan2(trunk[1] - cp[1], trunk[0] - cp[0]) + z.sigma_bearing * unit(rng_);
+                            ekf_of(mate).update(z);
+                            mate.detected_at = sim_time;
+                            mate.sight.det_x = z.cam_x + z.range * std::cos(z.bearing);
+                            mate.sight.det_y = z.cam_y + z.range * std::sin(z.bearing);
+                            mate.sight.cam_x = z.cam_x;
+                            mate.sight.cam_y = z.cam_y;
+                        }
+                    }
+                    else if (!sight.seen) {
+                        mate.next_detect = std::max(mate.next_detect, sim_time);
+                    }
+                }
+                track->views.push_back(sight);
+            }
+        }
+        // The last detection each camera made, carried in its view for the viewer.
+        for (std::size_t k = 0; k < 3; ++k) {
+            auto& view  = track->views[k];
+            auto& last  = agents_[k].last_detection;
+            if (agents_[k].detected_at == sim_time) {
+                last = {view.det_x, view.det_y, view.cam_x, view.cam_y};
+            }
+            view.age      = sim_time - agents_[k].detected_at;
+            view.detected = view.age < 1e8;
+            view.det_x    = last[0];
+            view.det_y    = last[1];
+            view.cam_x    = last[2];
+            view.cam_y    = last[3];
+        }
+        // The track(s): the shared one, or each teammate's own.
+        track->shared = sharing();
+        for (std::size_t k = 0; k < (sharing() ? 1u : 3u); ++k) {
+            const skill::DefenderEkf& e = sharing() ? ekf_ : agents_[k].ekf;
+            message::DefenderTrack::Track out;
+            out.valid = e.valid();
+            if (out.valid) {
+                const auto& x = e.state();
+                const auto& P = e.covariance();
+                out.x     = x[0];
+                out.y     = x[1];
+                out.vx    = x[2];
+                out.vy    = x[3];
+                out.cxx   = P[0][0];
+                out.cxy   = P[0][1];
+                out.cyy   = P[1][1];
+                out.sigma = e.position_sigma();
+                out.error = std::hypot(x[0] - track->truth_x, x[1] - track->truth_y);
+            }
+            track->tracks.push_back(out);
+        }
+        if (!tracking_.truth_marker) {
+            track->truth_x = track->truth_y = 0.0;
+        }
+        if (sim_time >= track_log_next_ || track_log_next_ - sim_time > 10.0) {
+            track_log_next_ = sim_time + 2.0 * log_period_;
+            int seeing = 0, hidden = 0;
+            for (const auto& view : track->views) {
+                seeing += view.seen ? 1 : 0;
+                hidden += view.occluded ? 1 : 0;
+            }
+            std::string tracks;
+            char one[64];
+            for (const auto& t : track->tracks) {
+                if (t.valid) {
+                    std::snprintf(one, sizeof(one), "%s%.2f m off (sigma %.2f)", tracks.empty() ? "" : " / ", t.error, t.sigma);
+                }
+                else {
+                    std::snprintf(one, sizeof(one), "%sno track", tracks.empty() ? "" : " / ");
+                }
+                tracks += one;
+            }
+            log<NUClear::LogLevel::INFO>("SkillPlayer: t =", sim_time, sharing() ? "EKF (shared): seen by" : "EKFs (solo): seen by",
+                                         seeing, "hidden from", hidden, "|", tracks);
+        }
+        track_sent_ = true;
+        emit(track);
+    }
+
+    std::array<double, 2> SkillPlayer::defender_xy(const Agent& agent) const {
+        if (!tracking()) {
+            const auto& dw = agents_[3].sample.world;
+            return {dw.robot_x, dw.robot_y};
+        }
+        const skill::DefenderEkf& e = ekf_of(agent);
+        if (e.valid() && e.position_sigma() < tracking_.lost_sigma) {
+            return {e.state()[0], e.state()[1]};
+        }
+        return rondo_.centre;  // no idea: assume the middle
+    }
+
     void SkillPlayer::update_rondo(double sim_time) {
         if (agents_.size() < 4) {
             return;
@@ -1344,7 +1608,6 @@ namespace k1sim::module {
         const char* plural = passes_ == 1 ? "" : "es";
 
         // The defender wins it: its body touched the ball.
-        const auto& dw = defender.sample.world;
         if (defender.phase == Phase::PLAYING && defender_touched()) {
             ++steals_;
             if (defending()) {
@@ -1357,7 +1620,7 @@ namespace k1sim::module {
             return;
         }
         // Out of the rondo altogether.
-        const double radius = rondo_.side / std::sqrt(3.0);
+        const double radius = rondo_side() / std::sqrt(3.0);
         if (std::hypot(w.ball_x - rondo_.centre[0], w.ball_y - rondo_.centre[1]) > radius + rondo_.out_margin) {
             ++lost_;
             if (defending()) {
@@ -1444,6 +1707,16 @@ namespace k1sim::module {
                 mate.logic.on_release();
             }
         }
+        // From here on the computer plays the three, so each knows only where it believes the
+        // defender is (in the tracking rondos, its track: shared, or its own) and keeps lanes clear of
+        // that by its doubt too.
+        std::array<std::array<double, 2>, 3> seen_by{};
+        std::array<double, 3> doubt_of{};
+        for (std::size_t k = 0; k < 3; ++k) {
+            seen_by[k]               = defender_xy(agents_[k]);
+            const skill::DefenderEkf& e = ekf_of(agents_[k]);
+            doubt_of[k]              = tracking() && e.valid() ? std::min(e.position_sigma(), 1.0) : 0.0;
+        }
         // Where each teammate off the ball should be: its corner of the triangle, unless the
         // defender is standing in the lane from the ball to it; then stepped sideways off the
         // corner, away from the defender, until the lane is clear (by up to support_shift).
@@ -1456,12 +1729,14 @@ namespace k1sim::module {
                 continue;
             }
             const double ux = lx / length, uy = ly / length;  // along the lane
-            const double ax = dw.robot_x - w.ball_x, ay = dw.robot_y - w.ball_y;
+            const auto& seen   = seen_by[k];
+            const double doubt = doubt_of[k];
+            const double ax = seen[0] - w.ball_x, ay = seen[1] - w.ball_y;
             const double along = ax * ux + ay * uy;
             const double side  = -ax * uy + ay * ux;  // the defender's offset left of the lane
-            if (along > 0.3 && along < length - 0.3 && std::abs(side) < rondo_.lane_clear) {
+            if (along > 0.3 && along < length - 0.3 && std::abs(side) < rondo_.lane_clear + doubt) {
                 // Turn the lane about the ball until the defender is lane_clear off it, at its distance.
-                const double need  = std::copysign(rondo_.lane_clear, side) - side;  // how far the lane must move at the defender
+                const double need  = std::copysign(rondo_.lane_clear + doubt, side) - side;  // how far the lane must move at the defender
                 const double shift = std::clamp(-need * length / along, -rondo_.support_shift, rondo_.support_shift);
                 mate.support = {mate.home[0] - uy * shift, mate.home[1] + ux * shift};
             }
@@ -1475,6 +1750,8 @@ namespace k1sim::module {
             const bool at_feet = me.ball_distance() < logic_config_.kick_reach;
             const double fx   = at_feet ? w.ball_x : me.robot_x;
             const double fy   = at_feet ? w.ball_y : me.robot_y;
+            const auto& seen   = seen_by[k];
+            const double doubt = doubt_of[k];
             std::vector<std::pair<double, std::array<double, 2>>> lanes;
             for (std::size_t j = 0; j < 3; ++j) {
                 if (j == k) {
@@ -1483,8 +1760,8 @@ namespace k1sim::module {
                 const std::array<double, 2> to{agents_[j].sample.world.robot_x, agents_[j].sample.world.robot_y};
                 const double lx = to[0] - fx, ly = to[1] - fy;
                 const double length2 = std::max(lx * lx + ly * ly, 1e-6);
-                const double u = std::clamp(((dw.robot_x - fx) * lx + (dw.robot_y - fy) * ly) / length2, 0.0, 1.0);
-                lanes.push_back({std::hypot(fx + u * lx - dw.robot_x, fy + u * ly - dw.robot_y), to});
+                const double u = std::clamp(((seen[0] - fx) * lx + (seen[1] - fy) * ly) / length2, 0.0, 1.0);
+                lanes.push_back({std::hypot(fx + u * lx - seen[0], fy + u * ly - seen[1]) - doubt, to});
             }
             std::sort(lanes.begin(), lanes.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
             agents_[k].open_lane = lanes.front().first;
@@ -1505,8 +1782,8 @@ namespace k1sim::module {
     skill::Keys SkillPlayer::computer_keys(Agent& agent, double sim_time) {
         skill::Logic& logic = agent.logic;
         const auto& w       = agent.sample.world;
-        const auto& dw      = agents_[3].sample.world;
-        const double pressure = std::hypot(dw.robot_x - w.ball_x, dw.robot_y - w.ball_y);
+        const auto dp       = defender_xy(agent);  // where it believes the defender is
+        const double pressure = std::hypot(dp[0] - w.ball_x, dp[1] - w.ball_y);
         const bool open       = agent.open_lane > rondo_.ai_lane_open;
         const skill::Keys none{};
         auto steer = [](double angle) {
@@ -1534,7 +1811,7 @@ namespace k1sim::module {
             agent.receiving_since = sim_time;
         }
         if (skill == Skill::RECEIVE && logic.pass_incoming()) {
-            const double to_me = std::hypot(dw.robot_x - w.robot_x, dw.robot_y - w.robot_y), distance = w.ball_distance();
+            const double to_me = std::hypot(dp[0] - w.robot_x, dp[1] - w.robot_y), distance = w.ball_distance();
             if (to_me < rondo_.ai_first_time && open && distance > 0.8 && distance < 2.5) {
                 logic.on_first_pass(none, w);
             }
@@ -1573,7 +1850,7 @@ namespace k1sim::module {
             return none;
         }
         if (pressure < rondo_.ai_pressure + 0.4) {
-            const double ax = w.ball_x - dw.robot_x, ay = w.ball_y - dw.robot_y, an = std::max(std::hypot(ax, ay), 1e-6);
+            const double ax = w.ball_x - dp[0], ay = w.ball_y - dp[1], an = std::max(std::hypot(ax, ay), 1e-6);
             const double hx = agent.home[0] - w.ball_x, hy = agent.home[1] - w.ball_y, hn = std::max(std::hypot(hx, hy), 1e-6);
             const double pull = std::clamp(hn - 0.5, 0.0, 1.5);
             return steer(std::atan2(ay / an + pull * hy / hn, ax / an + pull * hx / hn));
@@ -1714,8 +1991,12 @@ namespace k1sim::module {
         const auto& sample       = agent.sample;
         const bool rondo         = this->rondo();
         auto status              = std::make_unique<message::SkillStatus>();
-        status->keys             = defending() ? DEFEND_HELP : rondo ? RONDO_HELP : KEY_HELP;
-        status->drill            = defending() ? "rondo_defend" : rondo ? "rondo" : "free";
+        status->keys             = sharing() ? EKF_HELP : tracking() ? SOLO_HELP : defending() ? DEFEND_HELP : rondo ? RONDO_HELP : KEY_HELP;
+        status->drill            = sharing()    ? "rondo_ekf"
+                                   : tracking() ? "rondo_solo"
+                                   : defending() ? "rondo_defend"
+                                   : rondo       ? "rondo"
+                                                 : "free";
         status->robot_body       = agent.trunk;
         status->marker           = rondo;
         const bool loaded = (decision.skill == Skill::FIRST_TOUCH || decision.skill == Skill::FIRST_PASS) && !decision.touched;
@@ -1826,9 +2107,31 @@ namespace k1sim::module {
             }
         }
         if (defending()) {
-            status->skill = "RONDO (DEFENDING): " + status->skill;
+            status->skill = (sharing() ? "RONDO VS EKF: " : tracking() ? "RONDO VS SOLO EYES: " : "RONDO (DEFENDING): ") + status->skill;
             std::snprintf(text, sizeof(text), "  |  PASSES %d  |  won %d, got away %d", passes_, steals_, lost_);
             status->detail += text;
+        }
+        if (tracking()) {
+            int seeing = 0;
+            for (std::size_t k = 0; k < 3; ++k) {
+                seeing += agents_[k].sight.seen ? 1 : 0;
+            }
+            const auto& dw = agents_[3].sample.world;
+            auto off = [&](const skill::DefenderEkf& e) {
+                char one[24];
+                if (e.valid()) {
+                    std::snprintf(one, sizeof(one), "%.1f m", std::hypot(e.state()[0] - dw.robot_x, e.state()[1] - dw.robot_y));
+                }
+                else {
+                    std::snprintf(one, sizeof(one), "?");
+                }
+                return std::string(one);
+            };
+            std::snprintf(text, sizeof(text), "  |  seen by %d of 3, ", seeing);
+            status->detail += text;
+            status->detail += sharing() ? "their shared track is " + off(ekf_) + " off"
+                                        : "their own tracks are " + off(agents_[0].ekf) + " / " + off(agents_[1].ekf) + " / "
+                                              + off(agents_[2].ekf) + " off";
         }
         else if (rondo) {
             std::snprintf(text, sizeof(text), "RONDO, robot %d: ", agent.robot_id);

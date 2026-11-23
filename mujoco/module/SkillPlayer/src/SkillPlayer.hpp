@@ -13,8 +13,10 @@
 #include <string>
 #include <vector>
 
+#include "module/SkillPlayer/src/DefenderEkf.hpp"
 #include "module/SkillPlayer/src/SkillLogic.hpp"
 #include "shared/k1/JointIndex.hpp"
+#include "shared/message/InputMessages.hpp"
 #include "shared/message/SimMessages.hpp"
 #include "shared/sim/ModelMap.hpp"
 
@@ -49,6 +51,12 @@ namespace k1sim::module {
     //                 the most open teammate, and the computer plays the defender
     //   rondo_defend  you are the defender: the keys walk the robot in the middle, and the computer
     //                 plays the three, passing when a lane is open and dribbling away when pressed
+    //   rondo_ekf     rondo_defend on a wider triangle where the three don't know where you are:
+    //                 each one's head camera detects you (in its field of view, not hidden behind
+    //                 another robot, with noise in range and bearing), the detections are fused in
+    //                 one shared EKF (DefenderEkf.hpp), and the computer plays against that track
+    //   rondo_solo    the same with no communication: each teammate has its own EKF of only what its
+    //                 own camera sees, and makes its own decisions from that alone
     // A round ends when the defender's body touches the ball (bumping a robot doesn't count), or
     // when the ball rolls out of the rondo.
     //
@@ -60,7 +68,7 @@ namespace k1sim::module {
 
     private:
         enum class Phase { WAITING, BLENDING, PLAYING, FALLEN };
-        enum class Drill { FREE, RONDO, RONDO_DEFEND };
+        enum class Drill { FREE, RONDO, RONDO_DEFEND, RONDO_EKF, RONDO_SOLO };
         // PLAYER: free play's robot. TEAMMATE: one of the rondo's three passers, played whenever
         // the ball is theirs (rondo) or by the computer (rondo_defend). DEFENDER: the rondo's middle
         // robot, walking at the ball by itself (rondo) or with the keys (rondo_defend).
@@ -104,6 +112,7 @@ namespace k1sim::module {
             std::string trunk = "Trunk";
             ModelMap map{};
             int head_body = -1;
+            int camera    = -1;  // the model's head camera on this robot (rondo_ekf's detections)
             Role role     = Role::PLAYER;
             bool homed    = false;  // placed by a drill at `home`; a fall puts it back there
             std::array<double, 3> home{};  // x, y, yaw
@@ -137,6 +146,11 @@ namespace k1sim::module {
             // pass key pressed last step to release this one.
             double computer_since = -1.0, computer_hold = 1.0, receiving_since = -1.0;
             bool computer_release = false;
+            // rondo_ekf: what its camera sees of the defender, its next detection's time and its last one's.
+            message::DefenderTrack::View sight{};
+            double next_detect = 0.0, detected_at = -1e9;
+            std::array<double, 4> last_detection{};
+            skill::DefenderEkf ekf{};  // rondo_solo: its own track, of its own detections  // where it put the defender, and its camera: x, y, cam x, cam y
             double log_next   = 0.0;   // sim time of its next SKILL line
             double jitter_sum = 0.0;   // mean leg target change per step since the last log line
             int jitter_count  = 0;
@@ -168,8 +182,30 @@ namespace k1sim::module {
             return drill_ != Drill::FREE;
         }
         bool defending() const {
-            return drill_ == Drill::RONDO_DEFEND;
+            return drill_ == Drill::RONDO_DEFEND || tracking();
         }
+        // The three only know where the defender is from their cameras: shared (rondo_ekf) or each its own (rondo_solo).
+        bool tracking() const {
+            return drill_ == Drill::RONDO_EKF || drill_ == Drill::RONDO_SOLO;
+        }
+        bool sharing() const {
+            return drill_ == Drill::RONDO_EKF;
+        }
+        // The track a teammate goes by: the shared one, or its own.
+        skill::DefenderEkf& ekf_of(Agent& agent) {
+            return sharing() ? ekf_ : agent.ekf;
+        }
+        const skill::DefenderEkf& ekf_of(const Agent& agent) const {
+            return sharing() ? ekf_ : agent.ekf;
+        }
+        double rondo_side() const {
+            return tracking() ? tracking_.side : rondo_.side;
+        }
+        // rondo_ekf: the teammates' cameras look for the defender and the shared EKF fuses what they see.
+        void update_tracking(double sim_time);
+        // Where the computer playing teammate `agent` believes the defender is: its track, shared or
+        // its own (the triangle's centre while there is none), the truth outside the tracking rondos.
+        std::array<double, 2> defender_xy(const Agent& agent) const;
         void set_owner(std::size_t to, double sim_time);
         void end_round(const std::string& text, double sim_time);
         bool ball_loose() const;
@@ -256,6 +292,25 @@ namespace k1sim::module {
             double ai_first_time = 1.8;     // m: the defender this close to a teammate, it passes first time
             std::vector<std::array<double, 2>> park{{2.5, -5.0}, {3.5, -5.0}, {4.5, -5.0}};
         } rondo_;
+
+        // rondo_ekf: the triangle, and the teammates' detections of the defender.
+        struct Tracking {
+            double side           = 5.5;   // m between teammates (rondo_defend's is rondo.side)
+            double rate           = 15.0;  // Hz each camera reports a detection at
+            double range          = 8.0;   // m a robot is detected out to
+            double sigma_bearing  = 0.03;  // rad
+            double sigma_range    = 0.10;  // m, plus...
+            double sigma_range_per_m = 0.12;  // ...this much per metre away (range from the robot's size in the image)
+            double miss           = 0.1;   // chance a robot in plain view is missed in a frame
+            double lost_sigma     = 2.0;   // m: a track this vague is no use; the three assume the centre
+            double aspect         = 1.22;  // the camera views' width / height
+            bool truth_marker     = true;  // the viewer marks the true position against the track
+        } tracking_;
+        skill::DefenderEkf ekf_{};        // rondo_ekf's shared track
+        skill::EkfConfig ekf_config_{};   // every track's settings
+        double track_time_   = -1.0;  // sim time the EKF was last moved on to
+        bool track_sent_     = false; // a DefenderTrack has gone to the viewer since the drill began
+        double track_log_next_ = 0.0; // sim time of the next EKF log line
 
         // -- state (all touched only inside Sync<SkillPlayer> reactions) --
         std::vector<Agent> agents_;
