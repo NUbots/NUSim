@@ -229,6 +229,7 @@ namespace k1sim::module {
         rondo_.ai_pressure   = rondo["ai_pressure"].as<double>(rondo_.ai_pressure);
         rondo_.ai_lane_open  = rondo["ai_lane_open"].as<double>(rondo_.ai_lane_open);
         rondo_.ai_first_time = rondo["ai_first_time"].as<double>(rondo_.ai_first_time);
+        rondo_.forced_win_passes = rondo["forced_win_passes"].as<int>(rondo_.forced_win_passes);
         const auto ekf = cfg["rondo_ekf"];
         tracking_.side              = ekf["side"].as<double>(tracking_.side);
         tracking_.rate              = ekf["rate"].as<double>(tracking_.rate);
@@ -1619,12 +1620,21 @@ namespace k1sim::module {
             end_round(text, sim_time);
             return;
         }
-        // Out of the rondo altogether.
+        // Out of the rondo altogether. Defending, before forced_win_passes passes that is your win
+        // too: you pressed them into losing it.
         const double radius = rondo_side() / std::sqrt(3.0);
         if (std::hypot(w.ball_x - rondo_.centre[0], w.ball_y - rondo_.centre[1]) > radius + rondo_.out_margin) {
+            if (defending() && passes_ < rondo_.forced_win_passes) {
+                ++steals_;
+                std::snprintf(text, sizeof(text), "you forced it out after %d pass%s in %.1f s: a win!", passes_, plural,
+                              sim_time - round_start_);
+                end_round(text, sim_time);
+                return;
+            }
             ++lost_;
             if (defending()) {
-                std::snprintf(text, sizeof(text), "the ball got away: no winner. New round shortly");
+                std::snprintf(text, sizeof(text), "the ball got away after %d pass%s: no winner (under %d would have been yours). New round shortly",
+                              passes_, plural, rondo_.forced_win_passes);
             }
             else {
                 std::snprintf(text, sizeof(text), "the ball got away after %d pass%s! new round shortly", passes_, plural);

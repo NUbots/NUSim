@@ -113,7 +113,8 @@ defender's speed, turn rate, head start and lead, the support movement (`support
 
 The **Defend** button (`drill: rondo_defend`) puts you in the middle. `W A S D` walk the robot there (`Shift` at
 2 m/s), always with the walk policy: it never takes the ball, touching it wins it ("you won it after 3 passes in
-6.2 s!"). The cyan arrow hangs over it, and Follow and Behind follow it.
+6.2 s!"). So does the ball getting away before they have made 8 passes (`rondo.forced_win_passes`, here and in the
+tracking rondos below): you pressed them into losing it. The cyan arrow hangs over it, and Follow and Behind follow it.
 
 The computer plays the three teammates with the same policies and switching rules, through the same keys a person
 would press:

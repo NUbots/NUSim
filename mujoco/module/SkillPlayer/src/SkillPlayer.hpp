@@ -290,6 +290,7 @@ namespace k1sim::module {
             double ai_pressure   = 1.6;     // m: the defender this close to the ball, it passes now...
             double ai_lane_open  = 0.7;     // m: ...if a lane is this far from the defender
             double ai_first_time = 1.8;     // m: the defender this close to a teammate, it passes first time
+            int forced_win_passes = 8;      // defending: the ball getting away before this many passes is your win
             std::vector<std::array<double, 2>> park{{2.5, -5.0}, {3.5, -5.0}, {4.5, -5.0}};
         } rondo_;
 

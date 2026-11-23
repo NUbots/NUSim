@@ -196,6 +196,9 @@ rondo:
   ai_pressure: 1.6 # m
   ai_lane_open: 0.7 # m
   ai_first_time: 1.8 # m
+  # Defending (rondo_defend, rondo_ekf, rondo_solo): the ball getting away before this many passes is
+  # your win too (you pressed them into losing it).
+  forced_win_passes: 8
 
 # rondo_ekf (the "Shared eyes (EKF)" button): rondo_defend on a wider triangle, where the three
 # don't know where you are. Each one's head camera (the model's, as its view down the left of the
