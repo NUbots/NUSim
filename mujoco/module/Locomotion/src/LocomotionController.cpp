@@ -209,6 +209,10 @@ namespace k1sim::module {
     }
 
     void LocomotionController::step_prepare(const mjModel* m, mjData* d, const CommandSnapshot& snap) {
+        if (d->time < prepare_start_time_) {
+            // Sim time went backwards (reset / timeline seek): the blend already finished.
+            prepare_start_time_ = d->time - prepare_blend_time_;
+        }
         const double frac = std::clamp((d->time - prepare_start_time_) / prepare_blend_time_, 0.0, 1.0);
         const double s    = smoothstep(frac);
 
