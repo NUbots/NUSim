@@ -48,8 +48,8 @@ endif()
 find_package(fastcdr REQUIRED)
 find_package(fastrtps REQUIRED) # Fast-DDS 2.x exports the 'fastrtps' package
 
-# The RoboCup GameController's C API, with its competitions and teams.yaml in share/GameController/config beside it.
-# The docker image has it (docker/Dockerfile). Without it MatchReferee and sim/match are skipped and --referee says so.
+# The RoboCup GameController's C API, with its competitions and teams.yaml in share/GameController/config beside it. The
+# docker image has it (docker/Dockerfile). Without it MatchReferee and sim/match are skipped and --referee says so.
 find_library(GC_API_LIBRARY game_controller_api)
 find_path(GC_API_INCLUDE_DIR GameController.h)
 add_library(k1sim_gamecontroller INTERFACE)

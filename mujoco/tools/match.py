@@ -75,10 +75,16 @@ FIELDS = ["middle", "kidsize", "no-field"]  # simulation.yaml's fields; matches 
 # What a team can run. A codebase needs a way to start one player per robot; only NUbots has one so far.
 CODEBASES = [
     dict(name="NUbots", available=True, note=""),
-    dict(name="rUNSWift", available=False,
-         note="rUNSWift isn't set up on this machine yet: tools/match.py needs to know how to start its player."),
-    dict(name="B-Human", available=False,
-         note="B-Human isn't set up on this machine yet: tools/match.py needs to know how to start its player."),
+    dict(
+        name="rUNSWift",
+        available=False,
+        note="rUNSWift isn't set up on this machine yet: tools/match.py needs to know how to start its player.",
+    ),
+    dict(
+        name="B-Human",
+        available=False,
+        note="B-Human isn't set up on this machine yet: tools/match.py needs to know how to start its player.",
+    ),
 ]
 # The NUbots role a refereed game runs: the competition role with the sim's walk, kick and camera.
 NUBOTS_GAME_ROLES = ["nusim/robocup", "nusim/behaviour"]
@@ -102,21 +108,37 @@ def register(command):
     command.add_argument("--home-role", help="testing: NUbots role for the first team (default: the game role)")
     command.add_argument("--away-role", help="testing: NUbots role for the second team (default: the game role)")
     command.add_argument("--nubots-target", default="generic", help="the NUbots ./b target that was built")
-    command.add_argument("--mode", default="game", choices=MODES, help="game: automatic referee; testing: you call "
-                         "the set plays; freeplay: no referee")
-    command.add_argument("--ground-truth", action="store_true",
-                         help="robots take their pose and the ball from the sim instead of vision + localisation "
-                         "(the default in game mode)")
+    command.add_argument(
+        "--mode",
+        default="game",
+        choices=MODES,
+        help="game: automatic referee; testing: you call " "the set plays; freeplay: no referee",
+    )
+    command.add_argument(
+        "--ground-truth",
+        action="store_true",
+        help="robots take their pose and the ball from the sim instead of vision + localisation "
+        "(the default in game mode)",
+    )
     command.add_argument("--vision", action="store_true", help="game mode: use vision + localisation after all")
-    command.add_argument("--vision-device", default="auto", choices=["auto", "gpu", "cpu"],
-                         help="where NUbots' Yolo runs. auto uses the GPU unless NUbots' image can't drive it")
+    command.add_argument(
+        "--vision-device",
+        default="auto",
+        choices=["auto", "gpu", "cpu"],
+        help="where NUbots' Yolo runs. auto uses the GPU unless NUbots' image can't drive it",
+    )
     command.add_argument("--replace", action="store_true", help="stop a ./b match that is already running first")
-    command.add_argument("--headless", action="store_true",
-                         help="no window; the game starts by itself, unless --web is there to start it from")
+    command.add_argument(
+        "--headless",
+        action="store_true",
+        help="no window; the game starts by itself, unless --web is there to start it from",
+    )
     command.add_argument("--rtf", help="real-time factor")
-    command.add_argument("--web", action="store_true",
-                         help="also serve the browser viewer (http://127.0.0.1:8080/), which has the window's "
-                         "panels and controls")
+    command.add_argument(
+        "--web",
+        action="store_true",
+        help="also serve the browser viewer (http://127.0.0.1:8080/), which has the window's " "panels and controls",
+    )
     command.add_argument("--web-host", help="address the browser viewer listens on (0.0.0.0 for other machines)")
     command.add_argument("--web-port", type=int, help="port the browser viewer listens on")
 
@@ -158,8 +180,9 @@ def yolo_config(choice, nubots_target, session):
     """
     if choice == "auto":
         try:
-            gpu = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
-                                 capture_output=True, text=True).stdout.strip()
+            gpu = subprocess.run(
+                ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], capture_output=True, text=True
+            ).stdout.strip()
         except FileNotFoundError:
             gpu = ""
         if not gpu:
@@ -167,8 +190,11 @@ def yolo_config(choice, nubots_target, session):
             print("Vision: no NVIDIA GPU found, so Yolo runs on the CPU (--vision-device gpu overrides)", flush=True)
         elif re.search(r"RTX 50\d\d", gpu):
             choice = "cpu"
-            print(f"Vision: {gpu} is too new for the TensorRT in NUbots' image, so Yolo runs on the CPU "
-                  "(--vision-device gpu overrides)", flush=True)
+            print(
+                f"Vision: {gpu} is too new for the TensorRT in NUbots' image, so Yolo runs on the CPU "
+                "(--vision-device gpu overrides)",
+                flush=True,
+            )
         else:
             choice = "gpu"
     if choice == "gpu":
@@ -258,8 +284,11 @@ def start_robot(robot, role, session, nubots_target, ground_truth, first_team):
     # NUbots' field frame has its own goal on +x. The first team defends the sim's -x goal.
     yaw = math.pi if first_team else 0.0
     truth = (session / "NUSimGroundTruth.yaml").read_text()
-    for key, value in (("ground_truth", "true"), ("world_to_field_yaw", yaw),
-                       ("log_level", os.environ.get("K1SIM_GROUND_TRUTH_LOG", "INFO"))):
+    for key, value in (
+        ("ground_truth", "true"),
+        ("world_to_field_yaw", yaw),
+        ("log_level", os.environ.get("K1SIM_GROUND_TRUTH_LOG", "INFO")),
+    ):
         truth = set_key(truth, key, value)
     (directory / "NUSimGroundTruth.yaml").write_text(truth)
     truth_config = f"{CONTAINER_BUILD}/config/NUSimGroundTruth.yaml"
@@ -346,19 +375,24 @@ def run_once(setup, session, nubots_target, headless, rtf, web_args):
     sim_args += web_args
 
     robots = roster(setup["game"]) if roles else []
-    sim = subprocess.Popen([str(MUJOCO / "docker/k1sim.sh"), "run", role, *sim_args],
-                           env=dict(os.environ, K1SIM_RUN_FLAGS=run_flags, K1SIM_DOCKER_TTY="-i"))  # -i: a tty would eat ^C
+    sim = subprocess.Popen(
+        [str(MUJOCO / "docker/k1sim.sh"), "run", role, *sim_args],
+        env=dict(os.environ, K1SIM_RUN_FLAGS=run_flags, K1SIM_DOCKER_TTY="-i"),
+    )  # -i: a tty would eat ^C
 
     try:
         time.sleep(SIM_STARTUP_SECONDS)
         processes = {}
         for robot in robots:
             first_team = robot["team_id"] == robots[0]["team_id"]
-            processes[robot["robot_id"]] = start_robot(robot, roles[0] if first_team else roles[1], session,
-                                                       nubots_target, setup["ground_truth"], first_team)
+            processes[robot["robot_id"]] = start_robot(
+                robot, roles[0] if first_team else roles[1], session, nubots_target, setup["ground_truth"], first_team
+            )
         if robots:
-            print(f"{len(robots)} robots starting ({roles[0]} v {roles[1]}). Logs are in {session}/robot<id>/log",
-                  flush=True)
+            print(
+                f"{len(robots)} robots starting ({roles[0]} v {roles[1]}). Logs are in {session}/robot<id>/log",
+                flush=True,
+            )
         else:
             print("Free Play: no robot code started. Run a role yourself, e.g. ./b run nusim/behaviour", flush=True)
 
@@ -377,8 +411,17 @@ def run_once(setup, session, nubots_target, headless, rtf, web_args):
         return None
     wanted = json.loads(request.read_text())
     request.unlink()
-    for key in ("game", "mode", "home_role", "away_role", "home_codebase", "away_codebase", "ground_truth", "field",
-                "robots"):
+    for key in (
+        "game",
+        "mode",
+        "home_role",
+        "away_role",
+        "home_codebase",
+        "away_codebase",
+        "ground_truth",
+        "field",
+        "robots",
+    ):
         setup[key] = wanted.get(key, setup[key])
     setup["game"] = min(3, max(1, int(setup["game"])))
     setup["robots"] = min(6, max(1, int(setup["robots"])))
@@ -392,12 +435,28 @@ def run_once(setup, session, nubots_target, headless, rtf, web_args):
     return setup
 
 
-def run(game, home_role, away_role, nubots_target, mode, ground_truth, vision, vision_device, replace, headless,
-        rtf, web, web_host, web_port, **kwargs):
+def run(
+    game,
+    home_role,
+    away_role,
+    nubots_target,
+    mode,
+    ground_truth,
+    vision,
+    vision_device,
+    replace,
+    headless,
+    rtf,
+    web,
+    web_host,
+    web_port,
+    **kwargs,
+):
     # Only one match fits on a machine: the containers, DDS domains and camera segments are shared names.
     # Starting a second would silently kill the first one's sim and robots.
-    running = subprocess.run(["docker", "ps", "--quiet", "--filter", f"name=^{SIM_CONTAINER}$"],
-                             capture_output=True, text=True).stdout.strip()
+    running = subprocess.run(
+        ["docker", "ps", "--quiet", "--filter", f"name=^{SIM_CONTAINER}$"], capture_output=True, text=True
+    ).stdout.strip()
     if running and not replace:
         sys.exit("error: a ./b match is already running on this machine. Close its window first, or pass --replace")
 
@@ -422,10 +481,20 @@ def run(game, home_role, away_role, nubots_target, mode, ground_truth, vision, v
 
     roles = available_roles(nubots_target)
     game_role = next((role for role in NUBOTS_GAME_ROLES if role in roles), "nusim/behaviour")
-    setup = dict(game=game, mode=mode, home_role=home_role or game_role, away_role=away_role or game_role,
-                 ground_truth=ground_truth or (mode == "game" and not vision),
-                 home_codebase="NUbots", away_codebase="NUbots", field=FIELDS[0], robots=1,
-                 roles=roles, codebases=CODEBASES, fields=FIELDS)
+    setup = dict(
+        game=game,
+        mode=mode,
+        home_role=home_role or game_role,
+        away_role=away_role or game_role,
+        ground_truth=ground_truth or (mode == "game" and not vision),
+        home_codebase="NUbots",
+        away_codebase="NUbots",
+        field=FIELDS[0],
+        robots=1,
+        roles=roles,
+        codebases=CODEBASES,
+        fields=FIELDS,
+    )
     try:
         while setup is not None:
             setup = run_once(setup, session, nubots_target, headless, rtf, web_args)

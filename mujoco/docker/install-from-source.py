@@ -322,6 +322,7 @@ def handle_python(archive, args, env):
         check=True,
     )
 
+
 def handle_library(archive, args, env):
     for folder in ("include", "lib"):
         source = os.path.join(args.configure_path, folder)

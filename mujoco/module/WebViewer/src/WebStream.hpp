@@ -33,9 +33,9 @@ namespace k1sim::web {
     public:
         struct Options {
             std::string host = "127.0.0.1";
-            int port         = 8080;   // <= 0: no HTTP server (recording only)
-            std::string web_root;      // directory holding index.html and viewer.js
-            std::string record_path;   // empty: no recording
+            int port         = 8080;  // <= 0: no HTTP server (recording only)
+            std::string web_root;     // directory holding index.html and viewer.js
+            std::string record_path;  // empty: no recording
         };
 
         explicit WebStream(Options options);
@@ -91,22 +91,22 @@ namespace k1sim::web {
         void broadcast(const Message& message, bool part_of_preamble);
 
         Options options_;
-        int listen_fd_      = -1;
-        std::FILE* record_  = nullptr;
-        uint32_t scene_id_  = 0;
+        int listen_fd_     = -1;
+        std::FILE* record_ = nullptr;
+        uint32_t scene_id_ = 0;
         std::atomic<bool> running_{false};
         std::atomic<int> connections_{0};
         std::thread accept_thread_;
 
-        std::mutex mutex_;                              // guards clients_, preamble_ and record_
+        std::mutex mutex_;  // guards clients_, preamble_ and record_
         std::vector<std::shared_ptr<Client>> clients_;
-        std::vector<Message> preamble_;                 // mesh + scene messages every new viewer needs first
-        std::vector<std::string> mesh_keys_;            // meshes already part of the preamble
+        std::vector<Message> preamble_;       // mesh + scene messages every new viewer needs first
+        std::vector<std::string> mesh_keys_;  // meshes already part of the preamble
         struct State {
             std::string json;  // the payload, to publish changes only
             Message message;
         };
-        std::map<std::string, State> states_;           // latest of each state, sent to new viewers after the preamble
+        std::map<std::string, State> states_;  // latest of each state, sent to new viewers after the preamble
         std::function<void(const std::string&, const std::string&)> command_handler_;
     };
 

@@ -812,11 +812,11 @@ namespace k1sim {
         }
 
         if (ball_body_id_ >= 0) {
-            const auto ball    = freebody::geom_centre_state(m_, d_, ball_body_id_, ball_geom_id_);
-            s->ball.valid      = true;
-            s->ball.position   = ball.position;
-            s->ball.lin_vel    = ball.lin_vel;
-            s->ball.ang_vel    = ball.ang_vel;
+            const auto ball  = freebody::geom_centre_state(m_, d_, ball_body_id_, ball_geom_id_);
+            s->ball.valid    = true;
+            s->ball.position = ball.position;
+            s->ball.lin_vel  = ball.lin_vel;
+            s->ball.ang_vel  = ball.ang_vel;
         }
 
         StepController* ctrl = robot.controller;

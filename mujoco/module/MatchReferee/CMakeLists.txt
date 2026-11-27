@@ -1,6 +1,9 @@
 # Needs the GameController API, found in the top-level CMakeLists.txt. Without it this module and sim/match are skipped,
 # so builds that don't need them are unaffected.
-if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR NOT GC_API_LIBRARY OR NOT GC_API_INCLUDE_DIR)
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux"
+   OR NOT GC_API_LIBRARY
+   OR NOT GC_API_INCLUDE_DIR
+)
   return()
 endif()
 

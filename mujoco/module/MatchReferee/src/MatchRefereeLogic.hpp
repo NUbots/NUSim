@@ -595,16 +595,17 @@ namespace k1sim::module::matchreferee {
             if (kick_off_ == KickOff::READY) {
                 if (sampled_at_ < 0.0 || sim_time - sampled_at_ >= SAMPLE_SECONDS) {
                     const RoboCup::AutorefereeWorld world = observe(d);
-                    bool moving = false;
+                    bool moving                           = false;
                     std::vector<std::array<float, 3>> now;
                     for (const auto& player : players_) {
-                        const auto& seen = world.players[player.side == RoboCup::Side::home ? 0 : 1]
-                                                        [player.identity.player_id - 1];
+                        const auto& seen =
+                            world.players[player.side == RoboCup::Side::home ? 0 : 1][player.identity.player_id - 1];
                         now.push_back({seen.x, seen.y, seen.theta});
                     }
                     for (std::size_t i = 0; sampled_at_ >= 0.0 && i < now.size() && i < sampled_.size(); ++i) {
                         const double turn = std::remainder(now[i][2] - sampled_[i][2], 2.0 * 3.14159265358979);
-                        moving = moving || std::hypot(now[i][0] - sampled_[i][0], now[i][1] - sampled_[i][1]) > STILL_METRES
+                        moving            = moving
+                                 || std::hypot(now[i][0] - sampled_[i][0], now[i][1] - sampled_[i][1]) > STILL_METRES
                                  || std::abs(turn) > STILL_RADIANS;
                     }
                     sampled_    = std::move(now);
@@ -616,7 +617,12 @@ namespace k1sim::module::matchreferee {
                 const double in_phase = sim_time - phase_started_;
                 const bool settled    = in_phase >= READY_MINIMUM && sim_time - still_since_ >= STILL_SECONDS;
                 if ((settled || in_phase >= READY_LIMIT) && apply(RoboCup::gc_action_wait_for_set_play())) {
-                    supervisor::place_free_body_by_geom_center(m_, d, ball_body_, ball_geom_, 0.0, 0.0,
+                    supervisor::place_free_body_by_geom_center(m_,
+                                                               d,
+                                                               ball_body_,
+                                                               ball_geom_,
+                                                               0.0,
+                                                               0.0,
                                                                m_->geom_size[3 * ball_geom_]);
                     events_.push_back(settled ? "robots in position: Set, ball on the centre mark"
                                               : "Ready time is up: Set, ball on the centre mark");
@@ -640,11 +646,10 @@ namespace k1sim::module::matchreferee {
             down_since_.resize(players_.size(), -1.0);
             const bool playing = last_ && last_->state == gc::State::PLAYING;
             for (std::size_t i = 0; i < players_.size(); ++i) {
-                const auto& player = players_[i];
+                const auto& player   = players_[i];
                 const double height  = d->xpos[3 * player.root_body + 2];
                 const double upright = d->xmat[9 * player.root_body + 8];
-                const bool penalised =
-                    last_ && robot_in(*last_, player).penalty_state != gc::PenaltyState::UNPENALISED;
+                const bool penalised = last_ && robot_in(*last_, player).penalty_state != gc::PenaltyState::UNPENALISED;
                 if (!playing || penalised || (height >= DOWN_HEIGHT && upright >= DOWN_UPRIGHT)
                     || sim_time < down_since_[i]) {
                     down_since_[i] = -1.0;
@@ -709,16 +714,16 @@ namespace k1sim::module::matchreferee {
         Handle<RoboCup::GameController, RoboCup::gc_destroy> game_;
         Handle<RoboCup::Autoreferee, RoboCup::gc_autoreferee_destroy> autoreferee_;
 
-        bool started_               = false;
+        bool started_ = false;
         // The automatic kick-off sequence (advance_kick_off()), in simulation time.
         enum class KickOff { NONE, READY, SET } kick_off_ = KickOff::NONE;
-        double phase_started_ = -1.0;
-        double still_since_   = 0.0;
-        double sampled_at_    = -1.0;
+        double phase_started_                             = -1.0;
+        double still_since_                               = 0.0;
+        double sampled_at_                                = -1.0;
         std::vector<std::array<float, 3>> sampled_;  // each player's x, y, yaw at the last sample
         std::vector<double> down_since_;             // sim time each player went down, or -1 (remove_incapable())
-        bool staged_kick_offs_      = false;  // kick-offs go Ready, Set, Playing as the robots settle
-        bool manual_set_play_       = false;  // a set play called from the viewer is waiting for its release
+        bool staged_kick_offs_      = false;         // kick-offs go Ready, Set, Playing as the robots settle
+        bool manual_set_play_       = false;         // a set play called from the viewer is waiting for its release
         std::uint8_t packet_number_ = 0;
         std::optional<gc::GameControllerPacket> last_;
         std::vector<std::string> events_;
