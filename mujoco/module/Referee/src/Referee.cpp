@@ -2,10 +2,8 @@
 
 #include <arpa/inet.h>
 #include <array>
-#include <cstdlib>
 #include <cstring>
 #include <dlfcn.h>
-#include <filesystem>
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -200,36 +198,19 @@ namespace k1sim::module {
     bool Referee::start(std::string& error) {
         const YAML::Node cfg = config::load("referee.yaml");
 
-        std::string dir = cfg["gamecontroller_dir"].as<std::string>("");
-        if (dir.empty()) {
-            const char* env = std::getenv("GAMECONTROLLER_DIR");
-            dir             = env != nullptr ? env : "";
-        }
-        if (dir.empty()) {
-            error = "set gamecontroller_dir in config/referee.yaml (or GAMECONTROLLER_DIR) to the GameController checkout";
-            return false;
-        }
-        const std::filesystem::path root(dir);
-
-#ifdef __APPLE__
-        const char* library_name = "libgame_controller_api.dylib";
-#else
-        const char* library_name = "libgame_controller_api.so";
-#endif
-        const std::filesystem::path library = root / "target" / "release" / library_name;
-        if (!std::filesystem::exists(library)) {
-            error = library.string() + " not found - build it with: cargo build -r -p game_controller_api";
+        if (std::string(K1SIM_GC_LIBRARY).empty()) {
+            error = "built without the GameController library, which the docker image has (./b image)";
             return false;
         }
         lib_ = std::make_unique<Library>();
-        if (!lib_->load(library.string(), error)) {
+        if (!lib_->load(K1SIM_GC_LIBRARY, error)) {
             return false;
         }
 
         const std::string competition = cfg["competition"].as<std::string>("middle_advanced");
-        std::ifstream file(root / "config" / competition / "params.yaml");
+        std::ifstream file(std::string(K1SIM_GC_CONFIG_DIR) + "/" + competition + "/params.yaml");
         if (!file.is_open()) {
-            error = "no params.yaml for competition '" + competition + "' in " + (root / "config").string();
+            error = "no params.yaml for competition '" + competition + "' in " K1SIM_GC_CONFIG_DIR;
             return false;
         }
         std::ostringstream yaml;

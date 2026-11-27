@@ -1,4 +1,4 @@
-"""./b image — (re)build the docker toolchain image (runs tools/install_deps.sh).
+"""./b image — (re)build the docker toolchain image (runs tools/install_deps.sh and builds the GameController).
 
 Unconditional: use this after bumping a baked dependency (e.g. MuJoCo version) —
 `./b build` only builds the image when it's *missing*, so a stale image needs this.

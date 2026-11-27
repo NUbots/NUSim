@@ -43,11 +43,10 @@ namespace k1sim::module {
         }
 
         std::string read_competition(const std::string& name) {
-            const std::string path = std::string(K1SIM_GC_PARAMS_DIR) + "/" + name + ".yaml";
+            const std::string path = std::string(K1SIM_GC_CONFIG_DIR) + "/" + name + "/params.yaml";
             std::ifstream file(path);
             if (!file) {
-                throw std::runtime_error("MatchReferee: can't read " + path
-                                         + " (see mujoco/tools/install_game_controller_api.sh)");
+                throw std::runtime_error("MatchReferee: can't read " + path + ", no such GameController competition");
             }
             std::stringstream content;
             content << file.rdbuf();

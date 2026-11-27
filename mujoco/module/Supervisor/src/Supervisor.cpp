@@ -4,7 +4,6 @@
 #include <cerrno>
 #include <cmath>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <netinet/in.h>
@@ -81,25 +80,7 @@ namespace k1sim::module {
         std::map<int, std::string> load_team_names(std::string path) {
             std::map<int, std::string> names;
             if (path.empty()) {
-                // the GameController's config directory, or the one in its source checkout
-                if (const char* dir = std::getenv("GAMECONTROLLER_CONFIG")) {
-                    path = std::string(dir) + "/teams.yaml";
-                }
-                else {
-                    std::string checkout;
-                    try {
-                        checkout = config::load("referee.yaml")["gamecontroller_dir"].as<std::string>("");
-                    }
-                    catch (const std::exception&) {
-                    }
-                    if (const char* dir = checkout.empty() ? std::getenv("GAMECONTROLLER_DIR") : nullptr) {
-                        checkout = dir;
-                    }
-                    if (checkout.empty()) {
-                        return names;
-                    }
-                    path = checkout + "/config/teams.yaml";
-                }
+                path = K1SIM_GC_CONFIG_DIR "/teams.yaml";  // the GameController's own
             }
             try {
                 for (const auto& team : YAML::LoadFile(path)) {
