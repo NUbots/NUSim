@@ -4,6 +4,8 @@
 #include <cerrno>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstring>
 #include <ctime>
 #include <random>
 #include <stdexcept>
@@ -98,6 +100,36 @@ namespace k1sim {
         // every existing name-based lookup) stay valid. Extra copies' keyframes are dropped;
         // the parent scene's keyframes zero-pad the new free joints, landing each copy at
         // its attachment frame.
+        // The robot's collision primitives (contype 2, conaffinity 1) touch the floor, ball and goals but not each
+        // other. Robot k also gets its own contype bit, and every other robot's bit in conaffinity: robots collide
+        // with each other, and still never with themselves.
+        void separate_robot_collisions(mjModel* m, int robots) {
+            constexpr int FIRST_ROBOT_BIT = 2;
+            int all_robots                = 0;
+            for (int k = 0; k < robots; ++k) {
+                all_robots |= 1 << (FIRST_ROBOT_BIT + k);
+            }
+            for (int g = 0; g < m->ngeom; ++g) {
+                if (m->geom_contype[g] != 2 || m->geom_conaffinity[g] != 1) {
+                    continue;
+                }
+                const char* root = mj_id2name(m, mjOBJ_BODY, m->body_rootid[m->geom_bodyid[g]]);
+                int k            = -1;
+                if (root != nullptr && std::strcmp(root, "Trunk") == 0) {
+                    k = 0;
+                }
+                else if (root != nullptr && std::sscanf(root, "sub%d_Trunk", &k) != 1) {
+                    k = -1;
+                }
+                if (k < 0 || k >= robots) {
+                    continue;
+                }
+                const int bit = 1 << (FIRST_ROBOT_BIT + k);
+                m->geom_contype[g] |= bit;
+                m->geom_conaffinity[g] |= all_robots & ~bit;
+            }
+        }
+
         // extras[k - 1] is the attachment position of copy k (empty for a single robot).
         mjModel* load_multi_robot_model(const std::string& scene_path,
                                         const std::vector<std::array<double, 3>>& extras,
@@ -152,6 +184,9 @@ namespace k1sim {
             }
             mj_deleteSpec(scene);
             freebody::shift_reoriginated_keyframes(m, mj_name2id(m, mjOBJ_BODY, "ball"), ball_offset);
+            if (!extras.empty()) {
+                separate_robot_collisions(m, static_cast<int>(extras.size()) + 1);
+            }
             return m;
         }
 

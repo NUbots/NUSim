@@ -13,6 +13,7 @@
 #include "module/Supervisor/src/GameControllerPacket.hpp"
 #include "shared/CliOptions.hpp"
 #include "shared/util/Config.hpp"
+#include "shared/util/RobotRoster.hpp"
 
 namespace k1sim::module {
 
@@ -261,9 +262,14 @@ namespace k1sim::module {
             return false;
         }
 
-        const TeamParams home = load_team(cfg["home"], 1, "blue", "white");
-        const TeamParams away = load_team(cfg["away"], 2, "red", "yellow");
-        const Side kick_off   = cfg["kick_off"].as<std::string>("home") == "away" ? AWAY : HOME;
+        TeamParams home = load_team(cfg["home"], 1, "blue", "white");
+        TeamParams away = load_team(cfg["away"], 2, "red", "yellow");
+        // A --match roster names the teams: first robot's team is home, last robot's away.
+        if (!cli().match_config.empty()) {
+            home.number = static_cast<std::uint8_t>(config::robot_roster().front().team_id);
+            away.number = static_cast<std::uint8_t>(config::robot_roster().back().team_id);
+        }
+        const Side kick_off = cfg["kick_off"].as<std::string>("home") == "away" ? AWAY : HOME;
         const TestParams test{cfg["no_delay"].as<bool>(false), false};
         // The first --game team (home) stands in the -x half, i.e. it defends the left goal.
         void* params = lib_->params_new(competition_params, &home, &away, kick_off, HOME_DEFENDS_LEFT_GOAL, test);

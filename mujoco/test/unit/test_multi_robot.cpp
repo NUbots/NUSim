@@ -63,6 +63,32 @@ int main() {
         }
         SimCore sim(cfg);
         sim.load_model();
+
+        // Robots' collision primitives collide with other robots', never with their own robot's.
+        {
+            const mjModel* m = sim.model();
+            auto collides    = [m](int a, int b) {
+                return (m->geom_contype[a] & m->geom_conaffinity[b]) || (m->geom_contype[b] & m->geom_conaffinity[a]);
+            };
+            auto robot_geoms = [m](int index) {
+                const int root = mj_name2id(m, mjOBJ_BODY, robot_prefix(index).append("Trunk").c_str());
+                std::vector<int> geoms;
+                for (int g = 0; g < m->ngeom; ++g) {
+                    if ((m->geom_contype[g] & 2) && m->body_rootid[m->geom_bodyid[g]] == root) {
+                        geoms.push_back(g);
+                    }
+                }
+                return geoms;
+            };
+            const auto first  = robot_geoms(0);
+            const auto fourth = robot_geoms(3);
+            require(first.size() > 1 && first.size() == fourth.size(), "robots have no collision primitives");
+            require(collides(first[0], fourth[0]) && collides(fourth.back(), first.back()),
+                    "robots pass through each other");
+            require(!collides(first[0], first[1]) && !collides(fourth[0], fourth.back()),
+                    "a robot collides with itself");
+        }
+
         std::vector<std::shared_ptr<RecordingController>> controllers;
         for (int i = 0; i < 6; ++i) {
             controllers.push_back(std::make_shared<RecordingController>(i));

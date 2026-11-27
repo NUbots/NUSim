@@ -1,7 +1,8 @@
-"""./b match — run a refereed match: the sim, plus a hidden NUbots process for every robot.
+"""./b match — run a refereed match: the sim, plus a hidden player process (NUbots or B-Human) for every robot.
 
     ./b match --game 3                              3 a side, nusim/behaviour on every robot
     ./b match --game 1 --away-role <role>           a different stack for each team
+    ./b match --game 1 --away-codebase B-Human      NUbots v B-Human
     ./b match --game 2 --headless --rtf 1           no window; the game starts by itself
     ./b match --game 2 --headless --web             no window; watch and run it all from the browser
 
@@ -16,6 +17,11 @@ and reads one camera, so each container gets files that point it at its own robo
 Every container also gets a FieldDescription.yaml for the sim's field: NUbots defaults to its 6.8 x 5 m
 lab field, and matching lines against the wrong field leaves robots lost. And a RobotCommunication.yaml
 that sends team messages to 255.255.255.255, as the robot network's broadcast address isn't on this machine.
+
+B-Human runs its native x86_64 build of the Booster app (see BHUMAN_IMAGE) with per-robot files mounted over its
+Config/: settings.cfg (team and player number), the camera segment, and setup poses that match the sim's touchline
+lineup. Its motion runs once per LowState and needs 500 Hz, so a match with B-Human runs the sim from a copy of
+config/ with state_publish_divisor 2.
 """
 
 import getpass
@@ -24,12 +30,13 @@ import math
 import os
 import pathlib
 import re
+import shutil
 import signal
 import subprocess
 import sys
 import time
 
-from _util import build_dir
+from _util import backend, build_dir
 
 MUJOCO = pathlib.Path(__file__).resolve().parent.parent
 PORT_BASE = 7400  # RTPS defaults: a domain's ports start at PB + DG * domain
@@ -69,6 +76,31 @@ timeout: 0.5
 warning_period: 5.0
 """
 
+# B-Human's native Booster build: an image with its runtime, and a volume with the build (/work/bhuman) and the files
+# it needs on a K1 (fake thermal zones, an ALSA null device in home/). Made by B-Human's nusim-trial/native-booster.sh.
+BHUMAN_IMAGE = "bhuman-trial"
+BHUMAN_VOLUME = "bhuman_trial"
+BHUMAN_DIR = "/work/bhuman"
+BHUMAN_BINARY = f"{BHUMAN_DIR}/Build/Linux/Booster/Develop/bhuman"
+BHUMAN_ROBOT = "SimulatedK1"  # B-Human finds its robot config by hostname
+
+BHUMAN_SETTINGS = """teamNumber = {team};
+fieldPlayerColor = blue;
+goalkeeperColor = red;
+playerNumber = {player};
+location = NUSim;
+scenario = Default;
+magicNumber = {team};
+"""
+
+BHUMAN_CAMERA = """segment = "{segment}";
+maxWaitForImage = 1000;
+minWaitForImage = 100;
+"""
+
+# Team numbers from the GameController's teams.yaml, so it shows the teams' names.
+TEAM_NUMBERS = {"NUbots": 1, "B-Human": 5, "rUNSWift": 18}
+
 MODES = ["game", "testing", "freeplay"]
 FIELDS = ["middle", "kidsize", "no-field"]  # simulation.yaml's fields; matches always use the middle field
 
@@ -83,7 +115,8 @@ CODEBASES = [
     dict(
         name="B-Human",
         available=False,
-        note="B-Human isn't set up on this machine yet: tools/match.py needs to know how to start its player.",
+        note=f"B-Human isn't set up on this machine: it needs the {BHUMAN_IMAGE} image and the {BHUMAN_VOLUME} volume "
+        "with its native build (B-Human's nusim-trial/native-booster.sh).",
     ),
 ]
 # The NUbots role a refereed game runs: the competition role with the sim's walk, kick and camera.
@@ -107,6 +140,8 @@ def register(command):
     command.add_argument("--game", type=int, default=1, choices=[1, 2, 3], help="robots a side")
     command.add_argument("--home-role", help="testing: NUbots role for the first team (default: the game role)")
     command.add_argument("--away-role", help="testing: NUbots role for the second team (default: the game role)")
+    command.add_argument("--home-codebase", default="NUbots", help="codebase of the first team (NUbots or B-Human)")
+    command.add_argument("--away-codebase", default="NUbots", help="codebase of the second team (NUbots or B-Human)")
     command.add_argument("--nubots-target", default="generic", help="the NUbots ./b target that was built")
     command.add_argument(
         "--mode",
@@ -207,7 +242,7 @@ def yolo_config(choice, nubots_target, session):
 
 def config_value(file, key):
     """A top-level scalar from a config file, which needn't parse the rest of it."""
-    return re.search(rf"^{key}:\s*(\S+)", (MUJOCO / "config" / file).read_text(), re.M).group(1)
+    return re.search(rf"^{key}:\s*([^\s#]+)", (MUJOCO / "config" / file).read_text(), re.M).group(1)
 
 
 def field_value(key):
@@ -256,13 +291,89 @@ def set_key(text, key, value):
     return f"{text.rstrip()}\n{line}\n"
 
 
-def roster(game):
-    """The default roster, as config::robot_roster() builds it."""
+def roster(game, teams=(125, 126)):
+    """The roster: config::robot_roster()'s, with the given team numbers."""
     first_domain = int(config_value("dds.yaml", "domain"))
     return [
-        dict(robot_id=i + 1, team_id=125 + i // game, player_id=i % game + 1, domain=first_domain + i)
+        dict(robot_id=i + 1, team_id=teams[i // game], player_id=i % game + 1, domain=first_domain + i)
         for i in range(2 * game)
     ]
+
+
+def team_numbers(setup):
+    """Each team's GameController number: its codebase's, or 125 and 126 for two teams of the same codebase."""
+    home, away = TEAM_NUMBERS[setup["home_codebase"]], TEAM_NUMBERS[setup["away_codebase"]]
+    return (home, away) if home != away else (125, 126)
+
+
+def write_roster(path, robots):
+    """A --match roster file for the sim. The first team attacks +x."""
+    teams = sorted({robot["team_id"] for robot in robots}, key=[robot["team_id"] for robot in robots].index)
+    lines = ["schema_version: 1", "teams:"]
+    lines += [f"  - team_id: {team}\n    initial_attacks_positive_x: {'true' if i == 0 else 'false'}"
+              for i, team in enumerate(teams)]  # fmt: skip
+    lines += ["robots:"]
+    lines += [f"  - {{robot_id: {r['robot_id']}, team_id: {r['team_id']}, player_id: {r['player_id']}, "
+              f"dds_domain: {r['domain']}}}" for r in robots]  # fmt: skip
+    path.write_text("\n".join(lines) + "\n")
+
+
+def sim_path(path):
+    """Where a file under mujoco/ is for the sim: in its container, the repo is at /workspace/NUSim."""
+    return str(path) if backend() == "native" else f"/workspace/NUSim/mujoco/{path.relative_to(MUJOCO)}"
+
+
+def bhuman_available():
+    """Whether B-Human's image and native build are on this machine."""
+    image = subprocess.run(["docker", "image", "inspect", BHUMAN_IMAGE], capture_output=True)
+    if image.returncode != 0:
+        return False
+    found = subprocess.run(
+        ["docker", "run", "--rm", "--volume", f"{BHUMAN_VOLUME}:/work", "--entrypoint", "test", BHUMAN_IMAGE,
+         "-x", BHUMAN_BINARY],
+        capture_output=True,
+    )  # fmt: skip
+    return found.returncode == 0
+
+
+def bhuman_setup_poses():
+    """B-Human's setup poses for the sim's touchline lineup (config::game() in shared/util/Config.hpp).
+
+    B-Human starts localisation from its player's setup pose, so it has to be where the sim spawns the robot. Each team
+    lines up in its own half, so the poses are the same in both teams' own field frames.
+    """
+    text = (MUJOCO / "config/simulation.yaml").read_text()
+    game = re.search(r"^game:\n((?:[ #].*\n|\n)*)", text, re.M).group(1)
+
+    def value(key):
+        return float(re.search(rf"^  {key}:\s*([^\s#]+)", game, re.M).group(1))
+
+    first_x = -value("length") / 2 + value("penalty_mark_distance")
+    side_y = value("width") / 2 + value("sideline_offset")
+    spacing = value("sideline_spacing")
+    poses = []
+    for number in range(1, 12):
+        i = number - 1
+        side = -1 if (i // 2) % 2 == 0 else 1
+        x = round(1000 * (first_x + ((i // 4) * 2 + i % 2) * spacing))
+        y = round(1000 * side * side_y)
+        poses.append(
+            f"  {{\n    playerNumber = {number};\n    position = {{x = {x}; y = {y};}};\n"
+            f"    turnedTowards = {{x = {x}; y = 0;}};\n  }}"
+        )
+    return (
+        "// Written by NUSim's tools/match.py: the sim's touchline lineup.\nposes = [\n" + ",\n".join(poses) + "\n];\n"
+    )
+
+
+def sim_config(session):
+    """A copy of config/ for a match with B-Human: LowState at 500 Hz, the rate its motion runs at."""
+    directory = session / "config"
+    shutil.rmtree(directory, ignore_errors=True)
+    shutil.copytree(MUJOCO / "config", directory)
+    simulation = directory / "simulation.yaml"
+    simulation.write_text(set_key(simulation.read_text(), "state_publish_divisor", "2"))
+    return directory
 
 
 def gpu_flags():
@@ -273,14 +384,59 @@ def gpu_flags():
     return ["--gpus", "all", "-e", "NVIDIA_DRIVER_CAPABILITIES=all"] if '"nvidia"' in runtimes.stdout else []
 
 
-def start_robot(robot, role, session, nubots_target, ground_truth, first_team):
+def camera_segment(robot):
+    """The robot's camera segment (MatchCameras::segment)."""
+    base = config_value("camera.yaml", "segment")
+    return base if robot["robot_id"] == 1 else f"{base}_robot{robot['robot_id']}"
+
+
+def start_robot(codebase, robot, role, session, nubots_target, ground_truth, first_team):
+    """Start one robot's player in its own container, with its output in robot<id>/log."""
     directory = session / f"robot{robot['robot_id']}"
     directory.mkdir(parents=True, exist_ok=True)
-
-    base = config_value("camera.yaml", "segment")
-    segment = base if robot["robot_id"] == 1 else f"{base}_robot{robot['robot_id']}"
     (directory / "fastdds.xml").write_text(PROFILE.format(port_base=PORT_BASE + DOMAIN_GAIN * robot["domain"]))
-    (directory / "NUSimCamera.yaml").write_text(CAMERA.format(segment=segment))
+    if codebase == "B-Human":
+        command = bhuman_command(robot, directory, session)
+    else:
+        command = nubots_command(robot, role, directory, session, nubots_target, ground_truth, first_team)
+    log = (directory / "log").open("w")
+    return subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
+
+
+def bhuman_command(robot, directory, session):
+    """B-Human's native Booster app for one robot."""
+    (directory / "settings.cfg").write_text(BHUMAN_SETTINGS.format(team=robot["team_id"], player=robot["player_id"]))
+    (directory / "sharedMemoryCameraProvider.cfg").write_text(BHUMAN_CAMERA.format(segment=camera_segment(robot)))
+    config = f"{BHUMAN_DIR}/Config"
+    return [
+        "docker", "run", "--rm",
+        "--name", container(robot),
+        "--network", "host",
+        "--ipc", "host",
+        "--hostname", BHUMAN_ROBOT,
+        # As root, FastDDS shared memory with the sim fails. B-Human raises its threads to SCHED_FIFO.
+        "--user", f"{os.getuid()}:{os.getgid()}",
+        "--ulimit", "rtprio=99",
+        "--volume", f"{BHUMAN_VOLUME}:/work",
+        # It reads the K1's temperature from these.
+        "--mount", f"type=volume,src={BHUMAN_VOLUME},dst=/sys/devices/virtual/thermal,volume-subpath=fake-thermal",
+        "--env", "HOME=/work/home",
+        "--env", "FASTRTPS_DEFAULT_PROFILES_FILE=/robot/fastdds.xml",
+        "--volume", f"{directory}:/robot:ro",
+        "--volume", f"{directory}/settings.cfg:{config}/settings.cfg:ro",
+        "--volume", f"{directory}/sharedMemoryCameraProvider.cfg:"
+                    f"{config}/Robots/{BHUMAN_ROBOT}/sharedMemoryCameraProvider.cfg:ro",
+        "--volume", f"{session}/bhumanSetupPoses.cfg:{config}/Locations/NUSim/setupPosesProvider.cfg:ro",
+        "--workdir", str(pathlib.PurePosixPath(BHUMAN_BINARY).parent),
+        "--entrypoint", BHUMAN_BINARY,
+        BHUMAN_IMAGE,
+        "-c", BHUMAN_DIR,
+    ]  # fmt: skip
+
+
+def nubots_command(robot, role, directory, session, nubots_target, ground_truth, first_team):
+    """NUbots' role for one robot."""
+    (directory / "NUSimCamera.yaml").write_text(CAMERA.format(segment=camera_segment(robot)))
     # NUbots' field frame has its own goal on +x. The first team defends the sim's -x goal.
     yaw = math.pi if first_team else 0.0
     truth = (session / "NUSimGroundTruth.yaml").read_text()
@@ -295,7 +451,7 @@ def start_robot(robot, role, session, nubots_target, ground_truth, first_team):
     truth_mount = ["--volume", f"{directory}/NUSimGroundTruth.yaml:{truth_config}:ro"] if ground_truth else []
 
     user = getpass.getuser()
-    command = [
+    return [
         "docker", "run", "--rm",
         "--name", container(robot),
         "--network", "host",
@@ -321,8 +477,6 @@ def start_robot(robot, role, session, nubots_target, ground_truth, first_team):
         "--player_id", str(robot["player_id"]),
         "--team_id", str(robot["team_id"]),
     ]  # fmt: skip
-    log = (directory / "log").open("w")
-    return subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
 
 
 def container(robot):
@@ -349,12 +503,13 @@ def run_once(setup, session, nubots_target, headless, rtf, web_args):
 
     run_flags = f"--name {SIM_CONTAINER}"
     game_role = next((role for role in NUBOTS_GAME_ROLES if role in setup["roles"]), "nusim/behaviour")
+    codebases = (setup["home_codebase"], setup["away_codebase"])
     if mode == "game":
         # The automatic referee. Players that obey the GameController mustn't be held still between phases.
         role = "bin/sim/match"
         # Robots start on the touchlines and walk on when the game is Ready.
         sim_args = ["--game", str(setup["game"])]
-        sim_args += ["--free-robots"] if game_role == "nusim/robocup" else []
+        sim_args += ["--free-robots"] if game_role == "nusim/robocup" or "B-Human" in codebases else []
         roles = (game_role, game_role)
     elif mode == "testing":
         # The built-in GameController, operated by hand from the window (or the browser viewer).
@@ -369,12 +524,18 @@ def run_once(setup, session, nubots_target, headless, rtf, web_args):
         sim_args = ["--field", setup["field"], "--gamecontroller"]
         sim_args += ["--robots", str(setup["robots"])] if setup["robots"] > 1 else []
         roles = None
+    robots = roster(setup["game"], team_numbers(setup)) if roles else []
+    if robots:
+        write_roster(session / "roster.yaml", robots)
+        sim_args += ["--match", sim_path(session / "roster.yaml")]
+    if "B-Human" in codebases and robots:
+        (session / "bhumanSetupPoses.cfg").write_text(bhuman_setup_poses())
+        sim_args += ["--config-dir", sim_path(sim_config(session))]
     sim_args += ["--session", f"{build_dir()}/match"]
     sim_args += ["--headless"] if headless else []
     sim_args += ["--rtf", rtf] if rtf else []
     sim_args += web_args
 
-    robots = roster(setup["game"]) if roles else []
     sim = subprocess.Popen(
         [str(MUJOCO / "docker/k1sim.sh"), "run", role, *sim_args],
         env=dict(os.environ, K1SIM_RUN_FLAGS=run_flags, K1SIM_DOCKER_TTY="-i"),
@@ -386,11 +547,18 @@ def run_once(setup, session, nubots_target, headless, rtf, web_args):
         for robot in robots:
             first_team = robot["team_id"] == robots[0]["team_id"]
             processes[robot["robot_id"]] = start_robot(
-                robot, roles[0] if first_team else roles[1], session, nubots_target, setup["ground_truth"], first_team
+                codebases[0] if first_team else codebases[1],
+                robot,
+                roles[0] if first_team else roles[1],
+                session,
+                nubots_target,
+                setup["ground_truth"],
+                first_team,
             )
         if robots:
+            names = [codebase if codebase != "NUbots" else role for codebase, role in zip(codebases, roles)]
             print(
-                f"{len(robots)} robots starting ({roles[0]} v {roles[1]}). Logs are in {session}/robot<id>/log",
+                f"{len(robots)} robots starting ({names[0]} v {names[1]}). Logs are in {session}/robot<id>/log",
                 flush=True,
             )
         else:
@@ -437,6 +605,8 @@ def run_once(setup, session, nubots_target, headless, rtf, web_args):
 
 def run(
     game,
+    home_codebase,
+    away_codebase,
     home_role,
     away_role,
     nubots_target,
@@ -479,6 +649,15 @@ def run(
     web_args += ["--web-host", web_host] if web_host else []
     web_args += ["--web-port", str(web_port)] if web_port else []
 
+    for codebase in CODEBASES:
+        if codebase["name"] == "B-Human":
+            codebase["available"] = bhuman_available()
+            codebase["note"] = "" if codebase["available"] else codebase["note"]
+    available = [codebase["name"] for codebase in CODEBASES if codebase["available"]]
+    for codebase in (home_codebase, away_codebase):
+        if codebase not in available:
+            sys.exit(f"error: {codebase} can't be started here. Available: {', '.join(available)}")
+
     roles = available_roles(nubots_target)
     game_role = next((role for role in NUBOTS_GAME_ROLES if role in roles), "nusim/behaviour")
     setup = dict(
@@ -487,8 +666,8 @@ def run(
         home_role=home_role or game_role,
         away_role=away_role or game_role,
         ground_truth=ground_truth or (mode == "game" and not vision),
-        home_codebase="NUbots",
-        away_codebase="NUbots",
+        home_codebase=home_codebase,
+        away_codebase=away_codebase,
         field=FIELDS[0],
         robots=1,
         roles=roles,
