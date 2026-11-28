@@ -16,10 +16,10 @@
 enabled: true # false = publish the ground truth
 
 # Multiplicative error on the true body velocity [vx, vy, wz]; 1 is exact
-scale: [1.0915, 0.2448, 1.0013]
+scale: [0.9, 0.9, 1.0013]
 
 # White noise density on the body velocity [m/sqrt(s), m/sqrt(s), rad/sqrt(s)]
-velocity_noise_density: [0.0001, 0.03133, 0.0001]
+velocity_noise_density: [0.0001, 0.0045, 0.0001]
 
 # Standard deviation of the velocity bias [m/s, m/s, rad/s]
 bias_sigma: [0.1269, 0.08808, 0.0001]
