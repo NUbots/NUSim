@@ -15,6 +15,7 @@
 #include <mutex>
 #include <nlohmann/json.hpp>
 
+#include "Confetti.hpp"
 #include "MatchPanel.hpp"
 #include "VideoRecorder.hpp"
 #include "module/Viewer/src/ViewerUI.hpp"
@@ -107,6 +108,38 @@ namespace k1sim::module {
         std::function<void()> g_request_reset;
 
         MatchPanel match_panel;
+
+        // Goal celebration: when the score goes up in a refereed game, confetti and fireworks go off from the
+        // goal the ball went in and "GOAL!" comes up in the middle of the window. Render loop only.
+        struct GoalMouth {
+            double x = 0.0, y = 0.0, width = 0.0, height = 0.0;
+            int dir = 1;  // +1: the goal at +x
+        };
+        viewer::Confetti g_confetti;
+        std::chrono::steady_clock::time_point g_confetti_last{}, g_goal_banner_until{};
+        int g_seen_home = -1, g_seen_away = -1;  // the score last seen (-1 = not seen yet)
+        // Where the ball last was away from the centre spot (field x, m). When a goal is given the referee
+        // puts the ball back on the spot, possibly before the new score reaches us, so the goal it went in
+        // is worked out from here rather than from where the ball is now.
+        double g_ball_x_in_play = 0.0;
+
+        // A goal mouth in the scene (bodies goal_pos_x / goal_neg_x with _post1 and _bar geoms); false if
+        // the field has no such goal.
+        bool goal_mouth(const mjModel* m, const char* name, GoalMouth& out) {
+            const int body = mj_name2id(m, mjOBJ_BODY, name);
+            const int post = mj_name2id(m, mjOBJ_GEOM, (std::string(name) + "_post1").c_str());
+            const int bar  = mj_name2id(m, mjOBJ_GEOM, (std::string(name) + "_bar").c_str());
+            if (body < 0 || post < 0 || bar < 0) {
+                return false;
+            }
+            const double radius = m->geom_size[3 * post];
+            out.x      = m->body_pos[3 * body];
+            out.y      = m->body_pos[3 * body + 1];
+            out.width  = 2.0 * (std::abs(m->geom_pos[3 * post + 1]) - radius);
+            out.height = m->geom_pos[3 * bar + 2] - radius;
+            out.dir    = out.x >= 0.0 ? 1 : -1;
+            return true;
+        }
         std::function<void(const message::MatchCommand&)> g_send_match_command;
 
         // Control panels (Dear ImGui). g_ui is null until the model has loaded, because the ImGui
@@ -991,6 +1024,19 @@ namespace k1sim::module {
             glfwPollEvents();
             glfwGetWindowSize(window, &g_win_w, &g_win_h);
 
+            // A refereed game (./b match, or the Testing Room's GameController): a score going up sets off the
+            // celebration.
+            bool scored = false;
+            {
+                std::lock_guard<std::mutex> match_lock(g_match_mutex);
+                if (g_match_status.has_game) {
+                    const int home = g_match_status.home_score, away = g_match_status.away_score;
+                    scored      = g_seen_home >= 0 && (home > g_seen_home || away > g_seen_away);
+                    g_seen_home = home;
+                    g_seen_away = away;
+                }
+            }
+
             if (scene_ready && g_data != nullptr && g_mutex != nullptr) {
                 // Lock only around the mjData touch points: applying the perturb
                 // force/clearing it, and mjv_updateScene's read of mjData. Both
@@ -1015,6 +1061,27 @@ namespace k1sim::module {
                 mjv_updateScene(g_model, g_data, &opt, &pert, &cam, mjCAT_ALL, &scn);
                 if (!video) {
                     match_panel.add_labels(g_model, g_data, &scn);
+                }
+                // Goal celebration: confetti and fireworks from the goal mouth.
+                {
+                    const auto now = std::chrono::steady_clock::now();
+                    if (const int ball = mj_name2id(g_model, mjOBJ_GEOM, "ball"); ball >= 0) {
+                        const double x = g_data->geom_xpos[3 * ball], y = g_data->geom_xpos[3 * ball + 1];
+                        if (std::hypot(x, y) > 1.0) {
+                            g_ball_x_in_play = x;
+                        }
+                    }
+                    GoalMouth pos_x, neg_x;
+                    if (scored && goal_mouth(g_model, "goal_pos_x", pos_x) && goal_mouth(g_model, "goal_neg_x", neg_x)) {
+                        const GoalMouth& goal = g_ball_x_in_play >= 0.0 ? pos_x : neg_x;
+                        g_confetti.celebrate(goal.x, goal.y, goal.width, goal.height, goal.dir);
+                        g_goal_banner_until = now + std::chrono::milliseconds(2500);
+                    }
+                    if (g_confetti.active()) {
+                        g_confetti.step(std::chrono::duration<double>(now - g_confetti_last).count());
+                        g_confetti.draw(&scn);
+                    }
+                    g_confetti_last = now;
                 }
                 if (video) {
                     for (const auto& robot : video_roster) {
@@ -1046,6 +1113,13 @@ namespace k1sim::module {
 
             if (scene_ready) {
                 mjr_render(viewport, &scn, &con);
+
+                if (std::chrono::steady_clock::now() < g_goal_banner_until) {
+                    // A banner in the middle of the view: the overlay is laid out in a box a little above
+                    // the centre.
+                    const mjrRect banner{viewport.left, viewport.bottom + viewport.height * 3 / 5, viewport.width, viewport.height / 5};
+                    mjr_overlay(mjFONT_BIG, mjGRID_TOP, banner, "G O A L !", nullptr, &con);
+                }
 
                 if (g_ui != nullptr) {
                     viewer::UIState& ui = g_ui_state;
