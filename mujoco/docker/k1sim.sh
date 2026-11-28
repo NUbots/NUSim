@@ -112,8 +112,12 @@ case "${1:-}" in
         ensure_image
         [ -x "$REPO/mujoco/$BUILD_DIR/$bin" ] || build
         [ -n "${DISPLAY:-}" ] && xhost +local: > /dev/null 2>&1 || true
+        # -i needs a real stdin tty (docker refuses otherwise), so default to just -t
+        # when stdin isn't one, e.g. running under a tool or in CI.
+        default_tty="-t"
+        [ -t 0 ] && default_tty="-it"
         # shellcheck disable=SC2046
-        docker run ${K1SIM_DOCKER_TTY:--it} $(common_flags) $(run_flags) ${K1SIM_RUN_FLAGS:-} "$IMAGE" "./$BUILD_DIR/$bin" "$@"
+        docker run ${K1SIM_DOCKER_TTY:-$default_tty} $(common_flags) $(run_flags) ${K1SIM_RUN_FLAGS:-} "$IMAGE" "./$BUILD_DIR/$bin" "$@"
         ;;
     shell)
         ensure_image

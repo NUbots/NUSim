@@ -1,16 +1,11 @@
 #include "module/Supervisor/src/Supervisor.hpp"
 
-#include <arpa/inet.h>
-#include <cerrno>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
-#include <cstring>
 #include <memory>
-#include <netinet/in.h>
 #include <string>
 #include <sys/socket.h>
-#include <sys/time.h>
-#include <unistd.h>
 #include <vector>
 
 #include "module/Supervisor/src/GameControllerPacket.hpp"
@@ -20,22 +15,22 @@
 #include "shared/message/Commands.hpp"
 #include "shared/message/SimMessages.hpp"
 #include "shared/util/Config.hpp"
+#include "shared/util/Udp.hpp"
 
 namespace k1sim::module {
 
     namespace gc = k1sim::module::supervisor::gc;
+    using k1sim::module::supervisor::GameLayout;
     using k1sim::module::supervisor::RobotConfig;
     using k1sim::module::supervisor::SupervisorConfig;
     using k1sim::module::supervisor::SupervisorLogic;
 
     namespace {
 
-        constexpr double STAND_Z = 0.555;  // base height of the "ready" pose (as in config/supervisor.yaml)
-
         // The robots of a --game <n> match: both teams, with the spot each one starts from as its home and a
         // spot outside the touchline to serve penalties on. Robot k's root body is "Trunk" for the main robot
         // and "subNN_Trunk" for the others; the first n robots are the first team in the GameController packet.
-        std::vector<RobotConfig> game_robots(int n, bool on_field_positions) {
+        std::vector<RobotConfig> game_robots(int n, bool on_field_positions, const GameLayout& layout) {
             const YAML::Node sim_cfg = config::load("simulation.yaml");
             const config::Game game  = config::game(sim_cfg, n, on_field_positions);
             const double width       = sim_cfg["game"]["width"].as<double>();
@@ -57,12 +52,15 @@ namespace k1sim::module {
                 rc.team_id    = -1;
                 rc.team_index = side;
                 rc.player_id  = index + 1;
-                rc.home_pose  = {game.spawns[k][0], game.spawns[k][1], STAND_Z, game.spawns[k][2]};
+                rc.home_pose  = {game.spawns[k][0], game.spawns[k][1], layout.stand_height, game.spawns[k][2]};
 
                 // Penalised robots wait outside the touchline of their own half, facing the field: the first
                 // team behind -y, the second behind +y, spaced out from the halfway line.
                 const double sign = side == 0 ? -1.0 : 1.0;
-                rc.penalty_pose = {sign * (1.0 + 0.7 * index), sign * (width / 2.0 + 0.8), STAND_Z, -sign * M_PI / 2.0};
+                rc.penalty_pose   = {sign * (layout.penalty_first_x + layout.penalty_spacing * index),
+                                     sign * (width / 2.0 + layout.penalty_outside_touchline),
+                                     layout.stand_height,
+                                     -sign * M_PI / 2.0};
                 robots.push_back(rc);
             }
             return robots;
@@ -71,7 +69,7 @@ namespace k1sim::module {
         SupervisorConfig build_config() {
             SupervisorConfig cfg = k1sim::module::supervisor::load_config(config::load("supervisor.yaml"));
             if (cli().game > 0) {
-                cfg.robots = game_robots(cli().game, cli().on_field_positions);
+                cfg.robots = game_robots(cli().game, cli().on_field_positions, cfg.game);
             }
             return cfg;
         }
@@ -93,42 +91,15 @@ namespace k1sim::module {
             return names;
         }
 
-        // A UDP socket on the GameController port that other listeners on this host can share.
-        int open_listener(int port, std::string& error) {
-            const int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
-            if (fd < 0) {
-                error = std::strerror(errno);
-                return -1;
-            }
-            const int yes = 1;
-            ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
-#ifdef SO_REUSEPORT
-            ::setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes));
-#endif
-            ::setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &yes, sizeof(yes));
-            const timeval timeout{0, 300000};  // wake up regularly to notice shutdown
-            ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-
-            sockaddr_in address{};
-            address.sin_family      = AF_INET;
-            address.sin_port        = htons(static_cast<uint16_t>(port));
-            address.sin_addr.s_addr = htonl(INADDR_ANY);
-            if (::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
-                error = std::strerror(errno);
-                ::close(fd);
-                return -1;
-            }
-            return fd;
-        }
-
     }  // namespace
 
     Supervisor::Supervisor(std::unique_ptr<NUClear::Environment> environment) : Reactor(std::move(environment)) {
 
         // Loaded eagerly (constructor body, not Startup) so everything is known before the listener starts.
-        SupervisorConfig cfg             = build_config();
-        const bool enabled               = cfg.enabled || cli().gamecontroller || cli().referee;
-        const int gc_port                = gc::CONTROL_PORT;
+        SupervisorConfig cfg = build_config();
+        const bool enabled   = cfg.enabled || cli().gamecontroller || cli().referee;
+        const int gc_port    = gc::CONTROL_PORT;
+        const std::chrono::milliseconds listen_timeout(cfg.listen_timeout_ms);
         const std::string ball_body_name = cfg.ball.body;
         const std::string ball_geom_name = cfg.ball.geom;
         team_names_                      = load_team_names(cfg.teams_file);
@@ -173,38 +144,36 @@ namespace k1sim::module {
                 }
             });
 
-        if (!enabled) {
-            on<Startup>().then([this] {
-                log<NUClear::LogLevel::INFO>(
-                    "Supervisor disabled (start with --gamecontroller, or set supervisor.yaml enabled: true)");
-            });
-            on<Shutdown>().then([this] { log<NUClear::LogLevel::INFO>("Supervisor shutting down"); });
-            return;
+        // Where the GameController packets come from: nowhere, module::Referee in-process (--referee), or the
+        // network. Listening on the network as well as following the built-in referee would only deliver each of
+        // its packets a second time.
+        enum class Source { NONE, BUILT_IN_REFEREE, NETWORK };
+        const Source source = !enabled ? Source::NONE : cli().referee ? Source::BUILT_IN_REFEREE : Source::NETWORK;
+
+        if (source != Source::NONE) {
+            // The packets are handled in a reaction (not on the listener thread), one at a time.
+            on<Trigger<gc::GameControllerPacket>, Single>().then(
+                [this](const gc::GameControllerPacket& packet) { handle_packet(packet); });
         }
 
-        // The packets are handled in a reaction (not on the listener thread), one at a time.
-        on<Trigger<gc::GameControllerPacket>, Single>().then(
-            [this](const gc::GameControllerPacket& packet) { handle_packet(packet); });
-
-        // Binding can fail if another program holds the port without sharing it. That must not crash the
-        // whole sim: degrade to "no supervisor" and say so.
-        // With the built-in referee (--referee) the packets come from module::Referee in-process; listening on
-        // the network as well would only deliver each of them a second time.
-        if (cli().referee) {
-            on<Startup>().then([this] {
-                log<NUClear::LogLevel::INFO>("Supervisor ready - following the built-in referee with",
-                                             logic_->config().robots.size(),
-                                             "robot(s) under its control");
-            });
-            on<Shutdown>().then([this] { log<NUClear::LogLevel::INFO>("Supervisor shutting down"); });
-            return;
-        }
-
-        std::string error;
-        socket_fd_ = open_listener(gc_port, error);
-
-        on<Startup>().then([this, gc_port, error] {
-            if (socket_fd_ < 0) {
+        on<Startup>().then([this, source, gc_port, listen_timeout] {
+            switch (source) {
+                case Source::NONE:
+                    log<NUClear::LogLevel::INFO>(
+                        "Supervisor disabled (start with --gamecontroller, or set supervisor.yaml enabled: true)");
+                    return;
+                case Source::BUILT_IN_REFEREE:
+                    log<NUClear::LogLevel::INFO>("Supervisor ready - following the built-in referee with",
+                                                 logic_->config().robots.size(),
+                                                 "robot(s) under its control");
+                    return;
+                case Source::NETWORK: break;
+            }
+            // Binding can fail if another program holds the port without sharing it. That must not crash the
+            // whole sim: degrade to "no supervisor" and say so.
+            std::string error;
+            socket_ = util::udp::open_listener(gc_port, listen_timeout, error);
+            if (!socket_.valid()) {
                 log<NUClear::LogLevel::WARN>("Supervisor: could not listen on UDP port",
                                              gc_port,
                                              "(",
@@ -213,7 +182,7 @@ namespace k1sim::module {
                 return;
             }
             listening_.store(true);
-            listener_ = std::thread([this] { listen(socket_fd_); });
+            listener_ = std::thread([this] { listen(socket_.fd()); });
             log<NUClear::LogLevel::INFO>("Supervisor ready — waiting for the GameController on UDP port",
                                          gc_port,
                                          "with",
@@ -224,12 +193,9 @@ namespace k1sim::module {
         on<Shutdown>().then([this] {
             listening_.store(false);
             if (listener_.joinable()) {
-                listener_.join();
+                listener_.join();  // within listen_timeout_ms: recv() gives up that often to check listening_
             }
-            if (socket_fd_ >= 0) {
-                ::close(socket_fd_);
-                socket_fd_ = -1;
-            }
+            socket_.close();
             log<NUClear::LogLevel::INFO>("Supervisor shutting down");
         });
     }
