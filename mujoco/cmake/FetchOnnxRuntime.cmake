@@ -1,8 +1,4 @@
 # Prebuilt ONNX Runtime (CPU) for the policy locomotion backend (K1_WITH_ONNX=ON).
-#
-# Sourced from Microsoft's official NuGet package (Microsoft.ML.OnnxRuntime, author-signed by
-# Microsoft Corporation) because the github.com/microsoft/onnxruntime release archives return 404
-# since Nov 2026. The .nupkg is a zip holding the same linux-x64 libonnxruntime.so + C/C++ headers.
 include(FetchContent)
 
 set(ORT_VERSION 1.20.1)
@@ -15,7 +11,6 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(onnxruntime_prebuilt)
 
-# The nupkg ships only libonnxruntime.so; add the SONAME link the loader looks for.
 set(ORT_LIB_DIR "${onnxruntime_prebuilt_SOURCE_DIR}/runtimes/linux-x64/native")
 file(CREATE_LINK libonnxruntime.so "${ORT_LIB_DIR}/libonnxruntime.so.1" SYMBOLIC)
 
