@@ -21,6 +21,7 @@ namespace k1sim::module {
         struct RobotCamera {
             int id = -1;
             std::unique_ptr<camera::SharedImageWriter> writer;
+            std::unique_ptr<camera::SharedImageWriter> depth_writer;
             mjvGLCamera view[2]{};
             float focal_length_norm = 0.0F;
             float fov               = 0.0F;
@@ -84,6 +85,9 @@ namespace k1sim::module {
             camera.writer = std::make_unique<camera::SharedImageWriter>(segment(cfg.segment, robot.robot_id),
                                                                         cfg.width,
                                                                         cfg.height);
+            // The K1's camera is a stereo pair: its depth, for players that read it
+            camera.depth_writer = std::make_unique<camera::SharedImageWriter>(
+                segment(cfg.segment, robot.robot_id) + "_depth", cfg.width, cfg.height, 2, "16UC1");
 
             // See Camera.cpp: pinhole intrinsics from the MJCF camera and the render size.
             const double focal_px    = (cfg.height * 0.5) / std::tan(model->cam_fovy[camera.id] * M_PI / 360.0);
@@ -115,6 +119,12 @@ namespace k1sim::module {
         const std::size_t row_bytes = static_cast<std::size_t>(cfg.width) * 3;
         std::vector<unsigned char> raw(row_bytes * cfg.height);
         std::vector<unsigned char> flipped(raw.size());
+        std::vector<float> depth(static_cast<std::size_t>(cfg.width) * cfg.height);
+        std::vector<uint16_t> depth_mm(depth.size());
+        // MuJoCo's depth buffer to metres along the view axis; past MAX_DEPTH is no reading, as on the camera
+        const double znear         = model->vis.map.znear * model->stat.extent;
+        const double zfar          = model->vis.map.zfar * model->stat.extent;
+        constexpr double MAX_DEPTH = 10.0;
 
         log<NUClear::LogLevel::INFO>("MatchCameras: rendering", cameras.size(), "cameras at", cfg.fps, "fps");
 
@@ -137,7 +147,7 @@ namespace k1sim::module {
             for (auto& camera : cameras) {
                 std::memcpy(scn.camera, camera.view, sizeof(camera.view));
                 mjr_render(viewport, &scn, &con);
-                mjr_readPixels(raw.data(), nullptr, viewport, &con);
+                mjr_readPixels(raw.data(), depth.data(), viewport, &con);
 
                 // mjr_readPixels is bottom-up, and the reader expects top-down.
                 for (int row = 0; row < cfg.height; ++row) {
@@ -147,6 +157,21 @@ namespace k1sim::module {
                 }
                 camera.writer
                     ->publish(flipped.data(), flipped.size(), camera.focal_length_norm, camera.fov, 0.0F, 0.0F);
+
+                for (int row = 0; row < cfg.height; ++row) {
+                    const float* in = depth.data() + static_cast<std::size_t>(cfg.height - 1 - row) * cfg.width;
+                    uint16_t* out   = depth_mm.data() + static_cast<std::size_t>(row) * cfg.width;
+                    for (int col = 0; col < cfg.width; ++col) {
+                        const double metres = znear / (1.0 - in[col] * (1.0 - znear / zfar));
+                        out[col] = metres < MAX_DEPTH ? static_cast<uint16_t>(std::lround(metres * 1000.0)) : 0;
+                    }
+                }
+                camera.depth_writer->publish(reinterpret_cast<const uint8_t*>(depth_mm.data()),
+                                             depth_mm.size() * sizeof(uint16_t),
+                                             camera.focal_length_norm,
+                                             camera.fov,
+                                             0.0F,
+                                             0.0F);
             }
 
             next_frame += std::chrono::duration_cast<std::chrono::steady_clock::duration>(frame_period);

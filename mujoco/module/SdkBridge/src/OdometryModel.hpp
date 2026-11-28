@@ -2,6 +2,7 @@
 #define K1SIM_MODULE_SDKBRIDGE_ODOMETRYMODEL_HPP
 
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <numbers>
@@ -73,6 +74,11 @@ namespace k1sim::module::sdkbridge {
         // with a fresh bias drawn from its stationary distribution.
         const Estimate& update(double t, double x, double y, double yaw, double vx_world, double vy_world, double wz);
 
+        // ResetOdometry: with from_start, the next sample is zero again. Safe from any thread.
+        void reset_start() {
+            reset_start_.store(true, std::memory_order_relaxed);
+        }
+
     private:
         Config config_;
         std::mt19937_64 rng_;
@@ -85,6 +91,7 @@ namespace k1sim::module::sdkbridge {
 
         Estimate estimate_;
         std::optional<Estimate> start_;  // Config::from_start's first sample
+        std::atomic<bool> reset_start_{false};
         Estimate published_;
     };
 

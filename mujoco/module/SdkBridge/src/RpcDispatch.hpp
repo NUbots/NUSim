@@ -25,6 +25,7 @@ namespace k1sim::module::sdkbridge {
         GET_UP,
         LIE_DOWN,
         VISUAL_KICK,
+        RESET_ODOMETRY,
     };
 
     struct RpcAction {
@@ -35,6 +36,7 @@ namespace k1sim::module::sdkbridge {
         k1sim::message::GetUpRequest get_up;
         k1sim::message::LieDownRequest lie_down;
         k1sim::message::VisualKickRequest visual_kick;
+        k1sim::message::ResetOdometryRequest reset_odometry;
     };
 
     struct RpcOutcome {

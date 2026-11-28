@@ -46,6 +46,10 @@ namespace k1sim::message {
         int robot_id = 1;
     };
 
+    struct ResetOdometryRequest {  // ApiId::RESET_ODOMETRY
+        int robot_id = 1;
+    };
+
     struct VisualKickRequest {  // ApiId::VISUAL_KICK
         bool start   = true;
         int version  = 1;

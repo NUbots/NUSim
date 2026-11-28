@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cstdlib>
-#include <map>
 #include <string>
 
 #include "WorldSnapshotPubSubTypes.h"
@@ -25,16 +24,11 @@ namespace k1sim::module {
             const auto odometry = sdkbridge::OdometryModel::load_config(config::load("odometry.yaml"));
 
             std::lock_guard<std::mutex> lock(connections_mutex_);
-            // A roster robot's optional state_every: its LowState and ground truth go out with every Nth state
-            // update only, e.g. 50 Hz for a robot whose software expects that while the sim publishes 500 Hz.
-            std::map<int, int> state_every;
             if (!cli().match_config.empty()) {
-                const auto path   = std::filesystem::path(cli().match_config);
-                const auto roster = YAML::LoadFile((path.is_absolute() ? path : config::config_dir() / path).string());
-                teams_            = load_match_config(roster).teams;
-                for (const auto& node : roster["robots"]) {
-                    state_every[node["robot_id"].as<int>()] = std::max(1, node["state_every"].as<int>(1));
-                }
+                const auto path = std::filesystem::path(cli().match_config);
+                teams_          = load_match_config(
+                             YAML::LoadFile((path.is_absolute() ? path : config::config_dir() / path).string()))
+                             .teams;
             }
             for (const auto& robot : config::robot_roster()) {
                 // Each robot gets its own odometry estimator (own bias, pose and noise stream); a fixed
@@ -48,7 +42,7 @@ namespace k1sim::module {
 
                 RobotConnection connection;
                 connection.robot_id    = robot.robot_id;
-                connection.state_every = state_every.count(robot.robot_id) ? state_every[robot.robot_id] : 1;
+                connection.state_every = robot.state_every;
                 connection.dds         = std::make_unique<sdkbridge::DdsParticipant>(robot.dds_domain);
                 connection.truth_writer =
                     connection.dds->create_writer<nusim_msgs::msg::dds_::WorldSnapshot_PubSubType>(
@@ -69,6 +63,15 @@ namespace k1sim::module {
                     robot.dds_domain,
                     "- odometry",
                     odometry.enabled ? "with the config/odometry.yaml error model" : "ground truth");
+            }
+        });
+
+        on<Trigger<message::ResetOdometryRequest>>().then([this](const message::ResetOdometryRequest& request) {
+            std::lock_guard<std::mutex> lock(connections_mutex_);
+            for (auto& connection : connections_) {
+                if (connection.robot_id == request.robot_id) {
+                    connection.publisher->reset_odometry();
+                }
             }
         });
 

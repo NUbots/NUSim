@@ -127,14 +127,10 @@ namespace k1sim::module::sdkbridge {
             motors.push_back(to_motor_state(update.joints[i]));
         }
         low_state.motor_state_serial(motors);
-        // motor_state_parallel mirrors the real firmware's layout: the 12 leg motors only
-        // (JointIndexK1 kLeftHipPitch..kCrankDownRight => vector indices 0..11), with the
-        // crank slots carrying the serial-equivalent ankle pitch/roll values (the sim has
-        // no true parallel actuation). Clients (e.g. NUbots HardwareIO) index this vector
-        // as joint_index - kLeftHipPitch.
-        std::vector<booster_interface::msg::dds_::MotorState_> legs(motors.begin() + JointIndexK1::LeftHipPitch,
-                                                                    motors.end());
-        low_state.motor_state_parallel(legs);
+        // motor_state_parallel: all 22 joints, as on the robot (HTWK reads 22 entries, B-Human takes it when it
+        // is as long as the serial list). The sim has no parallel ankle linkage, so the ankle entries carry the
+        // serial pitch/roll values.
+        low_state.motor_state_parallel(motors);
         low_state_writer_->write(&low_state);
 
         // The controller's odometry: the base's planar pose and velocity as OdometryModel corrupts
@@ -253,9 +249,10 @@ namespace k1sim::module::sdkbridge {
         imu.linear_acceleration().z(update.imu.acc[2]);
         imu_writer_->write(&imu);
 
-        // --- rt/fall_down --- publish on change, or every >=1s as a keepalive.
+        // --- rt/fall_down --- publish on change, and at 10 Hz. HTWK takes "has fallen" as its get-up
+        // starting, and goes limp if it doesn't hear that soon after GetUp.
         const bool changed       = !have_last_fall_state_ || last_fall_state_ != update.fall_state;
-        const bool due_keepalive = (update.sim_time - last_fall_publish_time_) >= 1.0;
+        const bool due_keepalive = (update.sim_time - last_fall_publish_time_) >= 0.1;
         if (changed || due_keepalive) {
             if (changed) {
                 std::fprintf(stderr, "StatePublisher: fall_state -> %d (t=%.2f)\n", update.fall_state, update.sim_time);

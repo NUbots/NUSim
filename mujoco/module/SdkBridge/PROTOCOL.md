@@ -74,7 +74,7 @@ fastddsgen maps to unsigned `octet`/`uint8_t` in the generated C++ — this is t
 | # | field | type | notes |
 |---|---|---|---|
 | 1 | `imu_state` | `ImuState_` | nested struct |
-| 2 | `motor_state_parallel` | `sequence<MotorState_>` | mirrors serial 1:1 for K1 (no true parallel actuation) |
+| 2 | `motor_state_parallel` | `sequence<MotorState_>` | all 22 joints, the serial values (no parallel ankle linkage in the sim) |
 | 3 | `motor_state_serial` | `sequence<MotorState_>` | JointIndexK1 order, 22 entries |
 
 `is_bounded() == false` (contains sequences). Topic `rt/low_state`.
@@ -305,6 +305,7 @@ classes' `FromJson`/`ToJson`):
 | 2008 | `kGetUp` | `""` (empty) | — |
 | 2017 | `kGetMode` | `""` (empty) | `{"mode": <int>}` |
 | 2025 | `kGetUpWithMode` | `{"mode": <int>}` | — |
+| 2031 | `kResetOdometry` | `""` (empty) | — (in a match, `rt/odometer_state` reads zero again from where the robot stands) |
 | 2038 | `kVisualKick` | `{"start": <bool>, "version": <int>}` (`VisualKickVersion`: `kV1=0` default, `kV2=1`) | — |
 
 `RobotMode`: `kUnknown=-1, kDamping=0, kPrepare=1, kWalking=2, kCustom=3, kSoccer=4`

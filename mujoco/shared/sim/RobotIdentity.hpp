@@ -26,6 +26,9 @@ namespace k1sim {
         int team_id     = 0;  // GameController team number
         int player_id   = 0;  // 1..11 within the team
         int dds_domain  = 0;  // dedicated Booster + ground-truth transport domain
+        // LowState and ground truth go out with every Nth state update only, e.g. 50 Hz for a robot whose
+        // software expects that while the sim publishes 500 Hz
+        int state_every = 1;
 
         std::string body() const {
             return robot_prefix(model_index) + "Trunk";

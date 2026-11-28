@@ -87,3 +87,46 @@ def k1sim(*args, env=None):
     rc = subprocess.call(cmd, env=full_env)
     if rc != 0:
         sys.exit(rc)
+
+
+def _scalar(text):
+    """A YAML scalar or flow list: int, float, true/false, [a, b], or a string."""
+    text = text.split(" #", 1)[0].strip()
+    if text.startswith("[") and text.endswith("]"):
+        return [_scalar(item) for item in text[1:-1].split(",") if item.strip()]
+    if text in ("true", "false"):
+        return text == "true"
+    for kind in (int, float):
+        try:
+            return kind(text)
+        except ValueError:
+            pass
+    return text.strip("\"'")
+
+
+def config_section(file, key):
+    """A top-level mapping from a config/ file, nested by indentation: mappings, scalars and flow lists only, which
+    is all ./b reads (the host's Python has no YAML parser)."""
+    lines = (Path(b.mujoco_dir) / "config" / file).read_text().splitlines()
+    start = next(i for i, line in enumerate(lines) if line.split("#", 1)[0].rstrip() == f"{key}:")
+    root = {}
+    stack = [[None, root]]  # [indent of the mapping's keys (set by its first), mapping]
+    for line in lines[start + 1 :]:
+        content = "" if line.lstrip().startswith("#") else line.split(" #", 1)[0].rstrip()
+        if not content.strip():
+            continue
+        indent = len(content) - len(content.lstrip())
+        if indent == 0:
+            break
+        while stack[-1][0] is not None and indent < stack[-1][0]:
+            stack.pop()
+        if stack[-1][0] is None:
+            stack[-1][0] = indent
+        name, _, value = content.strip().partition(":")
+        mapping = stack[-1][1]
+        if value.strip():
+            mapping[name] = _scalar(value)
+        else:
+            mapping[name] = {}
+            stack.append([None, mapping[name]])
+    return root

@@ -71,7 +71,7 @@ namespace k1sim::module::sdkbridge {
         if (!config_.from_start) {
             return estimate_;
         }
-        if (!start_) {
+        if (!start_ || reset_start_.exchange(false, std::memory_order_relaxed)) {
             start_ = estimate_;
         }
         published_ = from_start(estimate_, *start_);

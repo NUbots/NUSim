@@ -26,6 +26,11 @@ namespace k1sim::module::sdkbridge {
         // Called on<Every<1, std::chrono::seconds>>: writes the constant-SOC rt/battery_state.
         void publish_battery();
 
+        // ResetOdometry: the odometry starts again from zero, from the next sample
+        void reset_odometry() {
+            odometry_.reset_start();
+        }
+
     private:
         eprosima::fastdds::dds::DataWriter* low_state_writer_    = nullptr;
         eprosima::fastdds::dds::DataWriter* odometer_writer_     = nullptr;

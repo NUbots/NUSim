@@ -231,10 +231,10 @@ no build flag, no shim and no code change — the same code path they use agains
 - **Topics** — sim publishes `rt/low_state` (IMU + serial/parallel motor state, 50 Hz), `rt/odometer_state`
   and `rt/odom` (the controller's odometry: ground truth, or drifting with the error model in
   [`mujoco/config/odometry.yaml`](mujoco/config/odometry.yaml) enabled), `rt/head_pose`, `rt/fall_down` (on change,
-  ≥1 Hz keepalive) and `rt/battery_state` (constant SOC); sim subscribes to
+  and at 10 Hz) and `rt/battery_state` (constant SOC); sim subscribes to
   `rt/joint_ctrl` (`LowCmd`, PD-tracked at 1 kHz in CUSTOM mode). The RPC pair `rt/LocoApiTopicReq` /
   `rt/LocoApiTopicResp` serves `CHANGE_MODE`, `MOVE`, `ROTATE_HEAD`, `LIE_DOWN`, `GET_UP`,
-  `GET_UP_WITH_MODE`, `VISUAL_KICK` and `GET_MODE`; unimplemented `api_id`s are accepted with a warning
+  `GET_UP_WITH_MODE`, `RESET_ODOMETRY`, `VISUAL_KICK` and `GET_MODE`; unimplemented `api_id`s are accepted with a warning
   (`unknown_api_status` in `dds.yaml`). Full wire details in
   [`mujoco/module/SdkBridge/PROTOCOL.md`](mujoco/module/SdkBridge/PROTOCOL.md).
 - **FastDDS profiles are mandatory.** `ChannelFactory::Init(0)` refuses to create its participant unless

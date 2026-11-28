@@ -314,10 +314,10 @@ per-motor `kp`/`kd`/`tau` carried in each message (torques clamped to the model'
   standing, and idling limp would just collapse before a client connects). `RotateHead` still steers the
   head here.
 - **CUSTOM** — PD-track the latest `rt/joint_ctrl` LowCmd (the path every NUbots_K1 policy uses).
-
 For SDK wire compatibility the old high-level RPCs are still answered: `ChangeMode(WALKING/SOCCER)` maps to
 PREPARE with a warning, and `Move`/`GetUp`/`LieDown`/`VisualKick` are accepted but ignored (warn-once) —
-drive the robot with CUSTOM + LowCmd instead.
+drive the robot with CUSTOM + LowCmd instead. A codebase written for the firmware's walk (HTWK's) brings its own
+stand-in for it.
 
 The sim boots holding **PREPARE** until the first `ChangeMode` arrives (`locomotion.yaml`'s `initial_mode`;
 set `damping` for the real robot's limp-at-boot behaviour). `--keyframe lying_front` spawns the robot on

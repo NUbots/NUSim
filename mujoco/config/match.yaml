@@ -40,7 +40,7 @@ autoreferee:
     - ball_out
     - invalid_goal
     - ball_free
-    - game_stuck
+    # - game_stuck # local game stuck: the robot nearest a ball that hasn't moved 10 cm in 10 s goes to the touchline
     - penalize_leaving_the_field
     - unpenalize
     - clear_ball
@@ -72,3 +72,44 @@ field:
   mark_radius: 0.05
   line_width: 0.05
   ball_radius: 0.0785
+
+# ./b match's containers (tools/match.py): the sim and every robot on a docker network of their own, so the
+# GameController's broadcasts and the team messages never leave it.
+docker:
+  network: nusim-match
+  subnet: 10.1.0.0/24 # the sim is .2, robot k is .(10 + k)
+  sim_container: nusim-match-sim
+  sim_startup_seconds: 3 # before the robots start
+  robot_cpu_shares: 256 # each robot's CPU weight; the sim has docker's default, 1024
+
+# The codebases a team can play (./b match --home-codebase / --away-codebase, and the window's pickers).
+#   number         its GameController number (the GameController's teams.yaml), so the window shows its name
+# Another team's code is a fork with nusim/Dockerfile (its image) and nusim/run.sh (its entrypoint, which starts one
+# robot's player from the environment every team's gets: docs/MATCH_WINDOW.md#codebases):
+#   install        ./b team install <install> builds its image from its fork (repo, ref)
+#   image          the image (K1SIM_<INSTALL>_IMAGE overrides it, e.g. K1SIM_BHUMAN_IMAGE=nusim-bhuman-asan)
+#   low_state_hz   500: its motion runs once per LowState at 500 Hz, so the sim publishes at that rate
+#   docker         extra docker run flags for its robots
+teams:
+  NUbots:
+    number: 1
+    build: /home/booster/build # where NUbots' build volume mounts in its image
+    game_roles: [nusim/robocup, nusim/behaviour] # what a refereed game runs, the first that's built
+  Nobody: # no player: its robots stand on the touchline, for watching the other team alone
+    number: 126
+  rUNSWift: # not set up: tools/match.py doesn't know how to start its player
+    number: 18
+  B-Human:
+    number: 5
+    install: bhuman
+    image: nusim-bhuman
+    repo: https://github.com/jpptm/NUSim-B-human.git
+    ref: main
+    low_state_hz: 500
+    docker: [--hostname, SimulatedK1] # it finds its robot config by hostname
+  HTWK:
+    number: 14
+    install: htwk
+    image: nusim-htwk
+    repo: https://github.com/jpptm/NUSim-HTWK.git
+    ref: main

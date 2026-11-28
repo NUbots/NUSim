@@ -102,6 +102,10 @@ namespace k1sim::module::sdkbridge {
                 outcome.action.visual_kick.version = get_int("version", k1sim::message::VisualKickRequest{}.version);
                 break;
             }
+            case booster::RESET_ODOMETRY: {
+                outcome.action.kind = RpcActionKind::RESET_ODOMETRY;
+                break;
+            }
             case booster::GET_MODE: {
                 outcome.action.kind   = RpcActionKind::NONE;
                 outcome.response_body = json{{"mode", current_mode}}.dump();
