@@ -88,6 +88,9 @@ Just the simulator: no referee and no robot software started for you. Choose the
 run a role yourself from a terminal (`./b run <role>` in NUbots). A GameController running on the network is obeyed
 if there is one.
 
+Free Play needs the one-time setup above too, because the Setup panel can switch to the other modes. If it hasn't
+been done, `./b match` says what is missing and prints the commands to run.
+
 ## Perception: vision or ground truth
 
 - **Vision**: the robots find themselves and the ball with their own camera.

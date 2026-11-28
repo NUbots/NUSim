@@ -71,6 +71,7 @@ warning_period: 5.0
 MODES = ["game", "testing", "freeplay"]
 FIELDS = ["middle", "kidsize", "no-field"]  # simulation.yaml's fields; matches always use the middle field
 GAMECONTROLLER_DIR = ".deps/GameController"  # the checkout module::Referee loads its library and rules from
+GAMECONTROLLER_DIR_FROM_ROOT = f"mujoco/{GAMECONTROLLER_DIR}"
 
 # What a team can run. A codebase needs a way to start one player per robot; only NUbots has one so far.
 CODEBASES = [
@@ -383,6 +384,47 @@ def run_once(setup, session, nubots_target, headless, rtf, web_args):
     return setup
 
 
+GAMECONTROLLER_COMMIT = "21c7c6a868fe29cfdc345404859a5344b1857274"  # the one the referees were tested with
+
+
+def check_setup(mode):
+    """Stops with the exact commands to run if the one-time GameController setup hasn't been done.
+
+    Every mode needs it, Free Play included: Free Play itself only runs sim/soccer, but the window's Setup panel can
+    switch to Game (sim/match, which needs the staged C API) or the Testing Room (which loads the cargo-built library).
+    """
+    checkout = MUJOCO / GAMECONTROLLER_DIR
+    missing = []
+    if not (checkout / ".git").exists():
+        missing.append(f"the GameController checkout ({checkout.relative_to(MUJOCO.parent)})")
+    if not (MUJOCO / ".deps/game_controller_api/lib").exists():
+        missing.append("the staged GameController C API (mujoco/.deps/game_controller_api)")
+    if not (checkout / "target/release/libgame_controller_api.so").exists():
+        missing.append("the GameController library build (cargo build)")
+    if not (MUJOCO / build_dir() / "bin/sim/match").exists():
+        missing.append(f"the sim/match build (mujoco/{build_dir()}/bin/sim/match)")
+    if not missing:
+        return
+
+    name = {"game": "Game mode", "testing": "The Testing Room", "freeplay": "Free Play"}[mode]
+    sys.exit(f"""
+{name} needs a one-time setup that hasn't been done on this machine yet.
+
+Missing:
+""" + "".join(f"  - {item}\n" for item in missing) + f"""
+Run these from the NUSim directory (it needs Rust's cargo; see docs/MATCH_WINDOW.md, "Setting up"):
+
+  git clone https://github.com/RoboCup-HumanoidSoccerLeague/GameController {GAMECONTROLLER_DIR_FROM_ROOT}
+  git -C {GAMECONTROLLER_DIR_FROM_ROOT} checkout {GAMECONTROLLER_COMMIT}
+  mujoco/tools/install_game_controller_api.sh {GAMECONTROLLER_DIR_FROM_ROOT}
+  (cd {GAMECONTROLLER_DIR_FROM_ROOT} && cargo build -r -p game_controller_api)
+  ./b configure
+  ./b build
+
+Skip the first two lines if the checkout already exists. Then run ./b match --mode {mode} again.
+""")
+
+
 def run(game, home_role, away_role, nubots_target, mode, ground_truth, vision, vision_device, replace, headless,
         rtf, web, web_host, web_port, **kwargs):
     # Only one match fits on a machine: the containers, DDS domains and camera segments are shared names.
@@ -392,8 +434,7 @@ def run(game, home_role, away_role, nubots_target, mode, ground_truth, vision, v
     if running and not replace:
         sys.exit("error: a ./b match is already running on this machine. Close its window first, or pass --replace")
 
-    if not (MUJOCO / build_dir() / "bin/sim/match").exists():
-        sys.exit("error: no bin/sim/match. Run mujoco/tools/install_game_controller_api.sh, ./b configure and ./b build")
+    check_setup(mode)
 
     session = MUJOCO / build_dir() / "match"
     session.mkdir(parents=True, exist_ok=True)
