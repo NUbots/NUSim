@@ -24,16 +24,8 @@ hold_robots: true
 # which leaves a third of a match frozen with robots this prone to leaving the field. Negative keeps them.
 penalty_seconds: 10
 
+# Control messages go to the match network's broadcast address, which ./b match passes in (--broadcast).
 network:
-  # Where control messages go. NUClear's UDP::Broadcast only accepts 255.255.255.255 or the broadcast
-  # address of an interface with the broadcast flag, which rules out 127.255.255.255.
-  broadcast_address: 255.255.255.255
-  # Interface to send on. lo reaches every process on this machine, and unlike the network interface
-  # isn't blocked by a firewall such as ufw. Leave empty to use the network, for robots on other
-  # machines (which does need the firewall to allow it).
-  interface: lo
-  control_port: 3838
-  status_port: 3939
   control_interval: 0.5 # wall-clock seconds between control messages
   status_timeout: 4.0 # wall-clock seconds without a status message before a player counts as offline
 

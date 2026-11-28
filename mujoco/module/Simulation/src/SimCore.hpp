@@ -160,6 +160,13 @@ namespace k1sim {
         uint64_t dropped_deadlines() const noexcept {
             return dropped_deadlines_.load(std::memory_order_relaxed);
         }
+        // Longest wait for the sim mutex and longest state publish since the last call, in ms.
+        double take_worst_lock_wait_ms() noexcept {
+            return worst_lock_wait_ms_.exchange(0.0, std::memory_order_relaxed);
+        }
+        double take_worst_publish_ms() noexcept {
+            return worst_publish_ms_.exchange(0.0, std::memory_order_relaxed);
+        }
 
     private:
         void physics_loop();
@@ -216,6 +223,7 @@ namespace k1sim {
         std::thread thread_;
         std::atomic<uint64_t> step_count_{0};
         std::atomic<uint64_t> dropped_deadlines_{0};
+        std::atomic<double> worst_lock_wait_ms_{0.0}, worst_publish_ms_{0.0};
         std::atomic<uint64_t> physics_ns_{0}, physics_steps_{0};
 
         // Foot-contact CSV (Config::foot_log_path); nullptr when logging is off.

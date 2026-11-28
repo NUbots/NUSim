@@ -39,7 +39,8 @@ common_flags() {
 
 # Extra flags for interactive/GUI/DDS runs.
 run_flags() {
-    echo -n " --network host --ipc host"
+    # K1SIM_NETWORK_FLAGS replaces the host network, e.g. a match's own docker network (tools/match.py)
+    echo -n " ${K1SIM_NETWORK_FLAGS:---network host --ipc host}"
     if [ -n "${DISPLAY:-}" ]; then
         echo -n " -e DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix"
     fi

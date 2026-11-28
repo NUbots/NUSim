@@ -31,6 +31,8 @@ namespace k1sim::module {
             bool seen_state                                  = false;
             uint64_t last_reset_count                        = 0;
             uint64_t last_step_count                         = 0;
+            int state_every                                  = 1;  // publish every Nth state update (--match roster)
+            uint64_t updates                                 = 0;
             std::unique_ptr<sdkbridge::DdsParticipant> dds;
             std::unique_ptr<sdkbridge::StatePublisher> publisher;
             std::unique_ptr<sdkbridge::RpcServer> rpc;

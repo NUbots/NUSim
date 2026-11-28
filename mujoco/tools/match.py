@@ -16,15 +16,20 @@ and reads one camera, so each container gets files that point it at its own robo
 
 Every container also gets a FieldDescription.yaml for the sim's field: NUbots defaults to its 6.8 x 5 m
 lab field, and matching lines against the wrong field leaves robots lost. And a RobotCommunication.yaml
-that sends team messages to 255.255.255.255, as the robot network's broadcast address isn't on this machine.
+that sends team messages to the match network's broadcast address.
+
+The sim and the robots live on their own docker network (NETWORK, SUBNET), one address each, so the GameController's
+broadcasts and the team messages never leave it. Robots share the sim's IPC namespace for its camera segments. The
+browser viewer's port is the only one published, on 127.0.0.1 unless --web-host says otherwise.
 
 B-Human runs its native x86_64 build of the Booster app (see BHUMAN_IMAGE) with per-robot files mounted over its
 Config/: settings.cfg (team and player number), the camera segment, and setup poses that match the sim's touchline
 lineup. Its motion runs once per LowState and needs 500 Hz, so a match with B-Human runs the sim from a copy of
-config/ with state_publish_divisor 2.
+config/ with state_publish_divisor 2, and its roster gives every other robot state_every 10 (still 50 Hz).
 """
 
 import getpass
+import ipaddress
 import json
 import math
 import os
@@ -44,6 +49,11 @@ DOMAIN_GAIN = 250
 CONTAINER_BUILD = "/home/booster/build"  # where NUbots' build volume mounts in its image
 SIM_STARTUP_SECONDS = 3
 SIM_CONTAINER = "nusim-match-sim"
+# The match's own docker network. The sim and every robot get an address on it, and broadcasts (the GameController's
+# control messages, team messages) stay on it instead of going out on this machine's network.
+NETWORK = "nusim-match"
+SUBNET = "10.1.0.0/24"
+ROBOT_CPU_SHARES = 256  # each robot's CPU weight; the sim has docker's default, 1024
 
 PROFILE = """<?xml version="1.0" encoding="UTF-8" ?>
 <profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
@@ -76,11 +86,10 @@ timeout: 0.5
 warning_period: 5.0
 """
 
-# B-Human's native Booster build: an image with its runtime, and a volume with the build (/work/bhuman) and the files
-# it needs on a K1 (fake thermal zones, an ALSA null device in home/). Made by B-Human's nusim-trial/native-booster.sh.
-BHUMAN_IMAGE = "bhuman-trial"
-BHUMAN_VOLUME = "bhuman_trial"
-BHUMAN_DIR = "/work/bhuman"
+# B-Human's native Booster build, from ./b team install bhuman (docker/teams/bhuman).
+BHUMAN_IMAGE = os.environ.get("K1SIM_BHUMAN_IMAGE", "nusim-bhuman")  # e.g. nusim-bhuman-asan
+BHUMAN_DIR = "/opt/bhuman"
+BHUMAN_HOME = "/opt/nusim/home"  # an ALSA null device in .asoundrc
 BHUMAN_BINARY = f"{BHUMAN_DIR}/Build/Linux/Booster/Develop/bhuman"
 BHUMAN_ROBOT = "SimulatedK1"  # B-Human finds its robot config by hostname
 
@@ -115,8 +124,7 @@ CODEBASES = [
     dict(
         name="B-Human",
         available=False,
-        note=f"B-Human isn't set up on this machine: it needs the {BHUMAN_IMAGE} image and the {BHUMAN_VOLUME} volume "
-        "with its native build (B-Human's nusim-trial/native-booster.sh).",
+        note=f"B-Human isn't set up on this machine: build its image ({BHUMAN_IMAGE}) with ./b team install bhuman.",
     ),
 ]
 # The NUbots role a refereed game runs: the competition role with the sim's walk, kick and camera.
@@ -273,13 +281,8 @@ def ground_truth_config(nubots_target):
 
 
 def robot_communication(nubots_target):
-    """NUbots' RobotCommunication.yaml, with team messages sent to every robot on this machine.
-
-    Its broadcast_ip is the robot network's, which no interface here has. 255.255.255.255 reaches every robot on this
-    machine. 127.0.0.1 reaches only one of the robots sharing a port, and NUClear's UDP::Broadcast drops packets sent
-    to 127.255.255.255, as lo has no broadcast flag.
-    """
-    text = set_key(nubots_config(nubots_target, "RobotCommunication.yaml"), "broadcast_ip", '"255.255.255.255"')
+    """NUbots' RobotCommunication.yaml, with team messages sent to the match network's broadcast address."""
+    text = set_key(nubots_config(nubots_target, "RobotCommunication.yaml"), "broadcast_ip", f'"{broadcast_address()}"')
     return set_key(text, "log_level", os.environ.get("K1SIM_ROBOT_COMMS_LOG", "INFO"))
 
 
@@ -289,6 +292,67 @@ def set_key(text, key, value):
     if re.search(rf"^{key}:", text, flags=re.M):
         return re.sub(rf"^{key}:.*$", line, text, flags=re.M)
     return f"{text.rstrip()}\n{line}\n"
+
+
+def subnet():
+    return ipaddress.ip_network(SUBNET)
+
+
+def broadcast_address():
+    return str(subnet().broadcast_address)
+
+
+def sim_address():
+    return str(subnet()[2])
+
+
+def robot_address(robot):
+    return str(subnet()[10 + robot["robot_id"]])
+
+
+def ensure_network():
+    """The match network, created if it isn't there (or remade if its subnet changed)."""
+    found = subprocess.run(
+        ["docker", "network", "inspect", NETWORK, "--format", "{{range .IPAM.Config}}{{.Subnet}}{{end}}"],
+        capture_output=True,
+        text=True,
+    )
+    if found.returncode == 0 and found.stdout.strip() == SUBNET:
+        return
+    if found.returncode == 0:
+        subprocess.run(["docker", "network", "rm", NETWORK], stdout=subprocess.DEVNULL, check=True)
+    gateway = str(subnet()[1])
+    subprocess.run(
+        ["docker", "network", "create", "--driver", "bridge", "--subnet", SUBNET, "--gateway", gateway, NETWORK],
+        stdout=subprocess.DEVNULL,
+        check=True,
+    )
+
+
+def robot_container_flags(robot):
+    """A robot's address on the match network, and its share of the CPU.
+
+    It shares the sim's IPC namespace for the camera segments. When the CPU is short (3v3 takes all of a 12-thread
+    one), the sim's physics goes first: at real time it is what every robot depends on. ROBOT_CPU_SHARES against the
+    sim's default 1024.
+    """
+    return [
+        "--network", NETWORK, "--ip", robot_address(robot), "--ipc", f"container:{SIM_CONTAINER}",
+        "--cpu-shares", str(ROBOT_CPU_SHARES),
+    ]  # fmt: skip
+
+
+def wait_for_sim(timeout=60):
+    """Wait for the sim's container, which robots join for IPC. False if it never started."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        running = subprocess.run(
+            ["docker", "inspect", "--format", "{{.State.Running}}", SIM_CONTAINER], capture_output=True, text=True
+        ).stdout.strip()
+        if running == "true":
+            return True
+        time.sleep(0.5)
+    return False
 
 
 def roster(game, teams=(125, 126)):
@@ -314,7 +378,7 @@ def write_roster(path, robots):
               for i, team in enumerate(teams)]  # fmt: skip
     lines += ["robots:"]
     lines += [f"  - {{robot_id: {r['robot_id']}, team_id: {r['team_id']}, player_id: {r['player_id']}, "
-              f"dds_domain: {r['domain']}}}" for r in robots]  # fmt: skip
+              f"dds_domain: {r['domain']}, state_every: {r.get('state_every', 1)}}}" for r in robots]  # fmt: skip
     path.write_text("\n".join(lines) + "\n")
 
 
@@ -324,16 +388,8 @@ def sim_path(path):
 
 
 def bhuman_available():
-    """Whether B-Human's image and native build are on this machine."""
-    image = subprocess.run(["docker", "image", "inspect", BHUMAN_IMAGE], capture_output=True)
-    if image.returncode != 0:
-        return False
-    found = subprocess.run(
-        ["docker", "run", "--rm", "--volume", f"{BHUMAN_VOLUME}:/work", "--entrypoint", "test", BHUMAN_IMAGE,
-         "-x", BHUMAN_BINARY],
-        capture_output=True,
-    )  # fmt: skip
-    return found.returncode == 0
+    """Whether B-Human's image is on this machine."""
+    return subprocess.run(["docker", "image", "inspect", BHUMAN_IMAGE], capture_output=True).returncode == 0
 
 
 def bhuman_setup_poses():
@@ -367,7 +423,7 @@ def bhuman_setup_poses():
 
 
 def sim_config(session):
-    """A copy of config/ for a match with B-Human: LowState at 500 Hz, the rate its motion runs at."""
+    """A copy of config/ with LowState at 500 Hz, the rate B-Human's motion runs at."""
     directory = session / "config"
     shutil.rmtree(directory, ignore_errors=True)
     shutil.copytree(MUJOCO / "config", directory)
@@ -411,16 +467,13 @@ def bhuman_command(robot, directory, session):
     return [
         "docker", "run", "--rm",
         "--name", container(robot),
-        "--network", "host",
-        "--ipc", "host",
+        *robot_container_flags(robot),
         "--hostname", BHUMAN_ROBOT,
-        # As root, FastDDS shared memory with the sim fails. B-Human raises its threads to SCHED_FIFO.
+        # As root, FastDDS shared memory with the sim fails.
         "--user", f"{os.getuid()}:{os.getgid()}",
-        "--ulimit", "rtprio=99",
-        "--volume", f"{BHUMAN_VOLUME}:/work",
-        # It reads the K1's temperature from these.
-        "--mount", f"type=volume,src={BHUMAN_VOLUME},dst=/sys/devices/virtual/thermal,volume-subpath=fake-thermal",
-        "--env", "HOME=/work/home",
+        "--env", f"HOME={BHUMAN_HOME}",
+        # Robots share the sim's IPC namespace: B-Human's assert log and semaphore get a name per robot
+        "--env", f"BHUMAN_INSTANCE={robot['robot_id']}",
         "--env", "FASTRTPS_DEFAULT_PROFILES_FILE=/robot/fastdds.xml",
         "--volume", f"{directory}:/robot:ro",
         "--volume", f"{directory}/settings.cfg:{config}/settings.cfg:ro",
@@ -428,8 +481,10 @@ def bhuman_command(robot, directory, session):
                     f"{config}/Robots/{BHUMAN_ROBOT}/sharedMemoryCameraProvider.cfg:ro",
         "--volume", f"{session}/bhumanSetupPoses.cfg:{config}/Locations/NUSim/setupPosesProvider.cfg:ro",
         "--workdir", str(pathlib.PurePosixPath(BHUMAN_BINARY).parent),
-        "--entrypoint", BHUMAN_BINARY,
-        BHUMAN_IMAGE,
+        # K1SIM_BHUMAN_GDB=1: run it in gdb, which prints every thread's backtrace to the log if it crashes
+        *(["--cap-add", "SYS_PTRACE", "--entrypoint", "gdb", BHUMAN_IMAGE,
+           "-batch", "-ex", "run", "-ex", "thread apply all bt 20", "--args", BHUMAN_BINARY]
+          if os.environ.get("K1SIM_BHUMAN_GDB") else ["--entrypoint", BHUMAN_BINARY, BHUMAN_IMAGE]),
         "-c", BHUMAN_DIR,
     ]  # fmt: skip
 
@@ -454,8 +509,7 @@ def nubots_command(robot, role, directory, session, nubots_target, ground_truth,
     return [
         "docker", "run", "--rm",
         "--name", container(robot),
-        "--network", "host",
-        "--ipc", "host",
+        *robot_container_flags(robot),
         "--user", f"{os.getuid()}:{os.getgid()}",
         "--workdir", CONTAINER_BUILD,
         "--env", "FASTRTPS_DEFAULT_PROFILES_FILE=/robot/fastdds.xml",
@@ -492,7 +546,7 @@ def interrupt(signum, frame):
     raise KeyboardInterrupt
 
 
-def run_once(setup, session, nubots_target, headless, rtf, web_args):
+def run_once(setup, session, nubots_target, headless, rtf, web):
     """One sim session with its robots. Returns the window's next setup, or None once the sim just exits."""
     mode = setup["mode"]
     stop_containers(roster(3))  # from a run that didn't finish, whatever its size
@@ -525,24 +579,42 @@ def run_once(setup, session, nubots_target, headless, rtf, web_args):
         sim_args += ["--robots", str(setup["robots"])] if setup["robots"] > 1 else []
         roles = None
     robots = roster(setup["game"], team_numbers(setup)) if roles else []
+    # With B-Human the sim publishes LowState at 500 Hz, the rate its motion runs at. Every other robot still gets the
+    # usual 50 Hz (every 10th): NUbots at 500 Hz loads its stack, and its mode requests to the sim start timing out.
+    fast_low_state = "B-Human" in codebases
+    for robot in robots:
+        codebase = codebases[0] if robot["team_id"] == robots[0]["team_id"] else codebases[1]
+        robot["state_every"] = 10 if fast_low_state and codebase != "B-Human" else 1
     if robots:
         write_roster(session / "roster.yaml", robots)
         sim_args += ["--match", sim_path(session / "roster.yaml")]
     if "B-Human" in codebases and robots:
         (session / "bhumanSetupPoses.cfg").write_text(bhuman_setup_poses())
-        sim_args += ["--config-dir", sim_path(sim_config(session))]
+    env = dict(os.environ, K1SIM_RUN_FLAGS=run_flags, K1SIM_DOCKER_TTY="-i")  # -i: a tty would eat ^C
+    if robots:
+        # The sim and its robots on the match network. Only the browser viewer's port is published, on this machine.
+        ensure_network()
+        # The GameController's control messages go to the match network only.
+        sim_args += ["--broadcast", broadcast_address()]
+        sim_args += ["--config-dir", sim_path(sim_config(session))] if fast_low_state else []
+        network = f"--network {NETWORK} --ip {sim_address()} --ipc shareable"
+        if web["enabled"]:
+            network += f" --publish {web['host']}:{web['port']}:{web['port']}"
+            sim_args += ["--web", "--web-host", "0.0.0.0", "--web-port", str(web["port"])]
+        env["K1SIM_NETWORK_FLAGS"] = network
+    elif web["enabled"]:
+        sim_args += ["--web", "--web-host", web["host"], "--web-port", str(web["port"])]
     sim_args += ["--session", f"{build_dir()}/match"]
     sim_args += ["--headless"] if headless else []
     sim_args += ["--rtf", rtf] if rtf else []
-    sim_args += web_args
 
-    sim = subprocess.Popen(
-        [str(MUJOCO / "docker/k1sim.sh"), "run", role, *sim_args],
-        env=dict(os.environ, K1SIM_RUN_FLAGS=run_flags, K1SIM_DOCKER_TTY="-i"),
-    )  # -i: a tty would eat ^C
+    sim = subprocess.Popen([str(MUJOCO / "docker/k1sim.sh"), "run", role, *sim_args], env=env)
 
     try:
         time.sleep(SIM_STARTUP_SECONDS)
+        if robots and not wait_for_sim():
+            print("ERROR: the sim's container didn't start, so no robots were started", flush=True)
+            robots = []
         processes = {}
         for robot in robots:
             first_team = robot["team_id"] == robots[0]["team_id"]
@@ -645,9 +717,7 @@ def run(
     signal.signal(signal.SIGTERM, interrupt)
     signal.signal(signal.SIGHUP, interrupt)
 
-    web_args = ["--web"] if web or web_host or web_port else []
-    web_args += ["--web-host", web_host] if web_host else []
-    web_args += ["--web-port", str(web_port)] if web_port else []
+    web = dict(enabled=bool(web or web_host or web_port), host=web_host or "127.0.0.1", port=web_port or 8080)
 
     for codebase in CODEBASES:
         if codebase["name"] == "B-Human":
@@ -676,7 +746,7 @@ def run(
     )
     try:
         while setup is not None:
-            setup = run_once(setup, session, nubots_target, headless, rtf, web_args)
+            setup = run_once(setup, session, nubots_target, headless, rtf, web)
     except KeyboardInterrupt:
         pass
     finally:

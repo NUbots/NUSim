@@ -50,7 +50,6 @@ namespace k1sim::module::supervisor {
 
     struct SupervisorConfig {
         bool enabled = true;
-        int gc_port  = 3838;
         std::string teams_file;  // the GameController's teams.yaml (team number -> name); empty = "Team <number>"
 
         // Extra ball-centre resets beyond the core kickoff rule (entering READY,
@@ -78,7 +77,6 @@ namespace k1sim::module::supervisor {
     inline SupervisorConfig load_config(const YAML::Node& root) {
         SupervisorConfig cfg;
         cfg.enabled    = root["enabled"].as<bool>(cfg.enabled);
-        cfg.gc_port    = root["gc_port"].as<int>(cfg.gc_port);
         cfg.teams_file = root["teams_file"].as<std::string>(cfg.teams_file);
 
         if (const auto& reset = root["reset_ball_on"]) {

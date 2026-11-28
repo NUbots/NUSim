@@ -9,7 +9,6 @@
 # NUbots' GameController ("Unable to bind the UDP socket: Address already in use").
 # Enable only when running the sim STANDALONE (no NUbots GameController on host).
 enabled: false
-gc_port: 3838 # RoboCup GameController broadcast port (protocol version 20)
 
 # The GameController's teams.yaml (its config directory), to show team names instead of
 # "Team <number>" on the browser viewer's scoreboard. Empty: the one in the docker image.

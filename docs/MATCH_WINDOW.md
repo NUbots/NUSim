@@ -132,8 +132,21 @@ To see the messages, run with `K1SIM_ROBOT_COMMS_LOG=DEBUG`; each robot's log th
 
 ## Codebases
 
-The team pickers list NUbots, rUNSWift and B-Human. Only NUbots can be started so far. To add another, give it an entry in
-`CODEBASES` in `mujoco/tools/match.py` and a way to start one player per robot in `start_robot`.
+The team pickers list NUbots, rUNSWift and B-Human. NUbots and B-Human can be started; rUNSWift can't yet.
+
+B-Human runs the NUSim fork of its 2026 code release ([jpptm/NUSim-B-human](https://github.com/jpptm/NUSim-B-human)),
+built natively for x86_64. Build its image once, then pick it for a team, or from the command line:
+
+    ./b team install bhuman                 # image nusim-bhuman, from the fork's main branch
+    ./b match --game 1 --away-codebase B-Human
+
+With B-Human in a match, its robots get `LowState` at 500 Hz (its motion runs at that rate) and every other robot the
+usual 50 Hz (`state_every` in the session's roster), and robots aren't held, as it obeys the GameController. Each team gets its GameController number (NUbots 1, B-Human 5), so the window shows the
+teams' names.
+
+To add another codebase: a `docker/teams/<team>/Dockerfile` that builds it from `src/` (with an entry in `TEAMS` in
+`mujoco/tools/team/install.py`), an entry in `CODEBASES` and `TEAM_NUMBERS` in `mujoco/tools/match.py`, and a command
+in `start_robot` that starts one player per robot on the match network (`robot_container_flags`).
 
 ## What NUbots needs
 

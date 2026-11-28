@@ -1,6 +1,8 @@
 #include "module/SdkBridge/src/SdkBridge.hpp"
 
+#include <algorithm>
 #include <cstdlib>
+#include <map>
 #include <string>
 
 #include "WorldSnapshotPubSubTypes.h"
@@ -12,31 +14,27 @@
 
 namespace k1sim::module {
 
-    namespace {
-        bool env_flag_set(const char* name) {
-            const char* value = std::getenv(name);
-            return value != nullptr && std::string(value) != "0" && std::string(value) != "";
-        }
-    }  // namespace
-
     SdkBridge::SdkBridge(std::unique_ptr<NUClear::Environment> environment) : Reactor(std::move(environment)) {
 
         on<Startup>().then([this] {
             auto cfg = config::load("dds.yaml");
 
-            const bool udp_only              = cfg["udp_only"].as<bool>(false) || env_flag_set("K1_DDS_UDP_ONLY");
-            const bool local_only            = cfg["local_only"].as<bool>(false);
             const double battery_soc         = cfg["battery_soc"].as<double>(100.0);
             const int64_t unknown_api_status = cfg["unknown_api_status"].as<int64_t>(0);
 
             const auto odometry = sdkbridge::OdometryModel::load_config(config::load("odometry.yaml"));
 
             std::lock_guard<std::mutex> lock(connections_mutex_);
+            // A roster robot's optional state_every: its LowState and ground truth go out with every Nth state
+            // update only, e.g. 50 Hz for a robot whose software expects that while the sim publishes 500 Hz.
+            std::map<int, int> state_every;
             if (!cli().match_config.empty()) {
-                const auto path = std::filesystem::path(cli().match_config);
-                teams_          = load_match_config(
-                                      YAML::LoadFile((path.is_absolute() ? path : config::config_dir() / path).string()))
-                                      .teams;
+                const auto path   = std::filesystem::path(cli().match_config);
+                const auto roster = YAML::LoadFile((path.is_absolute() ? path : config::config_dir() / path).string());
+                teams_            = load_match_config(roster).teams;
+                for (const auto& node : roster["robots"]) {
+                    state_every[node["robot_id"].as<int>()] = std::max(1, node["state_every"].as<int>(1));
+                }
             }
             for (const auto& robot : config::robot_roster()) {
                 // Each robot gets its own odometry estimator (own bias, pose and noise stream); a fixed
@@ -49,8 +47,9 @@ namespace k1sim::module {
                 robot_odometry.from_start = cli().game > 0;
 
                 RobotConnection connection;
-                connection.robot_id = robot.robot_id;
-                connection.dds = std::make_unique<sdkbridge::DdsParticipant>(robot.dds_domain, udp_only, local_only);
+                connection.robot_id    = robot.robot_id;
+                connection.state_every = state_every.count(robot.robot_id) ? state_every[robot.robot_id] : 1;
+                connection.dds         = std::make_unique<sdkbridge::DdsParticipant>(robot.dds_domain);
                 connection.truth_writer =
                     connection.dds->create_writer<nusim_msgs::msg::dds_::WorldSnapshot_PubSubType>(
                         ground_truth::TOPIC_WORLD_SNAPSHOT,
@@ -59,18 +58,17 @@ namespace k1sim::module {
                     std::make_unique<sdkbridge::StatePublisher>(*connection.dds, battery_soc, robot_odometry);
                 connection.rpc =
                     std::make_unique<sdkbridge::RpcServer>(*connection.dds, *this, unknown_api_status, robot.robot_id);
-                connection.ground_truth        = std::make_unique<sdkbridge::GroundTruthPublisher>(*connection.dds);
+                connection.ground_truth = std::make_unique<sdkbridge::GroundTruthPublisher>(*connection.dds);
                 connection.ball_command_reader =
                     std::make_unique<sdkbridge::BallCommandReader>(*connection.dds, *this, robot);
                 connections_.push_back(std::move(connection));
-                log<NUClear::LogLevel::INFO>("SdkBridge ready — robot",
-                                             robot.robot_id,
-                                             "DDS domain",
-                                             robot.dds_domain,
-                                             local_only ? "loopback UDP" : (udp_only ? "UDP-only" : "UDP+SHM"),
-                                             ", odometry",
-                                             odometry.enabled ? "with the config/odometry.yaml error model"
-                                                              : "ground truth");
+                log<NUClear::LogLevel::INFO>(
+                    "SdkBridge ready — robot",
+                    robot.robot_id,
+                    "DDS domain",
+                    robot.dds_domain,
+                    "- odometry",
+                    odometry.enabled ? "with the config/odometry.yaml error model" : "ground truth");
             }
         });
 
@@ -136,6 +134,9 @@ namespace k1sim::module {
                         connection.last_reset_count = state.reset_count;
                         connection.last_step_count  = state.step_count;
                         connection.rpc->set_current_mode(state.mode);
+                        if (connection.updates++ % static_cast<uint64_t>(connection.state_every) != 0) {
+                            break;
+                        }
                         connection.publisher->publish(state);
                         connection.ground_truth->publish(state);
                         connection.truth_writer->write(&world);

@@ -910,8 +910,19 @@ namespace k1sim {
             const double rtf    = rtf_.load(std::memory_order_acquire);
             const bool free_run = rtf <= 0.0;
             const double period = free_run ? 0.0 : dt / rtf;
+            auto keep_worst     = [](std::atomic<double>& worst, const timespec& from) {
+                timespec now{};
+                clock_gettime(CLOCK_MONOTONIC, &now);
+                const double ms = (to_seconds(now) - to_seconds(from)) * 1000.0;
+                if (ms > worst.load(std::memory_order_relaxed)) {
+                    worst.store(ms, std::memory_order_relaxed);
+                }
+            };
+            timespec before_lock{};
+            clock_gettime(CLOCK_MONOTONIC, &before_lock);
             {
                 std::lock_guard<std::mutex> lock(mutex_);
+                keep_worst(worst_lock_wait_ms_, before_lock);
                 advance_locked();
                 ++window_steps;
                 if (publish_every > 0 && step_count() % publish_every == 0) {
@@ -923,12 +934,15 @@ namespace k1sim {
                 }
             }
             if (snapshot) {
+                timespec before_publish{};
+                clock_gettime(CLOCK_MONOTONIC, &before_publish);
                 if (on_state_) {
                     on_state_(std::make_unique<message::SimStateUpdate>(snapshot->robots.front()));
                 }
                 if (on_batch_) {
                     on_batch_(std::move(snapshot));
                 }
+                keep_worst(worst_publish_ms_, before_publish);
             }
 
             if (!free_run) {

@@ -128,7 +128,7 @@ namespace k1sim::module {
         // Loaded eagerly (constructor body, not Startup) so everything is known before the listener starts.
         SupervisorConfig cfg             = build_config();
         const bool enabled               = cfg.enabled || cli().gamecontroller || cli().referee;
-        const int gc_port                = cfg.gc_port;
+        const int gc_port                = gc::CONTROL_PORT;
         const std::string ball_body_name = cfg.ball.body;
         const std::string ball_geom_name = cfg.ball.geom;
         team_names_                      = load_team_names(cfg.teams_file);

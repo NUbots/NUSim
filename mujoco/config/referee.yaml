@@ -18,7 +18,3 @@ kick_off: home # home | away
 # to listen for the whistle. true = tell them immediately (the GameController's "no delay" test option).
 no_delay: true
 
-# Where the packets go. The broadcast address reaches every robot on the network, 127.0.0.1 robot software on
-# this machine.
-port: 3838
-targets: ["255.255.255.255", "127.0.0.1"]

@@ -17,19 +17,13 @@
 // Thin wrapper around a single eprosima::fastdds::dds::DomainParticipant, matching
 // the SDK's ChannelFactory::Init(domain_id) — one participant, one Publisher, one
 // Subscriber, typed writer/reader helpers. See module/SdkBridge/PROTOCOL.md §4 for
-// the QoS rationale (state_writer_qos / rpc_request_reader_qos) and the udp_only
-// transport fallback.
+// the QoS rationale (state_writer_qos / rpc_request_reader_qos).
 
 namespace k1sim::module::sdkbridge {
 
     class DdsParticipant {
     public:
-        // udp_only strips the SHM transport (config/dds.yaml: udp_only, or env
-        // K1_DDS_UDP_ONLY=1), leaving UDPv4 only — a workaround for docker boundaries
-        // where /dev/shm isn't shared (e.g. no --ipc host).
-        // local_only selects non-blocking UDP on loopback for native players on
-        // the same host. It leaves the normal network transport unchanged.
-        DdsParticipant(int domain_id, bool udp_only, bool local_only = false);
+        explicit DdsParticipant(int domain_id);
         ~DdsParticipant();
 
         DdsParticipant(const DdsParticipant&)            = delete;

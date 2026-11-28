@@ -21,10 +21,7 @@ namespace k1sim::module::matchreferee {
         bool hold_robots               = true;
         int penalty_seconds            = 10;
 
-        std::string broadcast_address;
-        std::string interface;
-        int control_port        = 3838;
-        int status_port         = 3939;
+        std::string broadcast_address;  // --broadcast
         double control_interval = 0.5;
         double status_timeout   = 4.0;
 
@@ -99,13 +96,9 @@ namespace k1sim::module::matchreferee {
         cfg.hold_robots               = yaml["hold_robots"].as<bool>();
         cfg.penalty_seconds           = yaml["penalty_seconds"].as<int>();
 
-        const auto network    = yaml["network"];
-        cfg.broadcast_address = network["broadcast_address"].as<std::string>();
-        cfg.interface         = network["interface"].as<std::string>("");
-        cfg.control_port      = network["control_port"].as<int>();
-        cfg.status_port       = network["status_port"].as<int>();
-        cfg.control_interval  = network["control_interval"].as<double>();
-        cfg.status_timeout    = network["status_timeout"].as<double>();
+        const auto network   = yaml["network"];
+        cfg.control_interval = network["control_interval"].as<double>();
+        cfg.status_timeout   = network["status_timeout"].as<double>();
 
         const auto referee = yaml["autoreferee"];
         for (const auto& feature : referee["features"]) {

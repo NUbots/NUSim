@@ -1,5 +1,6 @@
 // Acceptance on a real six-robot scene: controllers run before one shared step,
 // prefixed sensors remain distinct, and per-robot reset does not clear a neighbour.
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <memory>
@@ -87,6 +88,27 @@ int main() {
                     "robots pass through each other");
             require(!collides(first[0], first[1]) && !collides(fourth[0], fourth.back()),
                     "a robot collides with itself");
+
+            // Two robots 10 cm apart, trunks overlapping, touch: contacts between their bodies, then everything put
+            // back.
+            mjData* d             = sim.data();
+            const int first_root  = sim.model_map(1).root_qpos_adr;
+            const int fourth_root = sim.model_map(4).root_qpos_adr;
+            const std::vector<mjtNum> saved(d->qpos, d->qpos + m->nq);
+            d->qpos[fourth_root]     = d->qpos[first_root] + 0.1;
+            d->qpos[fourth_root + 1] = d->qpos[first_root + 1];
+            d->qpos[fourth_root + 2] = d->qpos[first_root + 2];
+            mju_copy4(d->qpos + fourth_root + 3, d->qpos + first_root + 3);
+            mj_forward(m, d);
+            int between_robots = 0;
+            for (int c = 0; c < d->ncon; ++c) {
+                const int a = m->body_rootid[m->geom_bodyid[d->contact[c].geom1]];
+                const int b = m->body_rootid[m->geom_bodyid[d->contact[c].geom2]];
+                between_robots += a != b && a != 0 && b != 0 && m->geom_bodyid[d->contact[c].geom1] != 0;
+            }
+            require(between_robots > 0, "robots side by side have no contacts");
+            std::copy(saved.begin(), saved.end(), d->qpos);
+            mj_forward(m, d);
         }
 
         std::vector<std::shared_ptr<RecordingController>> controllers;

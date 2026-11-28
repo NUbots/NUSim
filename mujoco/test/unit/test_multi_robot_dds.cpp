@@ -75,7 +75,7 @@ namespace {
                 std::filesystem::copy_file(original / name, path / name);
             }
             // Isolate test traffic from production domains 0..5 and the DDS transport test.
-            std::ofstream(path / "dds.yaml") << "domain: 60\nudp_only: true\n";
+            std::ofstream(path / "dds.yaml") << "domain: 60\n";
             k1sim::cli().config_dir = path.string();
             k1sim::cli().robots     = 2;
             k1sim::cli().headless   = true;
@@ -101,7 +101,7 @@ namespace {
         // rt/nusim/gt/robot samples seen in this domain, and the ball ones
         std::vector<std::array<double, 2>> gt_robot_xy;
         std::size_t gt_ball_count = 0;
-        explicit Client(int domain) : dds(domain, true) {
+        explicit Client(int domain) : dds(domain) {
             request =
                 dds.create_writer<booster_msgs::msg::dds_::RpcReqMsg_PubSubType>(k1sim::booster::TOPIC_RPC_REQUEST,
                                                                                  DdsParticipant::state_writer_qos());
@@ -120,14 +120,14 @@ namespace {
                 dds.create_reader<geometry_msgs::msg::dds_::Pose_PubSubType>(k1sim::booster::TOPIC_HEAD_POSE,
                                                                              DdsParticipant::rpc_request_reader_qos(),
                                                                              nullptr);
-            gt_robot = dds.create_reader<nav_msgs::msg::dds_::Odometry_PubSubType>(
-                k1sim::nusim::TOPIC_GT_ROBOT,
-                DdsParticipant::rpc_request_reader_qos(),
-                nullptr);
-            gt_ball = dds.create_reader<nav_msgs::msg::dds_::Odometry_PubSubType>(
-                k1sim::nusim::TOPIC_GT_BALL,
-                DdsParticipant::rpc_request_reader_qos(),
-                nullptr);
+            gt_robot =
+                dds.create_reader<nav_msgs::msg::dds_::Odometry_PubSubType>(k1sim::nusim::TOPIC_GT_ROBOT,
+                                                                            DdsParticipant::rpc_request_reader_qos(),
+                                                                            nullptr);
+            gt_ball =
+                dds.create_reader<nav_msgs::msg::dds_::Odometry_PubSubType>(k1sim::nusim::TOPIC_GT_BALL,
+                                                                            DdsParticipant::rpc_request_reader_qos(),
+                                                                            nullptr);
             require(request && command && response && sensors && head && gt_robot && gt_ball,
                     "DDS client endpoints failed");
         }

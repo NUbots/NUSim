@@ -295,15 +295,15 @@ namespace k1sim::module {
             const int yes = 1;
             ::setsockopt(socket_fd_, SOL_SOCKET, SO_BROADCAST, &yes, sizeof(yes));
         }
-        const int port = cfg["port"].as<int>(3838);
-        for (const auto& target : cfg["targets"]) {
-            sockaddr_in address{};
-            address.sin_family = AF_INET;
-            address.sin_port   = htons(static_cast<std::uint16_t>(port));
-            if (::inet_pton(AF_INET, target.as<std::string>().c_str(), &address.sin_addr) == 1) {
-                targets_.push_back(address);
-            }
+        // Packets go only to the match network's broadcast address, which ./b match passes in.
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_port   = htons(static_cast<std::uint16_t>(gc::CONTROL_PORT));
+        if (::inet_pton(AF_INET, cli().broadcast.c_str(), &address.sin_addr) != 1) {
+            error = "no --broadcast address. Run it with ./b match --mode testing";
+            return false;
         }
+        targets_.push_back(address);
         return true;
     }
 

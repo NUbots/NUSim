@@ -358,18 +358,7 @@ to widen, not narrow), `module::SdkBridge` uses:
 - **RPC response writer** (`rt/LocoApiTopicResp`): `RELIABLE` + `VOLATILE` +
   `KEEP_LAST(5)` (matches state writers; replies are small and infrequent).
 - Domain: `0` (hardcoded in NUbots' `HardwareIO`, matches `config/dds.yaml: domain`).
-- Transport: default UDPv4 + SHM (both enabled) unless `config/dds.yaml: udp_only: true`
-  or env `K1_DDS_UDP_ONLY=1`, which strips SHM from the participant's
-  `transport_descriptors` (workaround for docker `--ipc host` not always being
-  available, e.g. rootless docker or restricted CI).
-- For a simulator and native players on the same host, `config/dds.yaml: local_only: true`
-  selects UDPv4 on `127.0.0.1` with non-blocking sends. Both ends must select it.
-  This takes precedence over `udp_only`; its default is false, preserving network
-  and SHM deployments. Native clients use the third `DdsParticipant` constructor
-  argument. A full socket buffer drops a datagram instead of blocking publication;
-  reliable commands/RPCs retain their delivery policy, and state consumers retain
-  their freshness admission and watchdogs. `test_dds_transport` exercises this
-  mode as well as both existing transport modes.
+- Transport: UDPv4 + SHM, both enabled.
 
 Empirically verified in the M4/M5 contract test (`test/contract/test_sdk_roundtrip.py`
 + its C++ helper client, built against **both** the older local SDK checkout at
@@ -389,7 +378,7 @@ the same port can neither write to nor delete (`/dev/shm` sticky bit) — host�
 RPC then silently times out while some sim→host topics still flow, a very confusing
 partial failure. Always run via `docker/k1sim.sh` (which passes `--user`), and if
 mixed-uid segments ever accumulate, remove the stale `fastrtps_*` /
-`fast_datasharing_*` files or set `udp_only: true`.
+`fast_datasharing_*` files.
 
 ## 5. CDR / fastddsgen generation notes
 
