@@ -4,7 +4,6 @@
 #include <cerrno>
 #include <cmath>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <netinet/in.h>
@@ -17,8 +16,8 @@
 #include "module/Supervisor/src/GameControllerPacket.hpp"
 #include "module/Supervisor/src/SupervisorConfig.hpp"
 #include "module/Supervisor/src/SupervisorPlacement.hpp"
-#include "shared/message/Commands.hpp"
 #include "shared/CliOptions.hpp"
+#include "shared/message/Commands.hpp"
 #include "shared/message/SimMessages.hpp"
 #include "shared/util/Config.hpp"
 
@@ -63,7 +62,7 @@ namespace k1sim::module {
                 // Penalised robots wait outside the touchline of their own half, facing the field: the first
                 // team behind -y, the second behind +y, spaced out from the halfway line.
                 const double sign = side == 0 ? -1.0 : 1.0;
-                rc.penalty_pose   = {sign * (1.0 + 0.7 * index), sign * (width / 2.0 + 0.8), STAND_Z, -sign * M_PI / 2.0};
+                rc.penalty_pose = {sign * (1.0 + 0.7 * index), sign * (width / 2.0 + 0.8), STAND_Z, -sign * M_PI / 2.0};
                 robots.push_back(rc);
             }
             return robots;
@@ -81,25 +80,7 @@ namespace k1sim::module {
         std::map<int, std::string> load_team_names(std::string path) {
             std::map<int, std::string> names;
             if (path.empty()) {
-                // the GameController's config directory, or the one in its source checkout
-                if (const char* dir = std::getenv("GAMECONTROLLER_CONFIG")) {
-                    path = std::string(dir) + "/teams.yaml";
-                }
-                else {
-                    std::string checkout;
-                    try {
-                        checkout = config::load("referee.yaml")["gamecontroller_dir"].as<std::string>("");
-                    }
-                    catch (const std::exception&) {
-                    }
-                    if (const char* dir = checkout.empty() ? std::getenv("GAMECONTROLLER_DIR") : nullptr) {
-                        checkout = dir;
-                    }
-                    if (checkout.empty()) {
-                        return names;
-                    }
-                    path = checkout + "/config/teams.yaml";
-                }
+                path = K1SIM_GC_CONFIG_DIR "/teams.yaml";  // the GameController's own
             }
             try {
                 for (const auto& team : YAML::LoadFile(path)) {
@@ -145,13 +126,13 @@ namespace k1sim::module {
     Supervisor::Supervisor(std::unique_ptr<NUClear::Environment> environment) : Reactor(std::move(environment)) {
 
         // Loaded eagerly (constructor body, not Startup) so everything is known before the listener starts.
-        SupervisorConfig cfg = build_config();
-        const bool enabled   = cfg.enabled || cli().gamecontroller || cli().referee;
-        const int gc_port    = cfg.gc_port;
+        SupervisorConfig cfg             = build_config();
+        const bool enabled               = cfg.enabled || cli().gamecontroller || cli().referee;
+        const int gc_port                = cfg.gc_port;
         const std::string ball_body_name = cfg.ball.body;
         const std::string ball_geom_name = cfg.ball.geom;
-        team_names_          = load_team_names(cfg.teams_file);
-        logic_               = std::make_unique<SupervisorLogic>(std::move(cfg));
+        team_names_                      = load_team_names(cfg.teams_file);
+        logic_                           = std::make_unique<SupervisorLogic>(std::move(cfg));
 
         on<Trigger<message::SimHandles>>().then([this](const message::SimHandles& handles) {
             placed_robot_ = handles.placed_robot;
@@ -194,7 +175,8 @@ namespace k1sim::module {
 
         if (!enabled) {
             on<Startup>().then([this] {
-                log<NUClear::LogLevel::INFO>("Supervisor disabled (start with --gamecontroller, or set supervisor.yaml enabled: true)");
+                log<NUClear::LogLevel::INFO>(
+                    "Supervisor disabled (start with --gamecontroller, or set supervisor.yaml enabled: true)");
             });
             on<Shutdown>().then([this] { log<NUClear::LogLevel::INFO>("Supervisor shutting down"); });
             return;
@@ -210,7 +192,8 @@ namespace k1sim::module {
         // the network as well would only deliver each of them a second time.
         if (cli().referee) {
             on<Startup>().then([this] {
-                log<NUClear::LogLevel::INFO>("Supervisor ready - following the built-in referee with", logic_->config().robots.size(),
+                log<NUClear::LogLevel::INFO>("Supervisor ready - following the built-in referee with",
+                                             logic_->config().robots.size(),
                                              "robot(s) under its control");
             });
             on<Shutdown>().then([this] { log<NUClear::LogLevel::INFO>("Supervisor shutting down"); });
@@ -222,14 +205,20 @@ namespace k1sim::module {
 
         on<Startup>().then([this, gc_port, error] {
             if (socket_fd_ < 0) {
-                log<NUClear::LogLevel::WARN>("Supervisor: could not listen on UDP port", gc_port, "(", error,
+                log<NUClear::LogLevel::WARN>("Supervisor: could not listen on UDP port",
+                                             gc_port,
+                                             "(",
+                                             error,
                                              ") — running without the GameController");
                 return;
             }
             listening_.store(true);
             listener_ = std::thread([this] { listen(socket_fd_); });
-            log<NUClear::LogLevel::INFO>("Supervisor ready — waiting for the GameController on UDP port", gc_port, "with",
-                                         logic_->config().robots.size(), "robot(s) under its control");
+            log<NUClear::LogLevel::INFO>("Supervisor ready — waiting for the GameController on UDP port",
+                                         gc_port,
+                                         "with",
+                                         logic_->config().robots.size(),
+                                         "robot(s) under its control");
         });
 
         on<Shutdown>().then([this] {
@@ -281,10 +270,10 @@ namespace k1sim::module {
         game->kicking_side   = parsed.kicking_team == parsed.teams[0].team_id   ? 0
                                : parsed.kicking_team == parsed.teams[1].team_id ? 1
                                                                                 : -1;
-        game->mode = parsed.game_phase == gc::GamePhase::PENALTY_SHOOTOUT ? "penalty shootout"
-                     : parsed.game_phase == gc::GamePhase::TIMEOUT        ? "timeout"
-                     : parsed.first_half                                  ? "first half"
-                                                                          : "second half";
+        game->mode           = parsed.game_phase == gc::GamePhase::PENALTY_SHOOTOUT ? "penalty shootout"
+                               : parsed.game_phase == gc::GamePhase::TIMEOUT        ? "timeout"
+                               : parsed.first_half                                  ? "first half"
+                                                                                    : "second half";
         game->mode += std::string(" | ") + gc::state_name(parsed.state);
         for (const auto& rc : logic_->config().robots) {
             // Same team lookup as SupervisorLogic: by team number if configured, else by position in the packet.
@@ -292,10 +281,12 @@ namespace k1sim::module {
             if (rc.team_id >= 0) {
                 side = parsed.teams[0].team_id == rc.team_id ? 0 : parsed.teams[1].team_id == rc.team_id ? 1 : -1;
             }
-            if (side < 0 || side > 1 || rc.player_id < 1 || static_cast<std::size_t>(rc.player_id) > gc::MAX_NUM_PLAYERS) {
+            if (side < 0 || side > 1 || rc.player_id < 1
+                || static_cast<std::size_t>(rc.player_id) > gc::MAX_NUM_PLAYERS) {
                 continue;
             }
-            const gc::Robot& info = parsed.teams[static_cast<std::size_t>(side)].players[static_cast<std::size_t>(rc.player_id) - 1];
+            const gc::Robot& info =
+                parsed.teams[static_cast<std::size_t>(side)].players[static_cast<std::size_t>(rc.player_id) - 1];
             message::GameState::Robot robot;
             robot.body   = rc.body;
             robot.side   = side;

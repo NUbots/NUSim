@@ -1,31 +1,28 @@
 #include "module/Viewer/src/Viewer.hpp"
 
-#include <algorithm>
-#include <cmath>
-#include <imgui.h>
-#include <filesystem>
-#include <fstream>
-#include <imgui_impl_opengl3.h>
-#include <nlohmann/json.hpp>
-
-#include "module/Viewer/src/ViewerUI.hpp"
-#include "shared/util/Config.hpp"
-
 #include <GLFW/glfw3.h>
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <functional>
+#include <imgui.h>
+#include <imgui_impl_opengl3.h>
 #include <memory>
 #include <mujoco/mujoco.h>
 #include <mutex>
+#include <nlohmann/json.hpp>
 
 #include "MatchPanel.hpp"
 #include "VideoRecorder.hpp"
+#include "module/Viewer/src/ViewerUI.hpp"
 #include "shared/CliOptions.hpp"
 #include "shared/k1/BoosterApi.hpp"
 #include "shared/message/Commands.hpp"
 #include "shared/message/SimMessages.hpp"
+#include "shared/util/Config.hpp"
 #include "shared/util/RobotRoster.hpp"
 
 namespace k1sim::module {
@@ -313,14 +310,14 @@ namespace k1sim::module {
         // handle (or a Ctrl + drag) is held, the body is pinned to `pos`/`quat` every frame.
         struct Gizmo {
             enum Handle { NONE = -1, AXIS_X = 0, AXIS_Y = 1, AXIS_Z = 2, RING = 3, CARRY = 4 };
-            int body    = -1;    // free-floating root body, or -1 = nothing selected
+            int body    = -1;  // free-floating root body, or -1 = nothing selected
             Handle drag = NONE;
-            double pos[3]{};     // drag target (root body frame origin)
+            double pos[3]{};  // drag target (root body frame origin)
             double quat[4]{1, 0, 0, 0};
-            double grab[2]{};    // CARRY: body position minus the grabbed ground point
-            double plane_z = 0.0;  // CARRY: height of the grabbed point
-            double floor_z = 0.0;  // height at the start of the drag; the body cannot be pushed below it
-            double pivot[3]{};     // RING: point the body turns about (its centre of mass)
+            double grab[2]{};         // CARRY: body position minus the grabbed ground point
+            double plane_z = 0.0;     // CARRY: height of the grabbed point
+            double floor_z = 0.0;     // height at the start of the drag; the body cannot be pushed below it
+            double pivot[3]{};        // RING: point the body turns about (its centre of mass)
             double last_angle = 0.0;  // RING: bearing of the cursor at the previous mouse event
 
             // Geometry of the handles as last drawn (window coordinates), for hit-testing.
@@ -340,7 +337,8 @@ namespace k1sim::module {
                 return -1;
             }
             const int root = g_model->body_rootid[body];
-            if (root <= 0 || g_model->body_jntnum[root] != 1 || g_model->jnt_type[g_model->body_jntadr[root]] != mjJNT_FREE) {
+            if (root <= 0 || g_model->body_jntnum[root] != 1
+                || g_model->jnt_type[g_model->body_jntadr[root]] != mjJNT_FREE) {
                 return -1;
             }
             return root;
@@ -423,7 +421,7 @@ namespace k1sim::module {
                     }
                 }
             }
-            g_gizmo.length   = len;
+            g_gizmo.length = len;
             for (int axis = 0; axis < 3; ++axis) {
                 double tip[3] = {c[0], c[1], c[2]};
                 tip[axis] += len;
@@ -431,7 +429,7 @@ namespace k1sim::module {
             }
             constexpr int SEGMENTS = 48;
             for (int i = 0; i <= SEGMENTS; ++i) {
-                const double a   = 2.0 * mjPI * i / SEGMENTS;
+                const double a    = 2.0 * mjPI * i / SEGMENTS;
                 const double w[3] = {c[0] + 0.72 * len * std::cos(a), c[1] + 0.72 * len * std::sin(a), c[2]};
                 ImVec2 at;
                 if (!project(w, at, false)) {
@@ -445,17 +443,20 @@ namespace k1sim::module {
             const Gizmo::Handle hot = g_gizmo.drag != Gizmo::NONE ? g_gizmo.drag
                                       : ui_wants_mouse()          ? Gizmo::NONE
                                                                   : gizmo_hit(last_x, last_y);
-            const float thick  = std::max(3.0f, g_win_h * 0.0042f);
-            const ImU32 shadow = IM_COL32(0, 0, 0, 150);
-            auto colour        = [&](Gizmo::Handle h, int r, int g, int b) {
+            const float thick       = std::max(3.0f, g_win_h * 0.0042f);
+            const ImU32 shadow      = IM_COL32(0, 0, 0, 150);
+            auto colour             = [&](Gizmo::Handle h, int r, int g, int b) {
                 return hot == h ? IM_COL32(255, 255, 255, 255) : IM_COL32(r, g, b, 255);
             };
 
             if (g_gizmo.ring.size() > 1) {
                 const float t = hot == Gizmo::RING ? thick * 1.5f : thick;
                 dl->AddPolyline(g_gizmo.ring.data(), static_cast<int>(g_gizmo.ring.size()), shadow, 0, t + 3.0f);
-                dl->AddPolyline(g_gizmo.ring.data(), static_cast<int>(g_gizmo.ring.size()),
-                                colour(Gizmo::RING, 255, 200, 60), 0, t);
+                dl->AddPolyline(g_gizmo.ring.data(),
+                                static_cast<int>(g_gizmo.ring.size()),
+                                colour(Gizmo::RING, 255, 200, 60),
+                                0,
+                                t);
             }
             static constexpr int rgb[3][3] = {{240, 76, 76}, {80, 214, 100}, {84, 150, 255}};
             for (int axis = 0; axis < 3; ++axis) {
@@ -504,8 +505,17 @@ namespace k1sim::module {
             }
             int geomid = -1;
             int flexid = -1;
-            return mjv_select(g_model, g_data, &opt, static_cast<double>(width) / height, last_x / width,
-                              1.0 - last_y / height, &scn, selpnt, &geomid, &flexid, skinid);
+            return mjv_select(g_model,
+                              g_data,
+                              &opt,
+                              static_cast<double>(width) / height,
+                              last_x / width,
+                              1.0 - last_y / height,
+                              &scn,
+                              selpnt,
+                              &geomid,
+                              &flexid,
+                              skinid);
         }
 
         void keyboard_cb(GLFWwindow* w, int key, int /*scancode*/, int act, int /*mods*/) {
@@ -560,8 +570,8 @@ namespace k1sim::module {
                 button_left = false;
                 std::lock_guard<std::mutex> lock(*g_mutex);
                 mjtNum selpnt[3];
-                int skinid     = -1;
-                const int root = free_root(select_at(w, selpnt, &skinid));
+                int skinid       = -1;
+                const int root   = free_root(select_at(w, selpnt, &skinid));
                 const char* name = root >= 0 ? mj_id2name(g_model, mjOBJ_BODY, root) : nullptr;
                 for (const auto& robot : g_ui_state.robots) {
                     if (name != nullptr && robot.body == name) {
@@ -662,8 +672,8 @@ namespace k1sim::module {
         void mouse_move_cb(GLFWwindow* w, double xpos, double ypos) {
             const double dx = xpos - last_x;
             const double dy = ypos - last_y;
-            last_x           = xpos;
-            last_y           = ypos;
+            last_x          = xpos;
+            last_y          = ypos;
 
             if (!button_left && !button_middle && !button_right) {
                 return;
@@ -677,9 +687,9 @@ namespace k1sim::module {
                     case Gizmo::AXIS_Y:
                     case Gizmo::AXIS_Z: {
                         // Cursor travel along the arrow as drawn -> metres along that axis.
-                        const int axis   = g_gizmo.drag;
-                        const double sx  = g_gizmo.tip[axis].x - g_gizmo.centre.x;
-                        const double sy  = g_gizmo.tip[axis].y - g_gizmo.centre.y;
+                        const int axis    = g_gizmo.drag;
+                        const double sx   = g_gizmo.tip[axis].x - g_gizmo.centre.x;
+                        const double sy   = g_gizmo.tip[axis].y - g_gizmo.centre.y;
                         const double len2 = sx * sx + sy * sy;
                         if (g_gizmo.tip_ok[axis] && len2 > 16.0) {
                             g_gizmo.pos[axis] += (dx * sx + dy * sy) / len2 * g_gizmo.length;
@@ -729,10 +739,10 @@ namespace k1sim::module {
                 return;
             }
 
-            const bool mod_shift = glfwGetKey(w, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS
-                                    || glfwGetKey(w, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
+            const bool mod_shift =
+                glfwGetKey(w, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS || glfwGetKey(w, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
             const bool mod_ctrl = glfwGetKey(w, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS
-                                   || glfwGetKey(w, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
+                                  || glfwGetKey(w, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
 
             if (pert.active != 0 && g_data != nullptr && g_mutex != nullptr) {
                 std::lock_guard<std::mutex> lock(*g_mutex);
@@ -837,14 +847,15 @@ namespace k1sim::module {
                 if (g_ui == nullptr) {
                     g_ui = std::make_unique<viewer::ViewerUI>();
                     g_ui->init(window);
-                    g_ui_state.draw_world = gizmo_draw;
-                    g_ui_state.project    = [](const double world[3], ImVec2& out) { return project(world, out); };
+                    g_ui_state.draw_world   = gizmo_draw;
+                    g_ui_state.project      = [](const double world[3], ImVec2& out) { return project(world, out); };
                     g_ui_state.ground_point = [](ImVec2 screen, double out[2]) {
                         return ground_point(screen.x, screen.y, 0.0, out);
                     };
                     load_session(g_ui_state);
-                    g_ui_state.speed      = static_cast<float>(
-                        cli().rtf >= 0.0 ? cli().rtf : config::load("simulation.yaml")["real_time_factor"].as<double>(1.0));
+                    g_ui_state.speed = static_cast<float>(
+                        cli().rtf >= 0.0 ? cli().rtf
+                                         : config::load("simulation.yaml")["real_time_factor"].as<double>(1.0));
                 }
                 scene_ready = true;
                 log<NUClear::LogLevel::INFO>("Viewer scene ready (",
@@ -997,7 +1008,7 @@ namespace k1sim::module {
 
                 if (g_ui != nullptr) {
                     viewer::UIState& ui = g_ui_state;
-                    ui.sim_time     = g_sim_time.load(std::memory_order_relaxed);
+                    ui.sim_time         = g_sim_time.load(std::memory_order_relaxed);
                     ui.measured_rtf = g_measured_rtf != nullptr ? g_measured_rtf->load(std::memory_order_relaxed) : 0.0;
                     ui.robot_mode   = mode_name(g_mode.load(std::memory_order_relaxed));
                     ui.paused       = g_paused != nullptr && g_paused->load(std::memory_order_relaxed);
@@ -1007,19 +1018,22 @@ namespace k1sim::module {
                     }
                     {
                         std::lock_guard<std::mutex> lock(g_match_mutex);
-                        ui.match = g_match_status;
+                        ui.match  = g_match_status;
                         ui.legal  = g_legal;
                         ui.robots = g_robots;
                         // Teams only mean something when a game is on; Free Play's robots are just numbered.
-                        const bool teams = ui.match.has_game || (ui.launcher && ui.running.mode != viewer::MODE_FREEPLAY);
+                        const bool teams =
+                            ui.match.has_game || (ui.launcher && ui.running.mode != viewer::MODE_FREEPLAY);
                         ui.robot_status.clear();
                         for (const auto& robot : g_robot_modes) {
                             viewer::UIState::RobotStatus status;
-                            status.robot_id = robot.identity.robot_id;
-                            status.player   = robot.identity.player_id;
-                            status.side     = !teams ? -1 : robot.identity.team_id == g_robot_modes.front().identity.team_id ? 0 : 1;
-                            status.mode     = mode_name(robot.mode);
-                            status.fall     = fall_name(robot.fall_state);
+                            status.robot_id        = robot.identity.robot_id;
+                            status.player          = robot.identity.player_id;
+                            status.side            = !teams ? -1
+                                                     : robot.identity.team_id == g_robot_modes.front().identity.team_id ? 0
+                                                                                                                        : 1;
+                            status.mode            = mode_name(robot.mode);
+                            status.fall            = fall_name(robot.fall_state);
                             const std::string body = robot.identity.body();
                             for (const auto& governed : g_robots) {
                                 status.penalised = status.penalised || (governed.body == body && governed.penalised);
@@ -1027,7 +1041,7 @@ namespace k1sim::module {
                             ui.robot_status.push_back(status);
                         }
                     }
-                    const bool hand_referee = ui.launcher && ui.running.mode == viewer::MODE_TESTING;
+                    const bool hand_referee         = ui.launcher && ui.running.mode == viewer::MODE_TESTING;
                     const viewer::UIActions actions = g_ui->render(ui);
                     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
@@ -1050,8 +1064,10 @@ namespace k1sim::module {
                     if (g_penalise_pick) {
                         const auto robot = *g_penalise_pick;
                         g_penalise_pick.reset();
-                        referee(robot.penalised ? "unpenalize" : "penalize", robot.side == 0 ? "home" : "away",
-                                "request_for_pick_up", robot.player);
+                        referee(robot.penalised ? "unpenalize" : "penalize",
+                                robot.side == 0 ? "home" : "away",
+                                "request_for_pick_up",
+                                robot.player);
                     }
                     for (const auto& command : actions.referee) {
                         referee(command.action, command.side, command.arg, command.player);

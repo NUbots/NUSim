@@ -16,16 +16,17 @@ namespace k1sim {
         std::string match_config;         // roster YAML, relative to config_dir unless absolute
         std::string config_dir;           // override for the config directory
         bool free_robots = false;         // match: never hold robots still; for players that obey the GameController
-        std::string session;              // launcher's session directory (tools/match.py): setup in, restart requests out
-        std::string keyframe;             // override for the startup keyframe (default "ready")
-        double rtf = -1.0;                // override real-time factor; <0 = use config (0 = free-run)
-        int robots = 1;                   // total K1s on the field; each robot has independent control
-        bool web   = false;               // serve the browser viewer (module::WebViewer)
+        std::string session;           // launcher's session directory (tools/match.py): setup in, restart requests out
+        std::string keyframe;          // override for the startup keyframe (default "ready")
+        double rtf           = -1.0;   // override real-time factor; <0 = use config (0 = free-run)
+        int robots           = 1;      // total K1s on the field; each robot has independent control
+        bool web             = false;  // serve the browser viewer (module::WebViewer)
         std::string web_host = "127.0.0.1";  // address the browser viewer listens on
         int web_port         = 8080;         // port the browser viewer listens on
-        std::string record;               // file to record the match to (empty = no recording)
-        bool referee        = false;      // run the built-in GameController (module::Referee), operated from the browser viewer
-        bool gamecontroller = false;      // listen to the RoboCup GameController (module::Supervisor), whatever supervisor.yaml says
+        std::string record;                  // file to record the match to (empty = no recording)
+        bool referee = false;  // run the built-in GameController (module::Referee), operated from the browser viewer
+        bool gamecontroller =
+            false;  // listen to the RoboCup GameController (module::Supervisor), whatever supervisor.yaml says
     };
 
     inline constexpr int MAX_ROBOTS    = 20;

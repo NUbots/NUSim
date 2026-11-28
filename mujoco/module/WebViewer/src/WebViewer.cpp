@@ -174,7 +174,8 @@ namespace k1sim::module {
         stream_ = std::move(stream);
 
         if (cli().web) {
-            log<NUClear::LogLevel::INFO>("Web viewer at http://" + options.host + ":" + std::to_string(options.port) + "/");
+            log<NUClear::LogLevel::INFO>("Web viewer at http://" + options.host + ":" + std::to_string(options.port)
+                                         + "/");
         }
         if (!options.record_path.empty()) {
             log<NUClear::LogLevel::INFO>("Recording to", options.record_path);
@@ -216,15 +217,13 @@ namespace k1sim::module {
         on<Every<200, std::chrono::milliseconds>, Single>().then([this] { publish_sim(); });
 
         // Only arrives while module::Supervisor is enabled (supervisor.yaml) and a GameController is on the network.
-        on<Trigger<message::GameState>>().then([this](const message::GameState& game) {
-            stream_->set_game(game_json(game));
-        });
+        on<Trigger<message::GameState>>().then(
+            [this](const message::GameState& game) { stream_->set_game(game_json(game)); });
 
         // Built-in referee (--referee): its status goes to the viewers' referee panel, their button presses come
         // back as commands. Query format: action=<name>&side=<home|away>&player=<n>&arg=<text>.
-        on<Trigger<message::RefereeStatus>>().then([this](const message::RefereeStatus& status) {
-            stream_->set_referee(referee_json(status, "referee"));
-        });
+        on<Trigger<message::RefereeStatus>>().then(
+            [this](const message::RefereeStatus& status) { stream_->set_referee(referee_json(status, "referee")); });
         // sim/match: module::MatchReferee instead, through the same scoreboard and panel.
         on<Trigger<message::MatchStatus>>().then([this](const message::MatchStatus& status) {
             match_.store(true, std::memory_order_release);
@@ -236,9 +235,7 @@ namespace k1sim::module {
         stream_->set_command_handler(
             [this](const std::string& path, const std::string& query) { on_command(path, parse_query(query)); });
 
-        on<Shutdown>().then([this] {
-            stream_->stop();
-        });
+        on<Shutdown>().then([this] { stream_->stop(); });
     }
 
     void WebViewer::load_session() {
@@ -309,7 +306,8 @@ namespace k1sim::module {
             }
             out["paused"] = handles_.paused != nullptr && handles_.paused->load(std::memory_order_relaxed);
             // Two decimals: enough for the panel, and steady enough that repeats are dropped.
-            const double rtf = handles_.measured_rtf != nullptr ? handles_.measured_rtf->load(std::memory_order_relaxed) : 0.0;
+            const double rtf =
+                handles_.measured_rtf != nullptr ? handles_.measured_rtf->load(std::memory_order_relaxed) : 0.0;
             out["rtf"]    = std::round(rtf * 100.0) / 100.0;
             out["speed"]  = speed_;
             out["robots"] = nlohmann::json::array();
@@ -348,7 +346,8 @@ namespace k1sim::module {
         const std::string action = text_of(query, "action");
 
         if (action == "pause") {
-            emit(std::make_unique<message::SimPauseRequest>(message::SimPauseRequest{number_of(query, "paused") != 0.0}));
+            emit(std::make_unique<message::SimPauseRequest>(
+                message::SimPauseRequest{number_of(query, "paused") != 0.0}));
             return;
         }
         if (action == "speed") {
@@ -412,7 +411,10 @@ namespace k1sim::module {
             if (root < 0) {
                 return;
             }
-            double quat[4] = {number_of(query, "qw", 1.0), number_of(query, "qx"), number_of(query, "qy"), number_of(query, "qz")};
+            double quat[4] = {number_of(query, "qw", 1.0),
+                              number_of(query, "qx"),
+                              number_of(query, "qy"),
+                              number_of(query, "qz")};
             if (mju_normalize4(quat) < 1e-6) {
                 return;
             }
@@ -436,7 +438,7 @@ namespace k1sim::module {
                 std::lock_guard<std::mutex> sim_lock(*handles_.mutex);
                 mju_zero(d->xfrc_applied + 6 * push_.body, 6);
             }
-            push_.body = body;
+            push_.body            = body;
             const char* local[3]  = {"lx", "ly", "lz"};
             const char* target[3] = {"tx", "ty", "tz"};
             for (int i = 0; i < 3; ++i) {

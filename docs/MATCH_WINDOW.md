@@ -15,30 +15,36 @@ It builds on three pieces of other people's work, which it needs:
 
 Linux only. Do this once.
 
-1. Build NUbots (`./b target generic`, `./b build` in your NUbots checkout). The window runs these roles from it:
-   `nusim/robocup` for games, and any role you pick in the Testing Room.
-2. Stage the GameController library, which both referees use. It needs Rust (`cargo`):
+1. Build [NUbots](https://github.com/NUbots/NUbots) `main`, which has the K1 code (NUbots_K1 is merged into it):
 
    ```bash
-   git clone https://github.com/RoboCup-HumanoidSoccerLeague/GameController mujoco/.deps/GameController
-   git -C mujoco/.deps/GameController checkout 21c7c6a868fe29cfdc345404859a5344b1857274
-   mujoco/tools/install_game_controller_api.sh mujoco/.deps/GameController
-   (cd mujoco/.deps/GameController && cargo build -r -p game_controller_api)
+   cd ~/NUbots
+   ./b target generic   # the docker image, <you>/nubots:generic, with the Booster SDK
+   ./b configure
+   ./b build            # bin/nusim/robocup is the role games run
    ```
 
-   The first two lines get the commit the referees were tested with. The script stages the library for the automatic
-   referee; the `cargo build` leaves the copy the hand-operated one loads.
-3. Build NUSim: `./b configure`, then `./b build`.
+   The window runs `nusim/robocup` for games, and any role you pick in the Testing Room. If `./b configure` fails
+   with `The current CMakeCache.txt directory /home/booster/build/CMakeCache.txt is different than the directory
+   /home/nubots/build`, the build volume is from NUbots' image before the merge. Delete it and configure again:
+   `docker volume rm nubots_generic_$USER_build`.
+2. Build NUSim: `./b configure`, then `./b build`. The GameController both referees use is built into the docker
+   image, at the commit pinned in `mujoco/docker/Dockerfile`. With an image from before that, run
+   `./b image`, then `./b configure --clean` and `./b build`.
 
 ## Running
 
 ```bash
-./b match                       # Game mode, 1 v 1, ground truth
-./b match --game 2              # two a side (up to three)
-./b match --mode testing        # start in the Testing Room
-./b match --mode freeplay       # start in Free Play
-./b match --vision              # Game mode with vision + localisation instead of ground truth
+./b match --vision-device cpu                # Game mode, 1 v 1, ground truth (see "Load" for the flag)
+./b match --game 2 --vision-device cpu       # two a side (up to three)
+./b match --mode testing                     # start in the Testing Room
+./b match --mode freeplay                    # start in Free Play
+./b match --vision                           # Game mode with vision + localisation instead of ground truth
 ```
+
+Wait for the robots before pressing **Start Match**: the terminal prints `MatchReferee: online: team 125 player 1`
+and so on once each robot's NUbots has started and is listening to the GameController. On a game started before
+that, the robots don't move.
 
 Closing the window, or Ctrl+C in the terminal, stops the sim and every robot. Each robot's output is in
 `mujoco/build-docker/match/robot<id>/log`. Only one match fits on a machine; a second `./b match` refuses to start
@@ -101,6 +107,32 @@ been done, `./b match` says what is missing and prints the commands to run.
 Vision runs through TensorRT in NUbots' image. That TensorRT is too old for RTX 50-series cards, so on those the
 launcher runs the vision model on the CPU instead (`--vision-device gpu` overrides this).
 
+## Load
+
+Every robot runs a full NUbots stack, including the Yolo vision model on every camera frame, which matters even with
+ground truth (`nusim/robocup` runs Yolo either way).
+
+- **GPU**: on a robot's first run, TensorRT builds an engine for Yolo, and every robot builds its own at once. On a
+  12 GB RTX 3060 four of them took all of its memory and froze the desktop. NUbots caches the engine in `trt_cache/`
+  in its build volume, but nothing stops the robots building it together, and its TensorRT options set no workspace
+  limit. Until that is fixed, run Yolo on the CPU with `--vision-device cpu`.
+- **CPU**: with Yolo on the CPU each robot takes about 2.5 cores. A 2 v 2 on 12 threads runs, slowly; 3 v 3 needs
+  more. `cameras_fps` in `mujoco/config/match.yaml` (10) sets how often Yolo runs. If `RTF` in the window drops well
+  below 1, use fewer robots.
+- **Memory**: about 5 GB of RAM per robot.
+
+## Team communication
+
+NUbots' robots tell their teammates where they are and whether they are going for the ball
+(`network::RobotCommunication`): UDP on port `10000 + team number`, so 10125 and 10126 here, and each team hears
+only its own. Its config broadcasts to the robot network's address, which this machine doesn't have, so the launcher
+gives every robot a `RobotCommunication.yaml` that sends to `255.255.255.255`, which reaches every robot on the
+machine. It can't be `127.0.0.1`, which reaches only one of the robots sharing a port, or `127.255.255.255`, which
+NUClear's broadcast receiver drops because `lo` has no broadcast flag.
+
+To see the messages, run with `K1SIM_ROBOT_COMMS_LOG=DEBUG`; each robot's log then shows
+`Message received from teammate ID 2 position: ...`.
+
 ## Codebases
 
 The team pickers list NUbots, rUNSWift and B-Human. Only NUbots can be started so far. To add another, give it an entry in
@@ -108,10 +140,14 @@ The team pickers list NUbots, rUNSWift and B-Human. Only NUbots can be started s
 
 ## What NUbots needs
 
+All of these are in NUbots `main`.
+
 - `input::NUSimGroundTruth`, in the `nusim` roles.
 - `roles/nusim/robocup.role`: `robocup.role` with the camera, walk, kick and get-up modules swapped for the
-  simulator's. Everything that decides what to do is unchanged.
-- Two settings in `Soccer.yaml`, both off for the real robot and on for `nusim/robocup`:
+  simulator's. Everything that decides what to do is unchanged, including `input::GameController` and
+  `network::RobotCommunication`.
+- Two settings in `Soccer.yaml`, both off for the real robot and on for `nusim/robocup`
+  (`module/purpose/Soccer/data/config/bin/nusim/robocup/Soccer.yaml`):
   - `firmware_soccer_mode: false`: the simulator has no firmware soccer mode, and a robot put in it stands still.
   - `fall_recovery_from_startup: true`: nobody presses the simulated robot's button, which is what otherwise starts
     fall recovery.
@@ -125,3 +161,4 @@ K1SIM_ROBOT_MOUNTS="/path/to/FieldPlayer.yaml:config/FieldPlayer.yaml" ./b match
 ```
 
 `K1SIM_GROUND_TRUTH_LOG=DEBUG` makes the ground truth module print where each robot believes it and the ball are.
+`K1SIM_ROBOT_COMMS_LOG=DEBUG` does the same for team messages, sent and received.

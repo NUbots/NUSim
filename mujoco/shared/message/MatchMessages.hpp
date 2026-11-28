@@ -20,15 +20,15 @@ namespace k1sim::message {
         int away_score     = 0;
         int secs_remaining = 0;
         std::string state;  // INITIAL, READY, SET, PLAYING, FINISHED, or PAUSED while play is stopped
-        int connected      = 0;  // robots whose player process is online
-        int players        = 0;
+        int connected = 0;  // robots whose player process is online
+        int players   = 0;
     };
 
     struct MatchCommand {
         // SET_PLAY calls a set play by hand and holds it until RELEASE sets the ball free.
         // READY and SET step a kick-off by hand; RELEASE (ball free) then starts play.
         enum class Action { PRIMARY, RESET, SET_PLAY, RELEASE, READY, SET } action = Action::PRIMARY;
-        int side     = 0;  // SET_PLAY: 0 = home, 1 = away
+        int side                                                                   = 0;  // SET_PLAY: 0 = home, 1 = away
         int set_play = 0;  // SET_PLAY: a GameController SetPlay value
     };
 

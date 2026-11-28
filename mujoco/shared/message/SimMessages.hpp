@@ -49,17 +49,17 @@ namespace k1sim::message {
 
     // The scene ball (body "ball", sphere geom "ball"), for NUSim ground truth (rt/nusim/gt/ball).
     struct BallState {
-        bool valid = false;                  // false if the scene has no ball
-        std::array<double, 3> position{};    // geom centre, world frame (m)
-        std::array<double, 3> lin_vel{};     // geom centre velocity, world frame (m/s)
-        std::array<double, 3> ang_vel{};     // world frame (rad/s)
+        bool valid = false;                // false if the scene has no ball
+        std::array<double, 3> position{};  // geom centre, world frame (m)
+        std::array<double, 3> lin_vel{};   // geom centre velocity, world frame (m/s)
+        std::array<double, 3> ang_vel{};   // world frame (rad/s)
     };
 
     // Emitted by the physics thread at the LowState cadence (every N steps, 50 Hz).
     struct SimStateUpdate {
-        double sim_time     = 0.0;
+        double sim_time      = 0.0;
         int64_t wall_time_ns = 0;  // system clock (ns since epoch) when the snapshot was taken
-        uint64_t step_count = 0;
+        uint64_t step_count  = 0;
         std::array<JointState, JOINT_COUNT> joints{};  // JointIndexK1 order
         ImuData imu{};
         BaseState base{};
@@ -90,26 +90,26 @@ namespace k1sim::message {
     // What the referee (RoboCup GameController) last announced. Emitted by module::Supervisor for every packet it
     // accepts; shown on the browser viewer's scoreboard.
     struct GameState {
-        std::string left;        // name of the first team in the packet
-        std::string right;       // name of the second team in the packet
+        std::string left;   // name of the first team in the packet
+        std::string right;  // name of the second team in the packet
         int score_left     = 0;
         int score_right    = 0;
         int secs_remaining = 0;  // seconds left in the current half
         std::string mode;        // words separated by " | ", e.g. "first half | PLAYING"
 
-        std::string state;        // INITIAL, READY, SET, PLAYING or FINISHED
+        std::string state;  // INITIAL, READY, SET, PLAYING or FINISHED
         bool first_half    = true;
-        int secondary_time = 0;   // seconds of the secondary clock (ready time, free kick, ...)
-        int colour_left    = 0;   // field player colours, GameController numbering (0 blue, 1 red, ...)
+        int secondary_time = 0;  // seconds of the secondary clock (ready time, free kick, ...)
+        int colour_left    = 0;  // field player colours, GameController numbering (0 blue, 1 red, ...)
         int colour_right   = 1;
         int kicking_side   = -1;  // 0 = left team, 1 = right team, -1 = nobody
 
-        struct Robot {            // one simulated robot the GameController governs
-            std::string body;     // its root body in the model
-            int side   = 0;       // 0 = left team, 1 = right team
-            int player = 1;       // player number, starting at 1
-            std::string penalty;  // empty while in play, else the reason (e.g. "PLAYER_PUSHING")
-            int penalty_secs = 0; // estimated seconds until the penalty ends
+        struct Robot {             // one simulated robot the GameController governs
+            std::string body;      // its root body in the model
+            int side   = 0;        // 0 = left team, 1 = right team
+            int player = 1;        // player number, starting at 1
+            std::string penalty;   // empty while in play, else the reason (e.g. "PLAYER_PUSHING")
+            int penalty_secs = 0;  // estimated seconds until the penalty ends
         };
         std::vector<Robot> robots;
     };

@@ -9,10 +9,9 @@ robot has a label like `Home 1`.
 
 ## Usage
 
-Linux only. Build NUbots_K1 first (`./b target generic`, `./b build`), then, in NUSim:
+Linux only. Build NUbots first (`./b target generic`, `./b build`), then, in NUSim:
 
 ```bash
-mujoco/tools/install_game_controller_api.sh [path to GameController]   # needs cargo; default ../GameController
 ./b configure
 ./b build
 ./b match --game 3                                   # 1 to 3 a side; starts once every robot is connected
@@ -40,13 +39,13 @@ a way to start one player per robot before it can be chosen.
 
 `./b match` starts `sim/match` and a hidden NUbots container per robot, and stops them all when the sim exits. Robot
 output is in `mujoco/build-docker/match/robot<id>/log`, and it warns if a robot stops. Roles that need a terminal, such
-as the keyboard-driven `nusim/localisation`, can't run this way. Without the install step, `sim/match` is skipped and
-everything else builds as normal. Settings are in `config/match.yaml`. Don't run the GameController app at the same
+as the keyboard-driven `nusim/localisation`, can't run this way. Without the GameController library (in the docker image), `sim/match` is
+skipped and everything else builds as normal. Settings are in `config/match.yaml`. Don't run the GameController app at the same
 time: both use port 3939.
 
 ## Stock NUbots
 
-`./b match` needs no NUbots_K1 changes. Each container gets files that point stock binaries at their own robot:
+`./b match` needs no NUbots changes. Each container gets files that point stock binaries at their own robot:
 
 - A FastDDS profile whose `portBase` is that of the robot's domain. NUbots always joins domain 0 and the SDK ignores a
   `domainId` in the profile, but ports are all that separates domains on the wire.

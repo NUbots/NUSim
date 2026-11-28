@@ -62,7 +62,7 @@ namespace k1sim::module {
 
         // The launcher's session. Read once at startup; read-only afterwards.
         bool launcher_ = false;
-        std::string mode_;  // game, testing or freeplay
+        std::string mode_;                                     // game, testing or freeplay
         std::vector<std::string> roles_, codebases_, fields_;  // what a restart may ask for
 
         double speed_ = 1.0;  // the real-time factor asked for

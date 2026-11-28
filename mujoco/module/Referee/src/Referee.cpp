@@ -2,10 +2,8 @@
 
 #include <arpa/inet.h>
 #include <array>
-#include <cstdlib>
 #include <cstring>
 #include <dlfcn.h>
-#include <filesystem>
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -26,7 +24,16 @@ namespace k1sim::module {
         enum Side : int { HOME = 0, AWAY = 1 };
         enum SideMapping : int { HOME_DEFENDS_LEFT_GOAL = 0, HOME_DEFENDS_RIGHT_GOAL = 1 };
         enum ActionSource : int { SOURCE_NETWORK = 0, SOURCE_TIMER = 1, SOURCE_USER = 2 };
-        enum SetPlay : int { NO_SET_PLAY, KICK_OFF, DIRECT_FREE_KICK, INDIRECT_FREE_KICK, PENALTY_KICK, THROW_IN, GOAL_KICK, CORNER_KICK };
+        enum SetPlay : int {
+            NO_SET_PLAY,
+            KICK_OFF,
+            DIRECT_FREE_KICK,
+            INDIRECT_FREE_KICK,
+            PENALTY_KICK,
+            THROW_IN,
+            GOAL_KICK,
+            CORNER_KICK
+        };
         struct TeamParams {
             std::uint8_t number;
             int field_player_colour;
@@ -37,13 +44,26 @@ namespace k1sim::module {
             bool penalty_shootout;
         };
 
-        const std::array<const char*, 10> COLOURS = {"blue", "red", "yellow", "black", "white", "green", "orange", "purple", "brown", "gray"};
-        const std::array<const char*, 12> PENALTY_CALLS = {"illegal_position", "motion_in_set", "motion_in_stop", "local_game_stuck",
-                                                           "incapable_robot", "request_for_pick_up", "ball_holding", "leaving_the_field",
-                                                           "playing_with_arms_hands", "pushing", "caution", "send_off"};
-        const std::map<std::string, SetPlay> SET_PLAYS = {{"direct_free_kick", DIRECT_FREE_KICK}, {"indirect_free_kick", INDIRECT_FREE_KICK},
-                                                          {"penalty_kick", PENALTY_KICK},         {"throw_in", THROW_IN},
-                                                          {"goal_kick", GOAL_KICK},               {"corner_kick", CORNER_KICK}};
+        const std::array<const char*, 10> COLOURS =
+            {"blue", "red", "yellow", "black", "white", "green", "orange", "purple", "brown", "gray"};
+        const std::array<const char*, 12> PENALTY_CALLS = {"illegal_position",
+                                                           "motion_in_set",
+                                                           "motion_in_stop",
+                                                           "local_game_stuck",
+                                                           "incapable_robot",
+                                                           "request_for_pick_up",
+                                                           "ball_holding",
+                                                           "leaving_the_field",
+                                                           "playing_with_arms_hands",
+                                                           "pushing",
+                                                           "caution",
+                                                           "send_off"};
+        const std::map<std::string, SetPlay> SET_PLAYS  = {{"direct_free_kick", DIRECT_FREE_KICK},
+                                                           {"indirect_free_kick", INDIRECT_FREE_KICK},
+                                                           {"penalty_kick", PENALTY_KICK},
+                                                           {"throw_in", THROW_IN},
+                                                           {"goal_kick", GOAL_KICK},
+                                                           {"corner_kick", CORNER_KICK}};
 
         template <typename Names>
         int index_of(const Names& names, const std::string& name) {
@@ -71,33 +91,33 @@ namespace k1sim::module {
     struct Referee::Library {
         void* handle = nullptr;
 
-        void* (*competition_params_new)(const std::uint8_t*, std::uintptr_t)                              = nullptr;
-        void (*competition_params_destroy)(void*)                                                         = nullptr;
+        void* (*competition_params_new)(const std::uint8_t*, std::uintptr_t)                                  = nullptr;
+        void (*competition_params_destroy)(void*)                                                             = nullptr;
         void* (*params_new)(const void*, const TeamParams*, const TeamParams*, Side, SideMapping, TestParams) = nullptr;
-        void (*params_destroy)(void*)                                                                     = nullptr;
-        void* (*create)(const void*)                                                                      = nullptr;
-        void (*destroy)(void*)                                                                            = nullptr;
-        void (*seek)(void*, std::uint64_t)                                                                = nullptr;
-        bool (*apply)(void*, void*, ActionSource)                                                         = nullptr;
-        bool (*is_legal)(void*, const void*)                                                              = nullptr;
-        void (*action_destroy)(void*)                                                                     = nullptr;
-        bool (*read)(void*, std::uint8_t, bool, std::uint8_t*, std::uintptr_t)                            = nullptr;
-        const char* (*last_error)()                                                                       = nullptr;
+        void (*params_destroy)(void*)                                                                         = nullptr;
+        void* (*create)(const void*)                                                                          = nullptr;
+        void (*destroy)(void*)                                                                                = nullptr;
+        void (*seek)(void*, std::uint64_t)                                                                    = nullptr;
+        bool (*apply)(void*, void*, ActionSource)                                                             = nullptr;
+        bool (*is_legal)(void*, const void*)                                                                  = nullptr;
+        void (*action_destroy)(void*)                                                                         = nullptr;
+        bool (*read)(void*, std::uint8_t, bool, std::uint8_t*, std::uintptr_t)                                = nullptr;
+        const char* (*last_error)()                                                                           = nullptr;
 
-        void* (*finish_half)()                             = nullptr;
-        void* (*finish_set_play)()                         = nullptr;
-        void* (*free_set_play)()                           = nullptr;
-        void* (*global_game_stuck)()                       = nullptr;
-        void* (*goal)(Side)                                = nullptr;
-        void* (*penalize)(Side, std::uint8_t, int)         = nullptr;
-        void* (*start_set_play)(const Side*, SetPlay)      = nullptr;
-        void* (*stop_play)(bool)                           = nullptr;
-        void* (*switch_half)()                             = nullptr;
-        void* (*timeout)(const Side*)                      = nullptr;
-        void* (*undo)(std::uint32_t)                       = nullptr;
-        void* (*unpenalize)(Side, std::uint8_t, bool)      = nullptr;
-        void* (*wait_for_set_play)()                       = nullptr;
-        void* (*select_goalkeeper)(Side, std::uint8_t)     = nullptr;
+        void* (*finish_half)()                         = nullptr;
+        void* (*finish_set_play)()                     = nullptr;
+        void* (*free_set_play)()                       = nullptr;
+        void* (*global_game_stuck)()                   = nullptr;
+        void* (*goal)(Side)                            = nullptr;
+        void* (*penalize)(Side, std::uint8_t, int)     = nullptr;
+        void* (*start_set_play)(const Side*, SetPlay)  = nullptr;
+        void* (*stop_play)(bool)                       = nullptr;
+        void* (*switch_half)()                         = nullptr;
+        void* (*timeout)(const Side*)                  = nullptr;
+        void* (*undo)(std::uint32_t)                   = nullptr;
+        void* (*unpenalize)(Side, std::uint8_t, bool)  = nullptr;
+        void* (*wait_for_set_play)()                   = nullptr;
+        void* (*select_goalkeeper)(Side, std::uint8_t) = nullptr;
 
         template <typename Function>
         bool bind(Function& function, const char* name, std::string& error) {
@@ -117,14 +137,16 @@ namespace k1sim::module {
             return bind(competition_params_new, "gc_competition_params_new", error)
                    && bind(competition_params_destroy, "gc_competition_params_destroy", error)
                    && bind(params_new, "gc_params_new", error) && bind(params_destroy, "gc_params_destroy", error)
-                   && bind(create, "gc_new", error) && bind(destroy, "gc_destroy", error) && bind(seek, "gc_seek", error)
-                   && bind(apply, "gc_apply", error) && bind(is_legal, "gc_is_legal", error)
-                   && bind(action_destroy, "gc_action_destroy", error) && bind(read, "gc_read", error)
-                   && bind(last_error, "gc_last_error", error) && bind(finish_half, "gc_action_finish_half", error)
+                   && bind(create, "gc_new", error) && bind(destroy, "gc_destroy", error)
+                   && bind(seek, "gc_seek", error) && bind(apply, "gc_apply", error)
+                   && bind(is_legal, "gc_is_legal", error) && bind(action_destroy, "gc_action_destroy", error)
+                   && bind(read, "gc_read", error) && bind(last_error, "gc_last_error", error)
+                   && bind(finish_half, "gc_action_finish_half", error)
                    && bind(finish_set_play, "gc_action_finish_set_play", error)
                    && bind(free_set_play, "gc_action_free_set_play", error)
-                   && bind(global_game_stuck, "gc_action_global_game_stuck", error) && bind(goal, "gc_action_goal", error)
-                   && bind(penalize, "gc_action_penalize", error) && bind(start_set_play, "gc_action_start_set_play", error)
+                   && bind(global_game_stuck, "gc_action_global_game_stuck", error)
+                   && bind(goal, "gc_action_goal", error) && bind(penalize, "gc_action_penalize", error)
+                   && bind(start_set_play, "gc_action_start_set_play", error)
                    && bind(stop_play, "gc_action_stop_play", error) && bind(switch_half, "gc_action_switch_half", error)
                    && bind(timeout, "gc_action_timeout", error) && bind(undo, "gc_action_undo", error)
                    && bind(unpenalize, "gc_action_unpenalize", error)
@@ -134,26 +156,40 @@ namespace k1sim::module {
 
         // The action a command stands for, or nullptr if the command is unknown or incomplete.
         void* action(const message::RefereeCommand& c) const {
-            const Side side       = c.side == "away" ? AWAY : HOME;
-            const bool has_side   = c.side == "home" || c.side == "away";
-            const auto player     = static_cast<std::uint8_t>(c.player);
-            if (c.action == "kickoff" && has_side) return start_set_play(&side, KICK_OFF);
-            if (c.action == "setplay" && has_side && SET_PLAYS.count(c.arg) != 0) return start_set_play(&side, SET_PLAYS.at(c.arg));
-            if (c.action == "set") return wait_for_set_play();
-            if (c.action == "play") return free_set_play();
-            if (c.action == "finish_set_play") return finish_set_play();
-            if (c.action == "stop") return stop_play(false);
-            if (c.action == "resume") return stop_play(true);
-            if (c.action == "goal" && has_side) return goal(side);
-            if (c.action == "finish_half") return finish_half();
-            if (c.action == "switch_half") return switch_half();
-            if (c.action == "timeout") return timeout(has_side ? &side : nullptr);
-            if (c.action == "stuck") return global_game_stuck();
-            if (c.action == "undo") return undo(1);
+            const Side side     = c.side == "away" ? AWAY : HOME;
+            const bool has_side = c.side == "home" || c.side == "away";
+            const auto player   = static_cast<std::uint8_t>(c.player);
+            if (c.action == "kickoff" && has_side)
+                return start_set_play(&side, KICK_OFF);
+            if (c.action == "setplay" && has_side && SET_PLAYS.count(c.arg) != 0)
+                return start_set_play(&side, SET_PLAYS.at(c.arg));
+            if (c.action == "set")
+                return wait_for_set_play();
+            if (c.action == "play")
+                return free_set_play();
+            if (c.action == "finish_set_play")
+                return finish_set_play();
+            if (c.action == "stop")
+                return stop_play(false);
+            if (c.action == "resume")
+                return stop_play(true);
+            if (c.action == "goal" && has_side)
+                return goal(side);
+            if (c.action == "finish_half")
+                return finish_half();
+            if (c.action == "switch_half")
+                return switch_half();
+            if (c.action == "timeout")
+                return timeout(has_side ? &side : nullptr);
+            if (c.action == "stuck")
+                return global_game_stuck();
+            if (c.action == "undo")
+                return undo(1);
             if (c.action == "penalize" && has_side && index_of(PENALTY_CALLS, c.arg) >= 0) {
                 return penalize(side, player, index_of(PENALTY_CALLS, c.arg));
             }
-            if (c.action == "unpenalize" && has_side) return unpenalize(side, player, c.arg == "force");
+            if (c.action == "unpenalize" && has_side)
+                return unpenalize(side, player, c.arg == "force");
             return nullptr;
         }
 
@@ -200,36 +236,19 @@ namespace k1sim::module {
     bool Referee::start(std::string& error) {
         const YAML::Node cfg = config::load("referee.yaml");
 
-        std::string dir = cfg["gamecontroller_dir"].as<std::string>("");
-        if (dir.empty()) {
-            const char* env = std::getenv("GAMECONTROLLER_DIR");
-            dir             = env != nullptr ? env : "";
-        }
-        if (dir.empty()) {
-            error = "set gamecontroller_dir in config/referee.yaml (or GAMECONTROLLER_DIR) to the GameController checkout";
-            return false;
-        }
-        const std::filesystem::path root(dir);
-
-#ifdef __APPLE__
-        const char* library_name = "libgame_controller_api.dylib";
-#else
-        const char* library_name = "libgame_controller_api.so";
-#endif
-        const std::filesystem::path library = root / "target" / "release" / library_name;
-        if (!std::filesystem::exists(library)) {
-            error = library.string() + " not found - build it with: cargo build -r -p game_controller_api";
+        if (std::string(K1SIM_GC_LIBRARY).empty()) {
+            error = "built without the GameController library, which the docker image has (./b image)";
             return false;
         }
         lib_ = std::make_unique<Library>();
-        if (!lib_->load(library.string(), error)) {
+        if (!lib_->load(K1SIM_GC_LIBRARY, error)) {
             return false;
         }
 
         const std::string competition = cfg["competition"].as<std::string>("middle_advanced");
-        std::ifstream file(root / "config" / competition / "params.yaml");
+        std::ifstream file(std::string(K1SIM_GC_CONFIG_DIR) + "/" + competition + "/params.yaml");
         if (!file.is_open()) {
-            error = "no params.yaml for competition '" + competition + "' in " + (root / "config").string();
+            error = "no params.yaml for competition '" + competition + "' in " K1SIM_GC_CONFIG_DIR;
             return false;
         }
         std::ostringstream yaml;
@@ -318,8 +337,12 @@ namespace k1sim::module {
             result_ok_   = lib_->apply(game_, action, SOURCE_USER);  // takes the action, applied or not
             result_text_ = command.action + (result_ok_ ? "" : " is not allowed right now");
         }
-        log<NUClear::LogLevel::INFO>("referee:", command.action, command.side, command.player > 0 ? std::to_string(command.player) : "",
-                                     command.arg, result_ok_ ? "" : "(not allowed)");
+        log<NUClear::LogLevel::INFO>("referee:",
+                                     command.action,
+                                     command.side,
+                                     command.player > 0 ? std::to_string(command.player) : "",
+                                     command.arg,
+                                     result_ok_ ? "" : "(not allowed)");
         publish();
     }
 
@@ -331,7 +354,12 @@ namespace k1sim::module {
         std::array<std::uint8_t, sizeof(gc::GameControllerPacket)> buffer{};
         if (lib_->read(game_, packet_number_++, false, buffer.data(), buffer.size()) && socket_fd_ >= 0) {
             for (const auto& target : targets_) {
-                ::sendto(socket_fd_, buffer.data(), buffer.size(), 0, reinterpret_cast<const sockaddr*>(&target), sizeof(target));
+                ::sendto(socket_fd_,
+                         buffer.data(),
+                         buffer.size(),
+                         0,
+                         reinterpret_cast<const sockaddr*>(&target),
+                         sizeof(target));
             }
         }
         if (lib_->read(game_, packet_number_, true, buffer.data(), buffer.size())) {
@@ -360,7 +388,8 @@ namespace k1sim::module {
             offer(std::string("timeout:") + side, {"timeout", side, 0, ""});
             offer(std::string("setplay:") + side, {"setplay", side, 0, "direct_free_kick"});
         }
-        for (const char* name : {"set", "play", "finish_set_play", "stop", "resume", "finish_half", "switch_half", "stuck", "undo"}) {
+        for (const char* name :
+             {"set", "play", "finish_set_play", "stop", "resume", "finish_half", "switch_half", "stuck", "undo"}) {
             offer(name, {name, "", 0, ""});
         }
         offer("timeout:none", {"timeout", "", 0, ""});

@@ -77,8 +77,8 @@ namespace k1sim::module::supervisor {
 
     inline SupervisorConfig load_config(const YAML::Node& root) {
         SupervisorConfig cfg;
-        cfg.enabled = root["enabled"].as<bool>(cfg.enabled);
-        cfg.gc_port = root["gc_port"].as<int>(cfg.gc_port);
+        cfg.enabled    = root["enabled"].as<bool>(cfg.enabled);
+        cfg.gc_port    = root["gc_port"].as<int>(cfg.gc_port);
         cfg.teams_file = root["teams_file"].as<std::string>(cfg.teams_file);
 
         if (const auto& reset = root["reset_ball_on"]) {

@@ -449,7 +449,7 @@ namespace {
         for (int i = 0; i < steps; ++i) {
             mj_step(m, d);
         }
-        const auto rolled = fb::geom_centre_state(m, d, ball_body, ball_geom);
+        const auto rolled  = fb::geom_centre_state(m, d, ball_body, ball_geom);
         const double speed = std::hypot(rolled.lin_vel[0], rolled.lin_vel[1]);
         if (speed < 0.9 * speed0 || speed > speed0 * 1.001) {
             fail("rolled ball speed after 0.2 s is " + std::to_string(speed) + " (started at " + std::to_string(speed0)
@@ -461,17 +461,17 @@ namespace {
 
         // Robot frame: Trunk at (1, 2) yawed +90 deg, ball 1 m in front moving forward
         mj_resetData(m, d);
-        const int tq = m->jnt_qposadr[m->body_jntadr[trunk]];
-        d->qpos[tq + 0] = 1.0;
-        d->qpos[tq + 1] = 2.0;
-        d->qpos[tq + 3] = std::cos(M_PI / 4.0);
-        d->qpos[tq + 4] = 0.0;
-        d->qpos[tq + 5] = 0.0;
-        d->qpos[tq + 6] = std::sin(M_PI / 4.0);
-        cmd.frame       = Frame::ROBOT;
-        cmd.position    = {1.0, 0.0, -1.0};
-        cmd.velocity    = {1.0, 0.0, 0.0};
-        cmd.rolling     = false;
+        const int tq         = m->jnt_qposadr[m->body_jntadr[trunk]];
+        d->qpos[tq + 0]      = 1.0;
+        d->qpos[tq + 1]      = 2.0;
+        d->qpos[tq + 3]      = std::cos(M_PI / 4.0);
+        d->qpos[tq + 4]      = 0.0;
+        d->qpos[tq + 5]      = 0.0;
+        d->qpos[tq + 6]      = std::sin(M_PI / 4.0);
+        cmd.frame            = Frame::ROBOT;
+        cmd.position         = {1.0, 0.0, -1.0};
+        cmd.velocity         = {1.0, 0.0, 0.0};
+        cmd.rolling          = false;
         cmd.angular_velocity = {0.0, 0.0, 0.0};
         if (!sup::apply_ball_command(m, d, ball_body, ball_geom, trunk, cmd)) {
             fail("apply_ball_command returned false for a valid robot command");
@@ -515,7 +515,8 @@ namespace {
             mj_kinematics(m, d);
             const double* p = d->geom_xpos + 3 * ball_geom;
             if (!approx(p[0], 1.38, 1e-9) || !approx(p[1], 0.0, 1e-9) || !approx(p[2], 0.0785, 1e-9)) {
-                fail(std::string("keyframe '") + mj_id2name(m, mjOBJ_KEY, key) + "' no longer rests the ball at (1.38, 0, 0.0785)");
+                fail(std::string("keyframe '") + mj_id2name(m, mjOBJ_KEY, key)
+                     + "' no longer rests the ball at (1.38, 0, 0.0785)");
             }
         }
         mj_resetData(m, d);
