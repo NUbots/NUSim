@@ -4,7 +4,6 @@
 #include <fastdds/dds/subscriber/DataReader.hpp>
 #include <fastdds/dds/subscriber/DataReaderListener.hpp>
 #include <nuclear>
-
 #include <string>
 
 #include "module/SdkBridge/src/DdsParticipant.hpp"
@@ -19,10 +18,15 @@ namespace k1sim::module::sdkbridge {
     class BallCommandReader : public eprosima::fastdds::dds::DataReaderListener {
     public:
         BallCommandReader(DdsParticipant& dds, NUClear::Reactor& reactor, const k1sim::RobotIdentity& robot);
+        ~BallCommandReader() override;
+
+        BallCommandReader(const BallCommandReader&)            = delete;
+        BallCommandReader& operator=(const BallCommandReader&) = delete;
 
         void on_data_available(eprosima::fastdds::dds::DataReader* reader) override;
 
     private:
+        DdsParticipant& dds_;
         NUClear::Reactor& reactor_;
         std::string robot_body_;  // Trunk of the robot this domain belongs to
         eprosima::fastdds::dds::DataReader* reader_ = nullptr;

@@ -43,11 +43,10 @@ namespace k1sim::module {
         }
 
         std::string read_competition(const std::string& name) {
-            const std::string path = std::string(K1SIM_GC_PARAMS_DIR) + "/" + name + ".yaml";
+            const std::string path = std::string(K1SIM_GC_CONFIG_DIR) + "/" + name + "/params.yaml";
             std::ifstream file(path);
             if (!file) {
-                throw std::runtime_error("MatchReferee: can't read " + path
-                                         + " (see mujoco/tools/install_game_controller_api.sh)");
+                throw std::runtime_error("MatchReferee: can't read " + path + ", no such GameController competition");
             }
             std::stringstream content;
             content << file.rdbuf();
@@ -221,7 +220,9 @@ namespace k1sim::module {
             else if (command.action == message::MatchCommand::Action::SET_PLAY) {
                 const bool called = logic_->call_set_play(command.side == 0 ? RoboCup::Side::home : RoboCup::Side::away,
                                                           static_cast<RoboCup::SetPlay>(command.set_play));
-                log<NUClear::LogLevel::INFO>("MatchReferee: set play", command.set_play, "for",
+                log<NUClear::LogLevel::INFO>("MatchReferee: set play",
+                                             command.set_play,
+                                             "for",
                                              command.side == 0 ? "home" : "away",
                                              called ? "called" : "refused (not legal right now)");
             }
@@ -323,10 +324,10 @@ namespace k1sim::module {
         status->robot_labels   = logic_->robot_labels();
         status->messages       = logic_->messages();
         status->has_game       = logic_->scoreboard(status->home_score,
-                                                    status->away_score,
-                                                    status->secs_remaining,
-                                                    status->state,
-                                                    status->players);
+                                              status->away_score,
+                                              status->secs_remaining,
+                                              status->state,
+                                              status->players);
         status->connected      = connected_;
         emit(status);
     }

@@ -61,6 +61,8 @@ namespace k1sim::module::sdkbridge {
             return subscriber_->create_datareader(topic, qos, listener);
         }
 
+        // For a reader whose listener dies before this participant: deleting it here waits out any
+        // in-flight callback, where leaving it for the destructor would call into a dead listener.
         void delete_reader(eprosima::fastdds::dds::DataReader* reader) {
             if (reader) {
                 reader->set_listener(nullptr);

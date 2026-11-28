@@ -12,8 +12,7 @@ enabled: false
 gc_port: 3838 # RoboCup GameController broadcast port (protocol version 20)
 
 # The GameController's teams.yaml (its config directory), to show team names instead of
-# "Team <number>" on the browser viewer's scoreboard. Empty: $GAMECONTROLLER_CONFIG/teams.yaml
-# is tried, then the numbers are shown.
+# "Team <number>" on the browser viewer's scoreboard. Empty: the one in the docker image.
 teams_file: ""
 
 # Optional extra ball-centre resets beyond the core kickoff rule (entering

@@ -139,8 +139,8 @@ namespace k1sim::web {
 
         void send_response(int fd, const char* status, const char* content_type, const std::string& body) {
             std::ostringstream head;
-            head << "HTTP/1.1 " << status << "\r\nContent-Type: " << content_type << "\r\nContent-Length: " << body.size()
-                 << "\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n";
+            head << "HTTP/1.1 " << status << "\r\nContent-Type: " << content_type
+                 << "\r\nContent-Length: " << body.size() << "\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n";
             if (send_all(fd, head.str())) {
                 send_all(fd, body);
             }
@@ -151,9 +151,12 @@ namespace k1sim::web {
                 const std::size_t n = std::strlen(suffix);
                 return path.size() >= n && path.compare(path.size() - n, n, suffix) == 0;
             };
-            if (ends_with(".html")) return "text/html; charset=utf-8";
-            if (ends_with(".js")) return "text/javascript; charset=utf-8";
-            if (ends_with(".css")) return "text/css; charset=utf-8";
+            if (ends_with(".html"))
+                return "text/html; charset=utf-8";
+            if (ends_with(".js"))
+                return "text/javascript; charset=utf-8";
+            if (ends_with(".css"))
+                return "text/css; charset=utf-8";
             return "application/octet-stream";
         }
 
@@ -198,8 +201,10 @@ namespace k1sim::web {
             listen_fd_ = -1;
             return false;
         }
-        if (::bind(listen_fd_, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0 || ::listen(listen_fd_, 16) != 0) {
-            error = "cannot listen on " + options_.host + ":" + std::to_string(options_.port) + ": " + std::strerror(errno);
+        if (::bind(listen_fd_, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0
+            || ::listen(listen_fd_, 16) != 0) {
+            error =
+                "cannot listen on " + options_.host + ":" + std::to_string(options_.port) + ": " + std::strerror(errno);
             ::close(listen_fd_);
             listen_fd_ = -1;
             return false;
@@ -251,9 +256,9 @@ namespace k1sim::web {
         scene << "{\"type\":\"scene\",\"id\":" << (scene_id_ + 1) << ",\"bodies\":[";
         for (int body = 0; body < m->nbody; ++body) {
             // A robot's trunk or the ball: a root body on a free joint, which the page may pick up and move.
-            const int root       = m->body_rootid[body];
-            const bool free_root = root > 0 && m->body_jntnum[root] == 1
-                                   && m->jnt_type[m->body_jntadr[root]] == mjJNT_FREE;
+            const int root = m->body_rootid[body];
+            const bool free_root =
+                root > 0 && m->body_jntnum[root] == 1 && m->jnt_type[m->body_jntadr[root]] == mjJNT_FREE;
             scene << (body > 0 ? "," : "") << "{\"name\":" << json_string(mj_id2name(m, mjOBJ_BODY, body))
                   << ",\"root\":" << m->body_rootid[body] << ",\"free\":" << (free_root ? "true" : "false") << "}";
         }
@@ -274,8 +279,9 @@ namespace k1sim::web {
             const float* rgba = material >= 0 && default_rgba ? m->mat_rgba + 4 * material : geom_rgba;
 
             scene << (first ? "" : ",") << "{\"name\":" << json_string(mj_id2name(m, mjOBJ_GEOM, geom))
-                  << ",\"body\":" << m->geom_bodyid[geom] << ",\"type\":\"" << type << "\",\"group\":" << m->geom_group[geom]
-                  << ",\"collide\":" << (m->geom_contype[geom] != 0 || m->geom_conaffinity[geom] != 0 ? "true" : "false")
+                  << ",\"body\":" << m->geom_bodyid[geom] << ",\"type\":\"" << type
+                  << "\",\"group\":" << m->geom_group[geom] << ",\"collide\":"
+                  << (m->geom_contype[geom] != 0 || m->geom_conaffinity[geom] != 0 ? "true" : "false")
                   << ",\"size\":" << json_array(m->geom_size + 3 * geom, 3)
                   << ",\"pos\":" << json_array(m->geom_pos + 3 * geom, 3)
                   << ",\"quat\":" << json_array(m->geom_quat + 4 * geom, 4) << ",\"rgba\":" << json_array(rgba, 4)
@@ -286,11 +292,11 @@ namespace k1sim::web {
                 const int mesh   = m->geom_dataid[geom];
                 std::string& key = keys_by_mesh[static_cast<std::size_t>(mesh)];
                 if (key.empty()) {
-                    const float* vert      = m->mesh_vert + 3 * m->mesh_vertadr[mesh];
-                    const int* face        = m->mesh_face + 3 * m->mesh_faceadr[mesh];
+                    const float* vert            = m->mesh_vert + 3 * m->mesh_vertadr[mesh];
+                    const int* face              = m->mesh_face + 3 * m->mesh_faceadr[mesh];
                     const std::size_t vert_bytes = sizeof(float) * 3 * static_cast<std::size_t>(m->mesh_vertnum[mesh]);
                     const std::size_t face_bytes = sizeof(int) * 3 * static_cast<std::size_t>(m->mesh_facenum[mesh]);
-                    key                    = content_key(vert, vert_bytes, face, face_bytes);
+                    key                          = content_key(vert, vert_bytes, face, face_bytes);
 
                     if (std::find(mesh_keys_.begin(), mesh_keys_.end(), key) == mesh_keys_.end()) {
                         mesh_keys_.push_back(key);
@@ -365,9 +371,12 @@ namespace k1sim::web {
         auto* poses = reinterpret_cast<char*>(payload.data()) + 24;
         for (std::size_t body = 0; body < bodies; ++body) {
             const float pose[7] = {
-                static_cast<float>(d->xpos[3 * body]),      static_cast<float>(d->xpos[3 * body + 1]),
-                static_cast<float>(d->xpos[3 * body + 2]),  static_cast<float>(d->xquat[4 * body]),
-                static_cast<float>(d->xquat[4 * body + 1]), static_cast<float>(d->xquat[4 * body + 2]),
+                static_cast<float>(d->xpos[3 * body]),
+                static_cast<float>(d->xpos[3 * body + 1]),
+                static_cast<float>(d->xpos[3 * body + 2]),
+                static_cast<float>(d->xquat[4 * body]),
+                static_cast<float>(d->xquat[4 * body + 1]),
+                static_cast<float>(d->xquat[4 * body + 2]),
                 static_cast<float>(d->xquat[4 * body + 3]),
             };
             std::memcpy(poses + body * sizeof(pose), pose, sizeof(pose));
@@ -497,8 +506,9 @@ namespace k1sim::web {
 
     void WebStream::serve_stream(int fd) {
         // No Content-Length: the body simply never ends, and the browser hands it to the viewer as it arrives.
-        if (!send_all(fd, "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nCache-Control: no-store\r\n"
-                          "Connection: close\r\n\r\n")) {
+        if (!send_all(fd,
+                      "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nCache-Control: no-store\r\n"
+                      "Connection: close\r\n\r\n")) {
             return;
         }
 

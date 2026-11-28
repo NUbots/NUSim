@@ -8,8 +8,6 @@ target_link_libraries(
 )
 target_link_libraries(imgui PUBLIC OpenGL::GL)
 
-# UI font: Roboto ships with the fetched Dear ImGui sources (Apache-2.0). ViewerUI falls back to ImGui's built-in
-# bitmap font if the file is missing at runtime.
-target_compile_definitions(
-  k1sim_module_viewer PRIVATE K1SIM_UI_FONT="${imgui_SOURCE_DIR}/misc/fonts/Roboto-Medium.ttf"
-)
+# UI font: Roboto ships with the fetched Dear ImGui sources (Apache-2.0). ViewerUI falls back to ImGui's built-in bitmap
+# font if the file is missing at runtime.
+target_compile_definitions(k1sim_module_viewer PRIVATE K1SIM_UI_FONT="${imgui_SOURCE_DIR}/misc/fonts/Roboto-Medium.ttf")

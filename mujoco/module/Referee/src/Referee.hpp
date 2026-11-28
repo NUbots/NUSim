@@ -2,12 +2,11 @@
 #define K1SIM_MODULE_REFEREE_HPP
 
 // <nuclear> must come before any socket header: on macOS it selects the IPv6 socket API they declare.
-#include <nuclear>
-
 #include <cstdint>
 #include <memory>
 #include <mutex>
 #include <netinet/in.h>
+#include <nuclear>
 #include <string>
 #include <vector>
 
@@ -42,11 +41,11 @@ namespace k1sim::module {
         void* game_ = nullptr;  // RoboCup::GameController
 
         std::mutex mutex_;  // guards the game and everything below
-        double last_sim_time_   = -1.0;
-        double pending_ms_      = 0.0;
-        double since_publish_s_ = 0.0;
+        double last_sim_time_       = -1.0;
+        double pending_ms_          = 0.0;
+        double since_publish_s_     = 0.0;
         std::uint8_t packet_number_ = 0;
-        int result_seq_         = 0;
+        int result_seq_             = 0;
         std::string result_text_;
         bool result_ok_ = true;
         std::string last_status_;

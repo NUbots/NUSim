@@ -1,6 +1,25 @@
 # Build/run environment for k1_mujoco_sim.
 # The repo is bind-mounted at /workspace/NUSim by docker/k1sim.sh; this image
 # only bakes the toolchain and the pinned dependencies (tools/install_deps.sh).
+
+# The RoboCup GameController's C API, for module::MatchReferee and module::Referee. Its own stage, so the Rust
+# toolchain and cargo's build tree stay out of the image. Ubuntu 22.04, as below, so the library needs no newer glibc.
+FROM ubuntu:22.04 AS gamecontroller
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential ca-certificates curl libclang-dev python3 python3-magic python3-requests python3-tqdm \
+    && rm -rf /var/lib/apt/lists/*
+RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.88.0
+ENV PATH=/root/.cargo/bin:$PATH
+# The C API is new and not in a tagged release, and its signatures have changed between commits.
+ARG GC_COMMIT=21c7c6a868fe29cfdc345404859a5344b1857274
+COPY docker/install-from-source.py /usr/local/bin/install-from-source
+RUN install-from-source --no-toolchain --prefix /opt/gamecontroller \
+    --copy game_controller_api/headers/GameController.h:include/GameController.h \
+    --copy config:share/GameController/config \
+    https://github.com/RoboCup-HumanoidSoccerLeague/GameController/archive/${GC_COMMIT}.tar.gz \
+    -p game_controller_api
+
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -53,6 +72,10 @@ RUN chmod -R a+rX /opt/k1sim-deps
 # cmake-curses-gui provides ccmake for `./b configure -i` (role toggle TUI).
 RUN apt-get update && apt-get install -y --no-install-recommends pkg-config cmake-curses-gui \
     && rm -rf /var/lib/apt/lists/*
+
+# libgame_controller_api.so, GameController.h, and the competitions and teams in share/GameController/config.
+COPY --from=gamecontroller /opt/gamecontroller /usr/local
+RUN ldconfig
 
 ENV K1SIM_DEPS_PREFIX=/opt/k1sim-deps
 WORKDIR /workspace/NUSim/mujoco
