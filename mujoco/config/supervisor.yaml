@@ -9,7 +9,6 @@
 # NUbots' GameController ("Unable to bind the UDP socket: Address already in use").
 # Enable only when running the sim STANDALONE (no NUbots GameController on host).
 enabled: false
-gc_port: 3838 # RoboCup GameController broadcast port (protocol version 20)
 # How long the listener waits for a packet before checking whether the sim is shutting down. Shutdown takes up to this.
 listen_timeout_ms: 300
 

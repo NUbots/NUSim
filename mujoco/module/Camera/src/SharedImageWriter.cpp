@@ -1,5 +1,6 @@
 #include "module/Camera/src/SharedImageWriter.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <new>
@@ -7,18 +8,19 @@
 
 namespace k1sim::module::camera {
 
-    namespace {
-        constexpr const char* kEncoding = "rgb8";
-    }
-
-    SharedImageWriter::SharedImageWriter(const std::string& segment_name, int width, int height)
+    SharedImageWriter::SharedImageWriter(const std::string& segment_name,
+                                         int width,
+                                         int height,
+                                         int bytes_per_pixel,
+                                         const std::string& encoding)
         : segment_name_(segment_name) {
 
         if (width <= 0 || height <= 0) {
             throw std::runtime_error("SharedImageWriter: width/height must be positive");
         }
 
-        const auto data_size  = static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 3;
+        const auto data_size = static_cast<std::size_t>(width) * static_cast<std::size_t>(height)
+                               * static_cast<std::size_t>(bytes_per_pixel);
         const auto total_size = sizeof(SharedImageHeader) + data_size;
 
         // Discard any stale segment (e.g. left behind by a crashed previous run) so we
@@ -39,7 +41,7 @@ namespace k1sim::module::camera {
         header_->data_size = static_cast<uint32_t>(data_size);
         // encoding[] is already zero-filled by SharedImageHeader's default member
         // initializer; just copy the (shorter, NUL-terminated-by-the-zero-fill) tag in.
-        std::memcpy(header_->encoding, kEncoding, std::strlen(kEncoding));
+        std::memcpy(header_->encoding, encoding.c_str(), std::min(encoding.size(), sizeof(header_->encoding) - 1));
 
         pixels_ = reinterpret_cast<uint8_t*>(header_ + 1);
     }

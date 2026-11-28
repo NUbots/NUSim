@@ -152,7 +152,11 @@ namespace k1sim::module {
                                          "physics_step_ms",
                                          sim_->physics_step_ms(),
                                          "dropped_deadlines",
-                                         sim_->dropped_deadlines());
+                                         sim_->dropped_deadlines(),
+                                         "worst_lock_wait_ms",
+                                         sim_->take_worst_lock_wait_ms(),
+                                         "worst_publish_ms",
+                                         sim_->take_worst_publish_ms());
         });
 
         on<Trigger<message::SimPauseRequest>>().then(

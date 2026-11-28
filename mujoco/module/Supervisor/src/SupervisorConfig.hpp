@@ -58,7 +58,6 @@ namespace k1sim::module::supervisor {
 
     struct SupervisorConfig {
         bool enabled          = true;
-        int gc_port           = 3838;
         int listen_timeout_ms = 300;  // the listener checks for shutdown this often
         std::string teams_file;       // the GameController's teams.yaml (team number -> name); empty = "Team <number>"
 
@@ -88,7 +87,6 @@ namespace k1sim::module::supervisor {
     inline SupervisorConfig load_config(const YAML::Node& root) {
         SupervisorConfig cfg;
         cfg.enabled           = root["enabled"].as<bool>(cfg.enabled);
-        cfg.gc_port           = root["gc_port"].as<int>(cfg.gc_port);
         cfg.teams_file        = root["teams_file"].as<std::string>(cfg.teams_file);
         cfg.listen_timeout_ms = root["listen_timeout_ms"].as<int>(cfg.listen_timeout_ms);
 

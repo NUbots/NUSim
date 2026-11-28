@@ -1,9 +1,11 @@
 #ifndef K1SIM_SHARED_SIM_MATCHCONFIG_HPP
 #define K1SIM_SHARED_SIM_MATCHCONFIG_HPP
 
+#include <algorithm>
 #include <array>
 #include <set>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 #include <yaml-cpp/yaml.h>
@@ -79,6 +81,7 @@ namespace k1sim {
             robot.team_id     = node["team_id"].as<int>();
             robot.player_id   = node["player_id"].as<int>();
             robot.dds_domain  = node["dds_domain"].as<int>();
+            robot.state_every = std::max(1, node["state_every"].as<int>(1));
             cfg.robots.push_back(robot);
         }
         cfg.validate();

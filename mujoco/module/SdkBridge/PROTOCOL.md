@@ -74,7 +74,7 @@ fastddsgen maps to unsigned `octet`/`uint8_t` in the generated C++ — this is t
 | # | field | type | notes |
 |---|---|---|---|
 | 1 | `imu_state` | `ImuState_` | nested struct |
-| 2 | `motor_state_parallel` | `sequence<MotorState_>` | mirrors serial 1:1 for K1 (no true parallel actuation) |
+| 2 | `motor_state_parallel` | `sequence<MotorState_>` | all 22 joints, the serial values (no parallel ankle linkage in the sim) |
 | 3 | `motor_state_serial` | `sequence<MotorState_>` | JointIndexK1 order, 22 entries |
 
 `is_bounded() == false` (contains sequences). Topic `rt/low_state`.
@@ -305,6 +305,7 @@ classes' `FromJson`/`ToJson`):
 | 2008 | `kGetUp` | `""` (empty) | — |
 | 2017 | `kGetMode` | `""` (empty) | `{"mode": <int>}` |
 | 2025 | `kGetUpWithMode` | `{"mode": <int>}` | — |
+| 2031 | `kResetOdometry` | `""` (empty) | — (in a match, `rt/odometer_state` reads zero again from where the robot stands) |
 | 2038 | `kVisualKick` | `{"start": <bool>, "version": <int>}` (`VisualKickVersion`: `kV1=0` default, `kV2=1`) | — |
 
 `RobotMode`: `kUnknown=-1, kDamping=0, kPrepare=1, kWalking=2, kCustom=3, kSoccer=4`
@@ -358,18 +359,7 @@ to widen, not narrow), `module::SdkBridge` uses:
 - **RPC response writer** (`rt/LocoApiTopicResp`): `RELIABLE` + `VOLATILE` +
   `KEEP_LAST(5)` (matches state writers; replies are small and infrequent).
 - Domain: `0` (hardcoded in NUbots' `HardwareIO`, matches `config/dds.yaml: domain`).
-- Transport: default UDPv4 + SHM (both enabled) unless `config/dds.yaml: udp_only: true`
-  or env `K1_DDS_UDP_ONLY=1`, which strips SHM from the participant's
-  `transport_descriptors` (workaround for docker `--ipc host` not always being
-  available, e.g. rootless docker or restricted CI).
-- For a simulator and native players on the same host, `config/dds.yaml: local_only: true`
-  selects UDPv4 on `127.0.0.1` with non-blocking sends. Both ends must select it.
-  This takes precedence over `udp_only`; its default is false, preserving network
-  and SHM deployments. Native clients use the third `DdsParticipant` constructor
-  argument. A full socket buffer drops a datagram instead of blocking publication;
-  reliable commands/RPCs retain their delivery policy, and state consumers retain
-  their freshness admission and watchdogs. `test_dds_transport` exercises this
-  mode as well as both existing transport modes.
+- Transport: UDPv4 + SHM, both enabled.
 
 Empirically verified in the M4/M5 contract test (`test/contract/test_sdk_roundtrip.py`
 + its C++ helper client, built against **both** the older local SDK checkout at
@@ -389,7 +379,7 @@ the same port can neither write to nor delete (`/dev/shm` sticky bit) — host�
 RPC then silently times out while some sim→host topics still flow, a very confusing
 partial failure. Always run via `docker/k1sim.sh` (which passes `--user`), and if
 mixed-uid segments ever accumulate, remove the stale `fastrtps_*` /
-`fast_datasharing_*` files or set `udp_only: true`.
+`fast_datasharing_*` files.
 
 ## 5. CDR / fastddsgen generation notes
 

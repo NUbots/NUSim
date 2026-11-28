@@ -39,6 +39,7 @@ namespace k1sim::booster {
         GET_UP                     = 2008,  // empty body
         GET_MODE                   = 2017,  // response body {"mode": <int>}
         GET_UP_WITH_MODE           = 2025,  // body {"mode": <int>} — what NUbots' BoosterGetUp uses
+        RESET_ODOMETRY             = 2031,  // empty body: the odometer starts again from zero
         VISUAL_KICK                = 2038,  // what NUbots' BoosterVisualKick uses
     };
 

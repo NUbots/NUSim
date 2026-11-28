@@ -14,20 +14,10 @@ namespace k1sim::module::sdkbridge {
 
     using namespace eprosima::fastdds::dds;  // NOLINT — matches Fast-DDS's own usage idiom
 
-    DdsParticipant::DdsParticipant(int domain_id, bool udp_only, bool local_only) {
+    DdsParticipant::DdsParticipant(int domain_id) {
         DomainParticipantQos pqos = PARTICIPANT_QOS_DEFAULT;
         pqos.name("k1sim_sdkbridge");
-        if (local_only) {
-            auto transport = std::make_shared<eprosima::fastdds::rtps::UDPv4TransportDescriptor>();
-            transport->interfaceWhiteList.emplace_back("127.0.0.1");
-            transport->non_blocking_send            = true;
-            pqos.transport().use_builtin_transports = false;
-            pqos.transport().user_transports        = {transport};
-        }
-        else {
-            pqos.setup_transports(udp_only ? eprosima::fastdds::rtps::BuiltinTransports::UDPv4
-                                           : eprosima::fastdds::rtps::BuiltinTransports::DEFAULT);
-        }
+        pqos.setup_transports(eprosima::fastdds::rtps::BuiltinTransports::DEFAULT);
 
         participant_ = DomainParticipantFactory::get_instance()->create_participant(domain_id, pqos);
         if (participant_ == nullptr) {

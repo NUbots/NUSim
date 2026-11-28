@@ -202,7 +202,7 @@ physics tests still run. Rendering failures after context creation still fail th
 camera locally with `./b test` without that variable set.
 
 **Connecting to NUbots:** DDS can use UDP between machines, subject to network discovery and firewall
-configuration. Use `K1_DDS_UDP_ONLY=1` when connecting across a container or OS boundary. The RGB and
+configuration. The RGB and
 head-pose bridges use local shared memory: they cannot cross from macOS into a Linux VM/container, even
 with `--ipc host`. Their struct layouts also depend on the platform's Boost/pthread ABI. Full vision
 integration therefore needs a compatible native consumer or both processes in the same Linux environment.
@@ -314,10 +314,10 @@ per-motor `kp`/`kd`/`tau` carried in each message (torques clamped to the model'
   standing, and idling limp would just collapse before a client connects). `RotateHead` still steers the
   head here.
 - **CUSTOM** — PD-track the latest `rt/joint_ctrl` LowCmd (the path every NUbots_K1 policy uses).
-
 For SDK wire compatibility the old high-level RPCs are still answered: `ChangeMode(WALKING/SOCCER)` maps to
 PREPARE with a warning, and `Move`/`GetUp`/`LieDown`/`VisualKick` are accepted but ignored (warn-once) —
-drive the robot with CUSTOM + LowCmd instead.
+drive the robot with CUSTOM + LowCmd instead. A codebase written for the firmware's walk (HTWK's) brings its own
+stand-in for it.
 
 The sim boots holding **PREPARE** until the first `ChangeMode` arrives (`locomotion.yaml`'s `initial_mode`;
 set `damping` for the real robot's limp-at-boot behaviour). `--keyframe lying_front` spawns the robot on
@@ -425,16 +425,11 @@ on the network ⇒ idle no-op. Config: `mujoco/config/supervisor.yaml`.
 
 - **`webots/keyboardwalk` connects but the K1 doesn't move / no `LowState`.** Same FastDDS shared-memory
   caveat as the old Webots+`mck` setup: make sure `./b run` used `--ipc=host` (see
-  [K1_WEBOTS_SETUP.md](K1_WEBOTS_SETUP.md), patch 9). If it still doesn't come through, force UDP-only
-  transport on the sim side with `K1_DDS_UDP_ONLY=1` (or `config/dds.yaml`'s `udp_only: true`).
+  [K1_WEBOTS_SETUP.md](K1_WEBOTS_SETUP.md), patch 9).
 - **`Failed to open segment fast_datasharing_... -> Function open_and_init_shared_segment_notification`,
   then `request timed out`.** The client container can't reach the sim's `/dev/shm` segments. Two causes:
   (a) the NUbots side wasn't launched with `--ipc host` (patch 9, see above); (b) stale segments from a
   crashed run — stop both sides and `rm -f /dev/shm/fast_datasharing* /dev/shm/fastrtps_*`.
-- **Keyboardwalk UI works but the robot never leaves PREPARE (no mode change).** Transport mismatch:
-  don't run the sim UDP-only (`K1_DDS_UDP_ONLY=1`) while the NUbots container has `--ipc host` (or vice
-  versa) — asymmetric transports let discovery succeed but silently blackhole the RPCs. Use the same
-  transport on both sides: both SHM (default + `--ipc host`) or both UDP-only.
 - **No window / `xhost`/X11 authorization errors.** `./b run` runs `xhost +local:` for you when `$DISPLAY`
   is set; on a remote/SSH session without X forwarding, run headless (`./b run sim/soccer --headless`) or
   forward X11 (`ssh -X`).

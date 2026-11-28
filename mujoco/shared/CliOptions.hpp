@@ -24,6 +24,7 @@ namespace k1sim {
         std::string web_host = "127.0.0.1";  // address the browser viewer listens on
         int web_port         = 8080;         // port the browser viewer listens on
         std::string record;                  // file to record the match to (empty = no recording)
+        std::string broadcast;               // where the GameController's control messages go; ./b match sets it
         bool referee = false;  // run the built-in GameController (module::Referee), operated from the browser viewer
         bool gamecontroller =
             false;  // listen to the RoboCup GameController (module::Supervisor), whatever supervisor.yaml says
@@ -108,6 +109,9 @@ namespace k1sim {
             else if (arg == "--referee") {
                 opts.referee = true;
             }
+            else if (arg == "--broadcast") {
+                opts.broadcast = value("--broadcast");
+            }
             else if (arg == "--gamecontroller" || arg == "--gc") {
                 opts.gamecontroller = true;
             }
@@ -139,6 +143,8 @@ namespace k1sim {
                     "  --record <file>     record the match to a file, replayable in the browser viewer\n"
                     "  --referee           run the GameController inside the sim, operated from the browser\n"
                     "                      viewer's referee panel (see config/referee.yaml; implies --web)\n"
+                    "  --broadcast <addr>  where the GameController's control messages go: the match network's\n"
+                    "                      broadcast address. ./b match sets it; sim/match and --referee need it\n"
                     "  --gamecontroller    obey the RoboCup GameController: ball and robot placement, penalties\n"
                     "                      (same as supervisor.yaml enabled: true; --gc for short)\n");
                 std::exit(0);

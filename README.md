@@ -69,11 +69,16 @@ A pull request from this branch into `NUbots/NUSim` would also carry rUNSWift's 
 ./b match --game 1 --away-role <role>         # a different NUbots role for one team
 ./b match --game 2 --headless                 # no window; starts once every robot connects
 ./b match --game 2 --headless --web           # no window: watch and run it from the browser at http://127.0.0.1:8080/
+
+# Against B-Human: build its image once, then pick it for a team
+./b team install bhuman
+./b match --game 1 --away-codebase B-Human
 ```
 
 Robots run `nusim/robocup`, which obeys the GameController and talks to its teammates, with ground truth in place of
-vision and localisation. Their output is in `mujoco/build-docker/match/robot<id>/log`. Don't run the GameController
-app at the same time, as both use port 3939. The step-by-step guide, including the GPU and CPU load a match takes, is
+vision and localisation. Their output is in `mujoco/build-docker/match/robot<id>/log`. The sim and the robots get a
+docker network of their own (`nusim-match`, 10.1.0.0/24), so the GameController's broadcasts and team messages stay
+off this machine's network; only the browser viewer's port is published, on 127.0.0.1. The step-by-step guide, including the GPU and CPU load a match takes, is
 [docs/MATCH_WINDOW.md](docs/MATCH_WINDOW.md); how the referee works is in
 [MatchReferee](mujoco/module/MatchReferee/README.md).
 
@@ -146,7 +151,8 @@ binary (`argparse.REMAINDER`), so sim flags are never parsed by `./b`.
 | `./b configure [-i] [--clean] [--set-role R] [--unset-role R]` | CMake-configure with the selected backend; `-i` opens `ccmake`, `--clean` wipes the build dir. |
 | `./b build [targets...]` | Ninja build with the selected backend (default: everything; e.g. `./b build sim-soccer`). |
 | `./b run <role> [args]` | Run `bin/<role>` natively or in the container. Roles: `sim/soccer`, and `sim/match` once [built](mujoco/module/MatchReferee/README.md). |
-| `./b match --game <n> [args]` | Run a refereed match of 1 to 3 a side: the sim plus a hidden NUbots process per robot. See [MatchReferee](mujoco/module/MatchReferee/README.md). |
+| `./b match --game <n> [args]` | Run a refereed match of 1 to 3 a side: the sim plus a hidden NUbots (or B-Human, `--home-codebase` / `--away-codebase`) process per robot. See [MatchReferee](mujoco/module/MatchReferee/README.md). |
+| `./b team install <team> [--source DIR] [--ref REF]` | Build another team's player image for `./b match`. Teams: `bhuman` ([NUSim fork](https://github.com/jpptm/NUSim-B-human) of B-Human's 2026 code release). |
 | `./b roles` | List sim roles and their enabled/disabled state. |
 | `./b image` | (Re)build the docker toolchain image, GameController included. |
 | `./b test` | Build and run the C++ unit tests with the selected backend. |
@@ -196,7 +202,6 @@ Parsed in [`mujoco/shared/CliOptions.hpp`](mujoco/shared/CliOptions.hpp); `--hel
 | --- | --- |
 | `FASTRTPS_DEFAULT_PROFILES_FILE` | **Required** by the Booster SDK (see Networking). `./b run` defaults it to the repo's copy. |
 | `K1SIM_CONFIG_DIR` | Config directory, same as `--config-dir` (the flag wins). |
-| `K1_DDS_UDP_ONLY` | `1` strips the FastDDS shared-memory transport, leaving UDPv4 only — the fallback when the sim and NUbots are on opposite sides of a docker boundary. Equivalent to `udp_only: true` in `config/dds.yaml`. |
 | `K1SIM_BACKEND` | `native` or `docker`; defaults to native on macOS and Docker elsewhere. |
 | `K1SIM_BUILD_DIR` | Build directory relative to `mujoco/` (default `build-native` or `build-docker` for the selected backend). |
 
@@ -221,16 +226,15 @@ no build flag, no shim and no code change — the same code path they use agains
 
 - **DDS domain 0**, because NUbots' `platform::Booster::HardwareIO` hardcodes `ChannelFactory::Init(0)`.
   Configurable in [`mujoco/config/dds.yaml`](mujoco/config/dds.yaml), but changing it means changing NUbots too.
-- **Transport** is UDPv4 + shared memory by default. `./b run` gives the container `--network host --ipc host`
-  precisely so both survive the docker boundary; set `K1_DDS_UDP_ONLY=1` (or `udp_only: true`) if only UDP works
-  in your setup.
+- **Transport** is UDPv4 + shared memory. `./b run` gives the container `--network host --ipc host`, and
+  `./b match` shares the sim's IPC namespace with every robot, so both survive the docker boundary.
 - **Topics** — sim publishes `rt/low_state` (IMU + serial/parallel motor state, 50 Hz), `rt/odometer_state`
   and `rt/odom` (the controller's odometry: ground truth, or drifting with the error model in
   [`mujoco/config/odometry.yaml`](mujoco/config/odometry.yaml) enabled), `rt/head_pose`, `rt/fall_down` (on change,
-  ≥1 Hz keepalive) and `rt/battery_state` (constant SOC); sim subscribes to
+  and at 10 Hz) and `rt/battery_state` (constant SOC); sim subscribes to
   `rt/joint_ctrl` (`LowCmd`, PD-tracked at 1 kHz in CUSTOM mode). The RPC pair `rt/LocoApiTopicReq` /
   `rt/LocoApiTopicResp` serves `CHANGE_MODE`, `MOVE`, `ROTATE_HEAD`, `LIE_DOWN`, `GET_UP`,
-  `GET_UP_WITH_MODE`, `VISUAL_KICK` and `GET_MODE`; unimplemented `api_id`s are accepted with a warning
+  `GET_UP_WITH_MODE`, `RESET_ODOMETRY`, `VISUAL_KICK` and `GET_MODE`; unimplemented `api_id`s are accepted with a warning
   (`unknown_api_status` in `dds.yaml`). Full wire details in
   [`mujoco/module/SdkBridge/PROTOCOL.md`](mujoco/module/SdkBridge/PROTOCOL.md).
 - **FastDDS profiles are mandatory.** `ChannelFactory::Init(0)` refuses to create its participant unless

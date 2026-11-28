@@ -466,7 +466,7 @@ namespace k1sim::module::matchreferee {
                 // on when its penalty ends.
                 case gc::PenaltyState::LEAVING_THE_FIELD: return " left the field: back to the touchline";
                 case gc::PenaltyState::LOCAL_GAME_STUCK:
-                    return " moved to the touchline: the ball was stuck between robots (nobody's fault)";
+                    return " moved to the touchline: the ball hadn't moved for 10 s with it nearest (game stuck)";
                 case gc::PenaltyState::INCAPABLE_ROBOT: return " lay on the ground too long: back to the touchline";
                 case gc::PenaltyState::ILLEGAL_POSITIONING: return " penalised: stood where the rules don't allow";
                 case gc::PenaltyState::MOTION_IN_SET: return " penalised: moved during Set";

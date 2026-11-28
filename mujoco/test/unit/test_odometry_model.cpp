@@ -115,6 +115,18 @@ int main() {
         check(est.x == 2.0 && est.y == 1.0 && est.yaw == 0.5, "a sim reset restarts from the truth", est.x, 2.0);
     }
 
+    {
+        // ResetOdometry: with from_start, the odometry reads zero again where the robot stands
+        OdometryModel::Config cfg;
+        cfg.from_start = true;
+        OdometryModel odometry(cfg);
+        odometry.update(0.0, 1.0, 1.0, 0.0, 0, 0, 0);
+        const double before = odometry.update(1.0, 3.0, 1.0, 0.0, 0, 0, 0).x;
+        odometry.reset_start();
+        const auto& est = odometry.update(2.0, 3.0, 1.0, 0.0, 0, 0, 0);
+        check(before == 2.0 && est.x == 0.0 && est.y == 0.0, "ResetOdometry starts it again from zero", est.x, 0.0);
+    }
+
     std::printf("test_odometry_model: %s\n", failures == 0 ? "PASS" : "FAIL");
     return failures == 0 ? 0 : 1;
 }

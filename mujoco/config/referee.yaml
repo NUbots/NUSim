@@ -18,8 +18,6 @@ kick_off: home # home | away
 # to listen for the whistle. true = tell them immediately (the GameController's "no delay" test option).
 no_delay: true
 
-# Where the packets go. The broadcast address reaches every robot on the network, 127.0.0.1 robot software on
-# this machine.
-port: 3838
-publish_period: 0.5 # seconds of sim time between packets when nothing happens; the GameController sends twice a second
-targets: ["255.255.255.255", "127.0.0.1"]
+# Seconds of sim time between packets when nothing happens; the GameController sends twice a second. They go to the
+# match network's broadcast address (./b match's --broadcast), on the GameController's port.
+publish_period: 0.5

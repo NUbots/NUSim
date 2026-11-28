@@ -135,8 +135,43 @@ To see the messages, run with `K1SIM_ROBOT_COMMS_LOG=DEBUG`; each robot's log th
 
 ## Codebases
 
-The team pickers list NUbots, rUNSWift and B-Human. Only NUbots can be started so far. To add another, give it an entry in
-`CODEBASES` in `mujoco/tools/match.py` and a way to start one player per robot in `start_robot`.
+The codebases a team can play are `teams:` in [`mujoco/config/match.yaml`](../mujoco/config/match.yaml): NUbots,
+Nobody (no player: its robots stand on the touchline), rUNSWift (not set up yet), B-Human and HTWK. Each has its
+GameController number there, so the window shows the teams' names.
+
+Another team's code is a fork of it with a `nusim/` directory of its own, built once into an image:
+
+    ./b team install bhuman                 # nusim-bhuman: jpptm/NUSim-B-human, B-Human's 2026 code release
+    ./b team install htwk                   # nusim-htwk: jpptm/NUSim-HTWK, HTWK's K1 code (its nusim/README.md)
+    ./b team install htwk --source ~/NUSim-HTWK   # a local checkout
+    ./b match --game 1 --away-codebase HTWK
+
+`./b match` starts every other team's robot the same way: its image on the match network, sharing the sim's IPC
+namespace, as the calling user, with `/robot/fastdds.xml` (`FASTRTPS_DEFAULT_PROFILES_FILE`, the port profile for the
+robot's DDS domain) and this environment:
+
+| variable | |
+|---|---|
+| `NUSIM_TEAM`, `NUSIM_PLAYER` | GameController team and player number |
+| `NUSIM_ROBOT_ID` | the sim's robot id (its ground truth's, and its camera's) |
+| `NUSIM_CAMERA` | its camera segment (`MatchCameras::segment`); `<segment>_depth` is its depth, 16-bit mm |
+| `NUSIM_START_POSE` | `x y yaw`: where the sim spawns it, in its team's own field frame (metres, radians) |
+| `NUSIM_GDB` | set when `K1SIM_TEAM_GDB` is: run under gdb, if the image has it |
+
+The fork's `nusim/run.sh`, its image's entrypoint, starts the player from that, writing whatever settings its code
+reads: B-Human's writes its `settings.cfg`, camera config and setup poses. `K1SIM_<INSTALL>_IMAGE` runs another
+image, e.g. `K1SIM_BHUMAN_IMAGE=nusim-bhuman-asan` (`./b team install bhuman --asan`).
+
+With B-Human in a match its robots get `LowState` at 500 Hz, as its motion runs at that rate (`low_state_hz`), and
+every other robot the usual 50 Hz (`state_every` in the session's roster). With any team but NUbots, robots aren't
+held between phases, as they obey the GameController.
+
+HTWK's detector is the sim's ground truth, seen through its camera; the rest of its vision runs on the camera image.
+On the robot it walks with Booster's firmware, which the sim doesn't have, so its fork stands in for it
+(`nusim/firmware`: Booster's own K1 walk policy, and a get-up policy) and drives the sim in custom mode.
+
+To add a codebase: its fork with `nusim/Dockerfile` (built with the fork as the context) and `nusim/run.sh`, and an
+entry in `teams:` (`install`, `image`, `repo`, `ref`, and `low_state_hz` or `docker` flags if it needs them).
 
 ## What NUbots needs
 

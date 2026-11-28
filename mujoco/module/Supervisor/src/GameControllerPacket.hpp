@@ -26,6 +26,8 @@ namespace k1sim::module::supervisor::gc {
     inline constexpr std::size_t MAX_NUM_PLAYERS        = 20;
     inline constexpr std::array<char, 4> RECEIVE_HEADER = {'R', 'G', 'm', 'e'};
     inline constexpr std::uint8_t SUPPORTED_VERSION     = 20;
+    inline constexpr int CONTROL_PORT                   = 3838;  // control messages, GameController to robots
+    inline constexpr int STATUS_PORT                    = 3939;  // status messages, robots to GameController
 
 #pragma pack(push, 1)
 

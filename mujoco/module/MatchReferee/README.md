@@ -40,8 +40,7 @@ a way to start one player per robot before it can be chosen.
 `./b match` starts `sim/match` and a hidden NUbots container per robot, and stops them all when the sim exits. Robot
 output is in `mujoco/build-docker/match/robot<id>/log`, and it warns if a robot stops. Roles that need a terminal, such
 as the keyboard-driven `nusim/localisation`, can't run this way. Without the GameController library (in the docker image), `sim/match` is
-skipped and everything else builds as normal. Settings are in `config/match.yaml`. Don't run the GameController app at the same
-time: both use port 3939.
+skipped and everything else builds as normal. Settings are in `config/match.yaml`.
 
 ## Stock NUbots
 
@@ -77,9 +76,11 @@ MatchReferee: UNEXPECTED player online: team 9 player 3
 
 ## Networking
 
-Control messages go to 255.255.255.255 on `lo`. NUClear's `UDP::Broadcast` accepts that address, every process on the
-machine receives it, and a firewall such as ufw doesn't block it. To reach robots on other machines, leave
-`network.interface` empty and allow the traffic through the firewall.
+`./b match` runs the sim and every robot on a docker network of their own, `nusim-match` (10.1.0.0/24): the sim is .2,
+robot k is .(10 + k). It passes the sim `--broadcast 10.1.0.255`, the network's broadcast address, so control messages
+reach every robot and nothing outside the match. Without `--broadcast` the referee doesn't start: matches only run
+through `./b match`. The ports are the GameController protocol's, 3838 and 3939. Robots share the sim's IPC
+namespace for the camera segments.
 
 ## Cameras
 

@@ -88,19 +88,16 @@ namespace k1sim::module {
             cfg_->auto_start_after = 30.0;
         }
 
+        // Control messages go only to the match network's broadcast address, which ./b match passes in.
+        cfg_->broadcast_address = cli().broadcast;
+        in_addr broadcast{};
+        if (::inet_pton(AF_INET, cfg_->broadcast_address.c_str(), &broadcast) != 1) {
+            throw std::runtime_error("MatchReferee: no --broadcast address. Run matches with ./b match");
+        }
         socket_ = ::socket(AF_INET, SOCK_DGRAM, 0);
         int yes = 1;
         if (socket_ < 0 || ::setsockopt(socket_, SOL_SOCKET, SO_BROADCAST, &yes, sizeof(yes)) != 0) {
             throw std::runtime_error("MatchReferee: can't create the broadcast socket");
-        }
-        if (!cfg_->interface.empty()
-            && ::setsockopt(socket_,
-                            SOL_SOCKET,
-                            SO_BINDTODEVICE,
-                            cfg_->interface.c_str(),
-                            static_cast<socklen_t>(cfg_->interface.size() + 1))
-                   != 0) {
-            throw std::runtime_error("MatchReferee: can't send on interface " + cfg_->interface);
         }
 
         on<Trigger<message::SimHandles>, Sync<MatchReferee>>().then([this](const message::SimHandles& handles) {
@@ -116,9 +113,7 @@ namespace k1sim::module {
             log<NUClear::LogLevel::INFO>("MatchReferee ready:",
                                          cli().game,
                                          "a side - broadcasting to",
-                                         cfg_->broadcast_address,
-                                         "on",
-                                         cfg_->interface.empty() ? "the network" : cfg_->interface);
+                                         cfg_->broadcast_address);
         });
 
         // Each controller goes back to Simulation wrapped, so the game can hold its robot. Sent
@@ -252,7 +247,7 @@ namespace k1sim::module {
         });
 
         try {
-            on<UDP, Sync<MatchRoster>>(cfg_->status_port).then([this](const UDP::Packet& packet) {
+            on<UDP, Sync<MatchRoster>>(supervisor::gc::STATUS_PORT).then([this](const UDP::Packet& packet) {
                 const auto status = matchreferee::parse_status(packet.payload.data(), packet.payload.size());
                 if (status && roster_ != nullptr) {
                     for (const auto& message : roster_->on_status(*status, seconds_since_start())) {
@@ -263,7 +258,7 @@ namespace k1sim::module {
         }
         catch (const std::exception& e) {
             log<NUClear::LogLevel::WARN>("MatchReferee: can't listen for status messages on port",
-                                         cfg_->status_port,
+                                         supervisor::gc::STATUS_PORT,
                                          "(",
                                          e.what(),
                                          ") - is the GameController app running?");
@@ -309,7 +304,7 @@ namespace k1sim::module {
 
         sockaddr_in address{};
         address.sin_family = AF_INET;
-        address.sin_port   = htons(static_cast<std::uint16_t>(cfg_->control_port));
+        address.sin_port   = htons(static_cast<std::uint16_t>(supervisor::gc::CONTROL_PORT));
         ::inet_pton(AF_INET, cfg_->broadcast_address.c_str(), &address.sin_addr);
         if (::sendto(socket_, &packet, sizeof(packet), 0, reinterpret_cast<sockaddr*>(&address), sizeof(address)) < 0) {
             log<NUClear::LogLevel::WARN>("MatchReferee: couldn't send a control message");

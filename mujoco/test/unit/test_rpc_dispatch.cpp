@@ -83,6 +83,12 @@ int main() {
         expect(out.action.get_up.target_mode == 2, "GET_UP_WITH_MODE: target_mode == kWalking(2)");
     }
 
+    // --- RESET_ODOMETRY ---
+    {
+        auto out = dispatch_rpc(header_for(k1sim::booster::RESET_ODOMETRY), "", 0, kUnknownStatus);
+        expect(out.action.kind == RpcActionKind::RESET_ODOMETRY && !out.unknown_api_id, "RESET_ODOMETRY: action kind");
+    }
+
     // --- GET_MODE (no message emitted; reply body carries the mode) ---
     {
         auto out = dispatch_rpc(header_for(k1sim::booster::GET_MODE), "", 4, kUnknownStatus);

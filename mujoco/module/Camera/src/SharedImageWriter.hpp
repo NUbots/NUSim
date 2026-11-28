@@ -64,7 +64,12 @@ namespace k1sim::module::camera {
     public:
         // Throws std::runtime_error (width/height <= 0) or
         // boost::interprocess::interprocess_exception (shm create/map failure).
-        SharedImageWriter(const std::string& segment_name, int width, int height);
+        // rgb8 by default; MatchCameras' depth segments are 16UC1 (millimetres, 0 = no reading)
+        SharedImageWriter(const std::string& segment_name,
+                          int width,
+                          int height,
+                          int bytes_per_pixel         = 3,
+                          const std::string& encoding = "rgb8");
         ~SharedImageWriter();
 
         SharedImageWriter(const SharedImageWriter&)            = delete;
