@@ -24,6 +24,13 @@ sim/soccer  (native macOS / Linux docker container, NUClear)
 - **GameController** is heard directly by NUbots over the network; the sim additionally runs a supervisor
   that places the ball/robots per game phase.
 
+## The match window
+
+`./b match` opens the sim with control panels in the window and starts one NUbots process per robot. It has three
+modes: **Game** (an automatic referee; you press Start), **Testing Room** (you referee by hand, with set plays and
+penalties) and **Free Play** (just the sim, for roles you run yourself). See [docs/MATCH_WINDOW.md](docs/MATCH_WINDOW.md)
+for setup and how each mode works.
+
 ## Refereed matches (`layton/sim-match`)
 
 This branch adds `./b match`, which plays a 1v1, 2v2 or 3v3 game with one command: the GameController and an automatic
@@ -45,28 +52,30 @@ A pull request from this branch into `NUbots/NUSim` would also carry rUNSWift's 
 | Repository | Used for |
 | --- | --- |
 | This one | The sim, GameController, referee and launcher |
-| [NUbots_K1](https://github.com/NUbots/NUbots_K1) | The robot code, unchanged. `./b match` runs its docker image, so it can be anywhere |
-| [GameController](https://github.com/RoboCup-HumanoidSoccerLeague/GameController) | Its C API is built into the sim once. Put it next to this checkout, at the commit pinned in [`install_game_controller_api.sh`](mujoco/tools/install_game_controller_api.sh) |
+| [NUbots](https://github.com/NUbots/NUbots) | The robot code (`main`, with NUbots_K1 merged in), unchanged. `./b match` runs its docker image, so it can be anywhere |
+| [GameController](https://github.com/RoboCup-HumanoidSoccerLeague/GameController) | Its C API, built into the docker image at the commit pinned in [`docker/Dockerfile`](mujoco/docker/Dockerfile). Nothing to download |
 
 ### Running a match
 
 ```bash
-# Once: build NUbots_K1 (in NUbots_K1)
+# Once: build NUbots (in NUbots)
 ./b target generic && ./b build
 
-# Once: build the sim with the GameController API (in this repo, needs cargo)
-mujoco/tools/install_game_controller_api.sh   # or pass the path to a GameController checkout
+# Once: build the sim (in this repo)
 ./b configure && ./b build
 
 # Every time
-./b match --game 3                            # 1 to 3 a side; starts once every robot connects
+./b match --game 2 --vision-device cpu        # 1 to 3 a side; press Start once every robot is online
 ./b match --game 1 --away-role <role>         # a different NUbots role for one team
-./b match --game 2 --headless                 # no window
+./b match --game 2 --headless                 # no window; starts once every robot connects
+./b match --game 2 --headless --web           # no window: watch and run it from the browser at http://127.0.0.1:8080/
 ```
 
-Robots run `nusim/behaviour` unless told otherwise, and use their own vision and localisation, not ground truth. Their
-output is in `mujoco/build-docker/match/robot<id>/log`. Don't run the GameController app at the same time, as both use
-port 3939. How it works, settings and limitations are in [MatchReferee](mujoco/module/MatchReferee/README.md).
+Robots run `nusim/robocup`, which obeys the GameController and talks to its teammates, with ground truth in place of
+vision and localisation. Their output is in `mujoco/build-docker/match/robot<id>/log`. Don't run the GameController
+app at the same time, as both use port 3939. The step-by-step guide, including the GPU and CPU load a match takes, is
+[docs/MATCH_WINDOW.md](docs/MATCH_WINDOW.md); how the referee works is in
+[MatchReferee](mujoco/module/MatchReferee/README.md).
 
 ## Quick start
 
@@ -139,8 +148,9 @@ binary (`argparse.REMAINDER`), so sim flags are never parsed by `./b`.
 | `./b run <role> [args]` | Run `bin/<role>` natively or in the container. Roles: `sim/soccer`, and `sim/match` once [built](mujoco/module/MatchReferee/README.md). |
 | `./b match --game <n> [args]` | Run a refereed match of 1 to 3 a side: the sim plus a hidden NUbots process per robot. See [MatchReferee](mujoco/module/MatchReferee/README.md). |
 | `./b roles` | List sim roles and their enabled/disabled state. |
-| `./b image` | (Re)build the docker toolchain image. |
+| `./b image` | (Re)build the docker toolchain image, GameController included. |
 | `./b test` | Build and run the C++ unit tests with the selected backend. |
+| `./b replay <file> [--port N]` | Replay a match recorded with `--record` in the browser viewer; needs no simulator. |
 
 ### `sim/soccer` flags
 
@@ -157,6 +167,13 @@ Parsed in [`mujoco/shared/CliOptions.hpp`](mujoco/shared/CliOptions.hpp); `--hel
 | `--keyframe <name>` | `ready` | Startup keyframe for the **main** robot (e.g. `lying_front` to start fallen and exercise the get-up chain). |
 | `--rtf <factor>` | `simulation.yaml`'s `real_time_factor` | Real-time factor; `0` = free-run (uncapped, for tests/sweeps). |
 | `--robots <n>` | `1` | **Total** K1s on the field, 1–20. `n−1` extra copies are attached via MuJoCo's `mjSpec` attach API with `subNN_` name prefixes, so the main robot's unprefixed joint/sensor names — and every DDS and shared-memory contract — are untouched. Extras spawn standing on a 5×4 grid clear of the `y = 0` main-robot/ball lane. Each has its own controller and DDS endpoint, holding `ready` until commanded. Sim resets re-place them; `--keyframe` does not apply to them. |
+| `--robots <n>` | `1` | **Total** K1s on the field, 1–20. `n−1` extra copies are attached via MuJoCo's `mjSpec` attach API with `subNN_` name prefixes, so the main robot's unprefixed joint/sensor names — and every DDS and shared-memory contract — are untouched. Extras spawn standing on a 5×4 grid clear of the `y = 0` main-robot/ball lane and are PD-held at the `ready` pose: uncontrolled obstacles for dribbling and navigation practice, not extra DDS endpoints. Sim resets re-place them; `--keyframe` does not apply to them. |
+| `--web` | off | Serve the browser 3D viewer at `http://127.0.0.1:8080/` (shadows, sky, timeline with pause/scrub/replay, broadcast and follow-ball cameras). The page has the window's panels and controls too: the launcher's setup (mode, teams, perception, Apply and Restart), the match or referee controls, pause / reset / speed, every robot's mode, set plays with ball placement, and moving robots and the ball by hand (double-click for move handles, Ctrl + drag to carry, Ctrl + right-drag to shove; not in a refereed game). Needs no GL context, so it works together with `--headless`; the page loads three.js from a CDN on first use. Anyone who can reach the port can operate the sim, so think before `--web-host 0.0.0.0`. |
+| `--web-host <addr>` | `127.0.0.1` | Address the browser viewer listens on (`0.0.0.0` to watch from another machine). |
+| `--web-port <port>` | `8080` | Port the browser viewer listens on. |
+| `--record <file>` | none | Record the match to a file. Replay it with `./b replay <file>`, or drop the file onto a running browser viewer. Works without `--web`. |
+| `--referee` | off | Run the official [GameController](https://github.com/RoboCup-HumanoidSoccerLeague/GameController) **inside** the sim and operate it from the browser viewer's referee panel (kick-off, set, play, stop, goals, set plays, timeouts, penalise / release a player, undo); buttons are only enabled when the rules allow the decision. Game state, clocks and rules come from the GameController's own library, and the game is announced exactly as the application does it (`RoboCupGameControlData` version 20 on UDP port 3838), so robot software hears no difference. The library is in the docker image. Teams, colours and competition are set in `config/referee.yaml`. Implies `--web`; ball and robot placement work as with `--gamecontroller`. |
+| `--gamecontroller` (`--gc`) | off | Obey the RoboCup [GameController](https://github.com/RoboCup-HumanoidSoccerLeague/GameController) (protocol version 20, UDP port 3838): the ball goes to the centre spot on kick-off, goals and half changes, and a robot the referee penalises is moved outside the touchline and put back when the penalty ends. With `--game <n>` every robot of both teams is covered (the first `n` robots are the first team in the packet, player numbers 1 to `n`); otherwise the robots listed in `config/supervisor.yaml`. The port is opened shareable, so robot software on the same host can listen too. The browser viewer shows the score, clock, game state, team colours and penalties, with team names from the GameController's `teams.yaml` (or `teams_file` in `supervisor.yaml`). Same as `enabled: true` in `supervisor.yaml`. |
 | `--help`, `-h` | — | Print the flag list and exit. |
 
 ```bash
@@ -168,6 +185,9 @@ Parsed in [`mujoco/shared/CliOptions.hpp`](mujoco/shared/CliOptions.hpp); `--hel
 ./b run sim/soccer --rtf 0                               # free-run (uncapped real-time factor)
 ./b run sim/soccer --keyframe lying_front                # start fallen, to exercise GetUp
 ./b run sim/soccer --robots 5                            # 4 extra K1s on the field (max 20 total)
+./b run sim/soccer --headless --web --record match.rcsr  # watch in the browser and keep a replay
+./b run sim/soccer --game 3 --on-field-positions --web --gamecontroller  # a 3 v 3 the GameController referees
+./b run sim/soccer --game 3 --on-field-positions --referee  # ... refereed from the browser
 ```
 
 ### Environment variables

@@ -3,8 +3,9 @@
     ./b match --game 3                              3 a side, nusim/behaviour on every robot
     ./b match --game 1 --away-role <role>           a different stack for each team
     ./b match --game 2 --headless --rtf 1           no window; the game starts by itself
+    ./b match --game 2 --headless --web             no window; watch and run it all from the browser
 
-NUbots_K1 must be built first (./b target generic, ./b build there). Each robot runs in its own
+NUbots must be built first (./b target generic, ./b build there). Each robot runs in its own
 container, with its output in mujoco/<build dir>/match/robot<id>/log. Stock NUbots joins DDS domain 0
 and reads one camera, so each container gets files that point it at its own robot:
 
@@ -13,10 +14,13 @@ and reads one camera, so each container gets files that point it at its own robo
   * a NUSimCamera.yaml naming the robot's segment (see MatchCameras::segment).
 
 Every container also gets a FieldDescription.yaml for the sim's field: NUbots defaults to its 6.8 x 5 m
-lab field, and matching lines against the wrong field leaves robots lost.
+lab field, and matching lines against the wrong field leaves robots lost. And a RobotCommunication.yaml
+that sends team messages to 255.255.255.255, as the robot network's broadcast address isn't on this machine.
 """
 
 import getpass
+import json
+import math
 import os
 import pathlib
 import re
@@ -54,6 +58,37 @@ cameras:
 
 
 # NUbots' FieldDescription.yaml preset keys, and where match.yaml's field has each value.
+# Read by NUbots' input::NUSimGroundTruth, which takes NUSim's rt/nusim/gt topics in place of vision + localisation.
+# Used only when the NUbots build has no NUSimGroundTruth.yaml of its own to start from (see ground_truth_config).
+GROUND_TRUTH = """log_level: INFO
+ground_truth: false
+robot_topic: rt/nusim/gt/robot
+ball_topic: rt/nusim/gt/ball
+world_to_field_yaw: 0.0
+timeout: 0.5
+warning_period: 5.0
+"""
+
+MODES = ["game", "testing", "freeplay"]
+FIELDS = ["middle", "kidsize", "no-field"]  # simulation.yaml's fields; matches always use the middle field
+
+# What a team can run. A codebase needs a way to start one player per robot; only NUbots has one so far.
+CODEBASES = [
+    dict(name="NUbots", available=True, note=""),
+    dict(
+        name="rUNSWift",
+        available=False,
+        note="rUNSWift isn't set up on this machine yet: tools/match.py needs to know how to start its player.",
+    ),
+    dict(
+        name="B-Human",
+        available=False,
+        note="B-Human isn't set up on this machine yet: tools/match.py needs to know how to start its player.",
+    ),
+]
+# The NUbots role a refereed game runs: the competition role with the sim's walk, kick and camera.
+NUBOTS_GAME_ROLES = ["nusim/robocup", "nusim/behaviour"]
+
 FIELD_PRESET = {
     "FieldLength": "length",
     "FieldWidth": "width",
@@ -70,11 +105,104 @@ FIELD_PRESET = {
 def register(command):
     command.description = "Run a match: the sim with a hidden NUbots process per robot"
     command.add_argument("--game", type=int, default=1, choices=[1, 2, 3], help="robots a side")
-    command.add_argument("--home-role", default="nusim/behaviour", help="NUbots role for the first team")
-    command.add_argument("--away-role", default="nusim/behaviour", help="NUbots role for the second team")
-    command.add_argument("--nubots-target", default="generic", help="the NUbots_K1 ./b target that was built")
-    command.add_argument("--headless", action="store_true", help="no window; the game starts by itself")
+    command.add_argument("--home-role", help="testing: NUbots role for the first team (default: the game role)")
+    command.add_argument("--away-role", help="testing: NUbots role for the second team (default: the game role)")
+    command.add_argument("--nubots-target", default="generic", help="the NUbots ./b target that was built")
+    command.add_argument(
+        "--mode",
+        default="game",
+        choices=MODES,
+        help="game: automatic referee; testing: you call " "the set plays; freeplay: no referee",
+    )
+    command.add_argument(
+        "--ground-truth",
+        action="store_true",
+        help="robots take their pose and the ball from the sim instead of vision + localisation "
+        "(the default in game mode)",
+    )
+    command.add_argument("--vision", action="store_true", help="game mode: use vision + localisation after all")
+    command.add_argument(
+        "--vision-device",
+        default="auto",
+        choices=["auto", "gpu", "cpu"],
+        help="where NUbots' Yolo runs. auto uses the GPU unless NUbots' image can't drive it",
+    )
+    command.add_argument("--replace", action="store_true", help="stop a ./b match that is already running first")
+    command.add_argument(
+        "--headless",
+        action="store_true",
+        help="no window; the game starts by itself, unless --web is there to start it from",
+    )
     command.add_argument("--rtf", help="real-time factor")
+    command.add_argument(
+        "--web",
+        action="store_true",
+        help="also serve the browser viewer (http://127.0.0.1:8080/), which has the window's " "panels and controls",
+    )
+    command.add_argument("--web-host", help="address the browser viewer listens on (0.0.0.0 for other machines)")
+    command.add_argument("--web-port", type=int, help="port the browser viewer listens on")
+
+
+def available_roles(nubots_target):
+    """The roles in the NUbots build, for the window's team pickers."""
+    user = getpass.getuser()
+    found = subprocess.run(
+        ["docker", "run", "--rm", "--entrypoint", "find",
+         "--volume", f"nubots_{nubots_target}_{user}_build:{CONTAINER_BUILD}",
+         f"{user}/nubots:{nubots_target}", f"{CONTAINER_BUILD}/bin", "-maxdepth", "2", "-type", "f", "-executable",
+         "-not", "-path", "*/lib/*"],
+        capture_output=True, text=True,
+    ).stdout  # fmt: skip
+    return sorted(line.removeprefix(f"{CONTAINER_BUILD}/bin/") for line in found.split())
+
+
+def nubots_config(nubots_target, name, default=None):
+    """A config file from the NUbots build, or `default` if it has none (an error without one)."""
+    user = getpass.getuser()
+    found = subprocess.run(
+        ["docker", "run", "--rm", "--entrypoint", "cat",
+         "--volume", f"nubots_{nubots_target}_{user}_build:{CONTAINER_BUILD}",
+         f"{user}/nubots:{nubots_target}", f"{CONTAINER_BUILD}/config/{name}"],
+        capture_output=True, text=True,
+    )  # fmt: skip
+    if found.returncode == 0:
+        return found.stdout
+    if default is None:
+        sys.exit(f"error: the NUbots {nubots_target} build has no config/{name}. Build NUbots first (./b build there)")
+    return default
+
+
+def yolo_config(choice, nubots_target, session):
+    """Where Yolo should run, and the Yolo.yaml to mount for it (None keeps NUbots' own, on the GPU).
+
+    NUbots runs Yolo through TensorRT. Its image has TensorRT 10.3, which predates the RTX 50 series
+    and fails on it ("Unsupported SM: 0xc00"), leaving the robots blind. Those GPUs fall back to the CPU.
+    """
+    if choice == "auto":
+        try:
+            gpu = subprocess.run(
+                ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], capture_output=True, text=True
+            ).stdout.strip()
+        except FileNotFoundError:
+            gpu = ""
+        if not gpu:
+            choice = "cpu"
+            print("Vision: no NVIDIA GPU found, so Yolo runs on the CPU (--vision-device gpu overrides)", flush=True)
+        elif re.search(r"RTX 50\d\d", gpu):
+            choice = "cpu"
+            print(
+                f"Vision: {gpu} is too new for the TensorRT in NUbots' image, so Yolo runs on the CPU "
+                "(--vision-device gpu overrides)",
+                flush=True,
+            )
+        else:
+            choice = "gpu"
+    if choice == "gpu":
+        return None
+    stock = nubots_config(nubots_target, "Yolo.yaml")
+    path = session / "Yolo.yaml"
+    path.write_text(re.sub(r"^device:.*$", "device: cpu", stock, flags=re.M))
+    return path
 
 
 def config_value(file, key):
@@ -88,13 +216,7 @@ def field_value(key):
 
 def field_description(nubots_target):
     """NUbots' FieldDescription.yaml, changed to describe the sim's field."""
-    user = getpass.getuser()
-    stock = subprocess.run(
-        ["docker", "run", "--rm", "--entrypoint", "cat",
-         "--volume", f"nubots_{nubots_target}_{user}_build:{CONTAINER_BUILD}",
-         f"{user}/nubots:{nubots_target}", f"{CONTAINER_BUILD}/config/FieldDescription.yaml"],
-        capture_output=True, text=True, check=True,
-    ).stdout  # fmt: skip
+    stock = nubots_config(nubots_target, "FieldDescription.yaml")
 
     preset = "".join(f"    {name}: {field_value(key)}\n" for name, key in FIELD_PRESET.items())
     preset += f"    CenterCircleDiameter: {2 * field_value('center_circle_radius')}\n    GoalDepth: 0.6\n"
@@ -102,6 +224,36 @@ def field_description(nubots_target):
     text = re.sub(r"^BallRadius:.*$", f"BallRadius: {field_value('ball_radius')}", text, flags=re.M)
     text = re.sub(r"^LineWidth:.*$", f"LineWidth: {field_value('line_width')}", text, flags=re.M)
     return text.replace("presets:\n", f"presets:\n  nusim:\n{preset}", 1)
+
+
+def ground_truth_config(nubots_target):
+    """The NUbots build's own NUSimGroundTruth.yaml, for start_robot to change per robot.
+
+    Starting from the build's file keeps every key its module reads. A file written from scratch here goes stale
+    whenever NUbots adds a key: the module's config then fails to load and it listens on no topic at all, so the
+    robots quietly fall back to vision and localisation.
+    """
+    stock = nubots_config(nubots_target, "NUSimGroundTruth.yaml", default="")
+    return stock if "ground_truth:" in stock else GROUND_TRUTH
+
+
+def robot_communication(nubots_target):
+    """NUbots' RobotCommunication.yaml, with team messages sent to every robot on this machine.
+
+    Its broadcast_ip is the robot network's, which no interface here has. 255.255.255.255 reaches every robot on this
+    machine. 127.0.0.1 reaches only one of the robots sharing a port, and NUClear's UDP::Broadcast drops packets sent
+    to 127.255.255.255, as lo has no broadcast flag.
+    """
+    text = set_key(nubots_config(nubots_target, "RobotCommunication.yaml"), "broadcast_ip", '"255.255.255.255"')
+    return set_key(text, "log_level", os.environ.get("K1SIM_ROBOT_COMMS_LOG", "INFO"))
+
+
+def set_key(text, key, value):
+    """A config file's text with one top-level key set, added if the file doesn't have it."""
+    line = f"{key}: {value}"
+    if re.search(rf"^{key}:", text, flags=re.M):
+        return re.sub(rf"^{key}:.*$", line, text, flags=re.M)
+    return f"{text.rstrip()}\n{line}\n"
 
 
 def roster(game):
@@ -121,7 +273,7 @@ def gpu_flags():
     return ["--gpus", "all", "-e", "NVIDIA_DRIVER_CAPABILITIES=all"] if '"nvidia"' in runtimes.stdout else []
 
 
-def start_robot(robot, role, session, nubots_target):
+def start_robot(robot, role, session, nubots_target, ground_truth, first_team):
     directory = session / f"robot{robot['robot_id']}"
     directory.mkdir(parents=True, exist_ok=True)
 
@@ -129,6 +281,18 @@ def start_robot(robot, role, session, nubots_target):
     segment = base if robot["robot_id"] == 1 else f"{base}_robot{robot['robot_id']}"
     (directory / "fastdds.xml").write_text(PROFILE.format(port_base=PORT_BASE + DOMAIN_GAIN * robot["domain"]))
     (directory / "NUSimCamera.yaml").write_text(CAMERA.format(segment=segment))
+    # NUbots' field frame has its own goal on +x. The first team defends the sim's -x goal.
+    yaw = math.pi if first_team else 0.0
+    truth = (session / "NUSimGroundTruth.yaml").read_text()
+    for key, value in (
+        ("ground_truth", "true"),
+        ("world_to_field_yaw", yaw),
+        ("log_level", os.environ.get("K1SIM_GROUND_TRUTH_LOG", "INFO")),
+    ):
+        truth = set_key(truth, key, value)
+    (directory / "NUSimGroundTruth.yaml").write_text(truth)
+    truth_config = f"{CONTAINER_BUILD}/config/NUSimGroundTruth.yaml"
+    truth_mount = ["--volume", f"{directory}/NUSimGroundTruth.yaml:{truth_config}:ro"] if ground_truth else []
 
     user = getpass.getuser()
     command = [
@@ -143,6 +307,14 @@ def start_robot(robot, role, session, nubots_target):
         "--volume", f"{directory}:/robot:ro",
         "--volume", f"{directory}/NUSimCamera.yaml:{CONTAINER_BUILD}/config/NUSimCamera.yaml:ro",
         "--volume", f"{session}/FieldDescription.yaml:{CONTAINER_BUILD}/config/FieldDescription.yaml:ro",
+        "--volume", f"{session}/RobotCommunication.yaml:{CONTAINER_BUILD}/config/RobotCommunication.yaml:ro",
+        *truth_mount,
+        *(["--volume", f"{session}/Yolo.yaml:{CONTAINER_BUILD}/config/Yolo.yaml:ro"]
+          if (session / "Yolo.yaml").exists() else []),
+        # Extra config overrides for every robot, e.g. a module's yaml with log_level: DEBUG:
+        # K1SIM_ROBOT_MOUNTS="/abs/FieldPlayer.yaml:config/FieldPlayer.yaml,..."
+        *(flag for mount in filter(None, os.environ.get("K1SIM_ROBOT_MOUNTS", "").split(","))
+          for flag in ("--volume", "{}:{}/{}:ro".format(mount.split(":")[0], CONTAINER_BUILD, mount.split(":")[1]))),
         *gpu_flags(),
         "--entrypoint", f"bin/{role}",
         f"{user}/nubots:{nubots_target}",
@@ -166,33 +338,63 @@ def interrupt(signum, frame):
     raise KeyboardInterrupt
 
 
-def run(game, home_role, away_role, nubots_target, headless, rtf, **kwargs):
-    if not (MUJOCO / build_dir() / "bin/sim/match").exists():
-        sys.exit("error: no bin/sim/match. Run tools/install_game_controller_api.sh, ./b configure and ./b build")
+def run_once(setup, session, nubots_target, headless, rtf, web_args):
+    """One sim session with its robots. Returns the window's next setup, or None once the sim just exits."""
+    mode = setup["mode"]
+    stop_containers(roster(3))  # from a run that didn't finish, whatever its size
 
-    robots = roster(game)
-    session = MUJOCO / build_dir() / "match"
-    session.mkdir(parents=True, exist_ok=True)
-    (session / "FieldDescription.yaml").write_text(field_description(nubots_target))
-    stop_containers(robots)  # from a run that didn't finish
+    request = session / "request.json"
+    request.unlink(missing_ok=True)
+    (session / "session.json").write_text(json.dumps(setup, indent=2))
 
-    sim_args = ["--game", str(game), "--on-field-positions"]
+    run_flags = f"--name {SIM_CONTAINER}"
+    game_role = next((role for role in NUBOTS_GAME_ROLES if role in setup["roles"]), "nusim/behaviour")
+    if mode == "game":
+        # The automatic referee. Players that obey the GameController mustn't be held still between phases.
+        role = "bin/sim/match"
+        # Robots start on the touchlines and walk on when the game is Ready.
+        sim_args = ["--game", str(setup["game"])]
+        sim_args += ["--free-robots"] if game_role == "nusim/robocup" else []
+        roles = (game_role, game_role)
+    elif mode == "testing":
+        # The built-in GameController, operated by hand from the window (or the browser viewer).
+        role = "bin/sim/testing"
+        # Robots start on the touchlines here too, and walk on when you call Ready.
+        sim_args = ["--game", str(setup["game"]), "--referee"]
+        roles = (setup["home_role"], setup["away_role"])
+    else:
+        # Just the sim: one robot on the chosen field, for a role started by hand from a terminal.
+        role = "bin/sim/soccer"
+        # --gamecontroller only listens: a GameController on the network is obeyed if there is one.
+        sim_args = ["--field", setup["field"], "--gamecontroller"]
+        sim_args += ["--robots", str(setup["robots"])] if setup["robots"] > 1 else []
+        roles = None
+    sim_args += ["--session", f"{build_dir()}/match"]
     sim_args += ["--headless"] if headless else []
     sim_args += ["--rtf", rtf] if rtf else []
-    # Closing the terminal or killing this script mustn't leave containers behind.
-    signal.signal(signal.SIGTERM, interrupt)
-    signal.signal(signal.SIGHUP, interrupt)
+    sim_args += web_args
 
-    env = dict(os.environ, K1SIM_RUN_FLAGS=f"--name {SIM_CONTAINER}")
-    sim = subprocess.Popen([str(MUJOCO / "docker/k1sim.sh"), "run", "bin/sim/match", *sim_args], env=env)
+    robots = roster(setup["game"]) if roles else []
+    sim = subprocess.Popen(
+        [str(MUJOCO / "docker/k1sim.sh"), "run", role, *sim_args],
+        env=dict(os.environ, K1SIM_RUN_FLAGS=run_flags, K1SIM_DOCKER_TTY="-i"),
+    )  # -i: a tty would eat ^C
 
     try:
         time.sleep(SIM_STARTUP_SECONDS)
         processes = {}
         for robot in robots:
-            role = home_role if robot["team_id"] == robots[0]["team_id"] else away_role
-            processes[robot["robot_id"]] = start_robot(robot, role, session, nubots_target)
-        print(f"{len(robots)} robots starting. Logs are in {session}/robot<id>/log", flush=True)
+            first_team = robot["team_id"] == robots[0]["team_id"]
+            processes[robot["robot_id"]] = start_robot(
+                robot, roles[0] if first_team else roles[1], session, nubots_target, setup["ground_truth"], first_team
+            )
+        if robots:
+            print(
+                f"{len(robots)} robots starting ({roles[0]} v {roles[1]}). Logs are in {session}/robot<id>/log",
+                flush=True,
+            )
+        else:
+            print("Free Play: no robot code started. Run a role yourself, e.g. ./b run nusim/behaviour", flush=True)
 
         # Their terminals are hidden, so say when one stops. Roles that need a keyboard can't run here.
         while sim.poll() is None:
@@ -201,7 +403,102 @@ def run(game, home_role, away_role, nubots_target, headless, rtf, **kwargs):
                     print(f"WARNING: robot {robot_id} stopped, see {session}/robot{robot_id}/log", flush=True)
                     del processes[robot_id]
             time.sleep(1)
+    finally:
+        stop_containers(roster(3))
+
+    # The window's "Apply and Restart" leaves the setup it wants next, then closes the sim.
+    if not request.exists():
+        return None
+    wanted = json.loads(request.read_text())
+    request.unlink()
+    for key in (
+        "game",
+        "mode",
+        "home_role",
+        "away_role",
+        "home_codebase",
+        "away_codebase",
+        "ground_truth",
+        "field",
+        "robots",
+    ):
+        setup[key] = wanted.get(key, setup[key])
+    setup["game"] = min(3, max(1, int(setup["game"])))
+    setup["robots"] = min(6, max(1, int(setup["robots"])))
+    setup["mode"] = setup["mode"] if setup["mode"] in MODES else "game"
+    setup["field"] = setup["field"] if setup["field"] in FIELDS else FIELDS[0]
+    available = [codebase["name"] for codebase in CODEBASES if codebase["available"]]
+    for key in ("home_codebase", "away_codebase"):
+        if setup[key] not in available:
+            print(f"WARNING: {setup[key]} can't be started here, using {available[0]}", flush=True)
+            setup[key] = available[0]
+    return setup
+
+
+def run(
+    game,
+    home_role,
+    away_role,
+    nubots_target,
+    mode,
+    ground_truth,
+    vision,
+    vision_device,
+    replace,
+    headless,
+    rtf,
+    web,
+    web_host,
+    web_port,
+    **kwargs,
+):
+    # Only one match fits on a machine: the containers, DDS domains and camera segments are shared names.
+    # Starting a second would silently kill the first one's sim and robots.
+    running = subprocess.run(
+        ["docker", "ps", "--quiet", "--filter", f"name=^{SIM_CONTAINER}$"], capture_output=True, text=True
+    ).stdout.strip()
+    if running and not replace:
+        sys.exit("error: a ./b match is already running on this machine. Close its window first, or pass --replace")
+
+    if not (MUJOCO / build_dir() / "bin/sim/match").exists():
+        sys.exit("error: no bin/sim/match. Run ./b image, ./b configure --clean and ./b build")
+
+    session = MUJOCO / build_dir() / "match"
+    session.mkdir(parents=True, exist_ok=True)
+    (session / "FieldDescription.yaml").write_text(field_description(nubots_target))
+    (session / "NUSimGroundTruth.yaml").write_text(ground_truth_config(nubots_target))
+    (session / "RobotCommunication.yaml").write_text(robot_communication(nubots_target))
+    (session / "Yolo.yaml").unlink(missing_ok=True)
+    yolo_config(vision_device, nubots_target, session)
+
+    # Closing the terminal or killing this script mustn't leave containers behind.
+    signal.signal(signal.SIGTERM, interrupt)
+    signal.signal(signal.SIGHUP, interrupt)
+
+    web_args = ["--web"] if web or web_host or web_port else []
+    web_args += ["--web-host", web_host] if web_host else []
+    web_args += ["--web-port", str(web_port)] if web_port else []
+
+    roles = available_roles(nubots_target)
+    game_role = next((role for role in NUBOTS_GAME_ROLES if role in roles), "nusim/behaviour")
+    setup = dict(
+        game=game,
+        mode=mode,
+        home_role=home_role or game_role,
+        away_role=away_role or game_role,
+        ground_truth=ground_truth or (mode == "game" and not vision),
+        home_codebase="NUbots",
+        away_codebase="NUbots",
+        field=FIELDS[0],
+        robots=1,
+        roles=roles,
+        codebases=CODEBASES,
+        fields=FIELDS,
+    )
+    try:
+        while setup is not None:
+            setup = run_once(setup, session, nubots_target, headless, rtf, web_args)
     except KeyboardInterrupt:
         pass
     finally:
-        stop_containers(robots)
+        stop_containers(roster(3))

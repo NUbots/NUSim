@@ -8,3 +8,6 @@ agent/
 .agents/
 skills-lock.json
 logs/
+
+# Editor settings are per machine
+.vscode/settings.json

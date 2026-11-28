@@ -9,26 +9,43 @@ robot has a label like `Home 1`.
 
 ## Usage
 
-Linux only. Build NUbots_K1 first (`./b target generic`, `./b build`), then, in NUSim:
+Linux only. Build NUbots first (`./b target generic`, `./b build`), then, in NUSim:
 
 ```bash
-mujoco/tools/install_game_controller_api.sh [path to GameController]   # needs cargo; default ../GameController
 ./b configure
 ./b build
 ./b match --game 3                                   # 1 to 3 a side; starts once every robot is connected
 ./b match --game 1 --away-role <role>                # a different NUbots role for each team
 ./b match --game 2 --headless                        # no window
+./b match --mode testing                             # you call the set plays from the window
+./b match --ground-truth                             # robots skip vision + localisation
 ```
+
+The window's Setup panel (press Change) picks the mode, the robots a side, each team's codebase and perception; Apply
+and Restart closes the sim and `./b match` starts it again with the new setup.
+
+- `--mode game` (default): `sim/match`, the automatic referee. The window's INITIAL / READY / SET / PLAYING buttons step
+  each kick-off by hand. Every robot runs NUbots' `nusim/robocup` role (or `nusim/behaviour` if that isn't built).
+- `--mode testing`: `sim/testing`, with module::Referee's built-in GameController operated by hand from the window (or
+  the browser viewer, which also has the stadium and Village Green venues). Nothing is refereed automatically. Each team
+  picks its own NUbots role.
+- `--mode freeplay`: `sim/soccer` alone, one robot on a field you choose, for a role you start from a terminal. It can
+  obey a GameController running elsewhere.
+
+`--ground-truth` gives each robot a `NUSimGroundTruth.yaml` that switches NUbots' `input::NUSimGroundTruth` on: it takes
+the robot's pose and the ball from `rt/nusim/gt/robot` and `rt/nusim/gt/ball` in place of vision and localisation, and
+the role must include that module. Codebases other than NUbots are listed in `tools/match.py`'s `CODEBASES`; each needs
+a way to start one player per robot before it can be chosen.
 
 `./b match` starts `sim/match` and a hidden NUbots container per robot, and stops them all when the sim exits. Robot
 output is in `mujoco/build-docker/match/robot<id>/log`, and it warns if a robot stops. Roles that need a terminal, such
-as the keyboard-driven `nusim/localisation`, can't run this way. Without the install step, `sim/match` is skipped and
-everything else builds as normal. Settings are in `config/match.yaml`. Don't run the GameController app at the same
+as the keyboard-driven `nusim/localisation`, can't run this way. Without the GameController library (in the docker image), `sim/match` is
+skipped and everything else builds as normal. Settings are in `config/match.yaml`. Don't run the GameController app at the same
 time: both use port 3939.
 
 ## Stock NUbots
 
-`./b match` needs no NUbots_K1 changes. Each container gets files that point stock binaries at their own robot:
+`./b match` needs no NUbots changes. Each container gets files that point stock binaries at their own robot:
 
 - A FastDDS profile whose `portBase` is that of the robot's domain. NUbots always joins domain 0 and the SDK ignores a
   `domainId` in the profile, but ports are all that separates domains on the wire.

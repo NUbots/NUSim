@@ -15,9 +15,18 @@ namespace k1sim {
         bool on_field_positions = false;  // --game robots in kickoff positions, not on the touchlines
         std::string match_config;         // roster YAML, relative to config_dir unless absolute
         std::string config_dir;           // override for the config directory
-        std::string keyframe;             // override for the startup keyframe (default "ready")
-        double rtf = -1.0;                // override real-time factor; <0 = use config (0 = free-run)
-        int robots = 1;                   // total K1s on the field; each robot has independent control
+        bool free_robots = false;         // match: never hold robots still; for players that obey the GameController
+        std::string session;           // launcher's session directory (tools/match.py): setup in, restart requests out
+        std::string keyframe;          // override for the startup keyframe (default "ready")
+        double rtf           = -1.0;   // override real-time factor; <0 = use config (0 = free-run)
+        int robots           = 1;      // total K1s on the field; each robot has independent control
+        bool web             = false;  // serve the browser viewer (module::WebViewer)
+        std::string web_host = "127.0.0.1";  // address the browser viewer listens on
+        int web_port         = 8080;         // port the browser viewer listens on
+        std::string record;                  // file to record the match to (empty = no recording)
+        bool referee = false;  // run the built-in GameController (module::Referee), operated from the browser viewer
+        bool gamecontroller =
+            false;  // listen to the RoboCup GameController (module::Supervisor), whatever supervisor.yaml says
     };
 
     inline constexpr int MAX_ROBOTS    = 20;
@@ -60,6 +69,12 @@ namespace k1sim {
             else if (arg == "--match") {
                 opts.match_config = value("--match");
             }
+            else if (arg == "--free-robots") {
+                opts.free_robots = true;
+            }
+            else if (arg == "--session") {
+                opts.session = value("--session");
+            }
             else if (arg == "--config-dir") {
                 opts.config_dir = value("--config-dir");
             }
@@ -76,6 +91,28 @@ namespace k1sim {
                     std::fprintf(stderr, "--robots must be between 1 and %d\n", MAX_ROBOTS);
                     std::exit(1);
                 }
+            }
+            else if (arg == "--web") {
+                opts.web = true;
+            }
+            else if (arg == "--web-host") {
+                opts.web_host = value("--web-host");
+            }
+            else if (arg == "--web-port") {
+                opts.web_port = std::stoi(value("--web-port"));
+                if (opts.web_port < 1 || opts.web_port > 65535) {
+                    std::fprintf(stderr, "--web-port must be between 1 and 65535\n");
+                    std::exit(1);
+                }
+            }
+            else if (arg == "--referee") {
+                opts.referee = true;
+            }
+            else if (arg == "--gamecontroller" || arg == "--gc") {
+                opts.gamecontroller = true;
+            }
+            else if (arg == "--record") {
+                opts.record = value("--record");
             }
             else if (arg == "--help" || arg == "-h") {
                 std::printf(
@@ -95,7 +132,15 @@ namespace k1sim {
                     "  --keyframe <name>   startup keyframe (default: ready; e.g. lying_front)\n"
                     "  --rtf <factor>      real-time factor; 0 = free-run\n"
                     "  --robots <n>        total K1s on the field, 1-20 (default 1); extra robots\n"
-                    "                      each with independent control and sensors\n");
+                    "                      each with independent control and sensors\n"
+                    "  --web               serve the browser 3D viewer (works with --headless)\n"
+                    "  --web-host <addr>   address the browser viewer listens on (default 127.0.0.1)\n"
+                    "  --web-port <port>   port the browser viewer listens on (default 8080)\n"
+                    "  --record <file>     record the match to a file, replayable in the browser viewer\n"
+                    "  --referee           run the GameController inside the sim, operated from the browser\n"
+                    "                      viewer's referee panel (see config/referee.yaml; implies --web)\n"
+                    "  --gamecontroller    obey the RoboCup GameController: ball and robot placement, penalties\n"
+                    "                      (same as supervisor.yaml enabled: true; --gc for short)\n");
                 std::exit(0);
             }
             else {
@@ -111,6 +156,11 @@ namespace k1sim {
             std::fprintf(stderr, "--match needs --game\n");
             std::exit(1);
         }
+        if (opts.referee && opts.gamecontroller) {
+            std::fprintf(stderr, "--referee is the GameController itself; drop --gamecontroller\n");
+            std::exit(1);
+        }
+        opts.web = opts.web || opts.referee;
         if (opts.on_field_positions && opts.game == 0) {
             std::fprintf(stderr, "--on-field-positions needs --game\n");
             std::exit(1);

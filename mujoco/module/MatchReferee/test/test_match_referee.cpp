@@ -36,7 +36,7 @@ namespace {
     constexpr std::uint8_t AWAY = 126;
 
     std::string competition(const MatchConfig& cfg) {
-        std::ifstream file(std::string(K1SIM_GC_PARAMS_DIR) + "/" + cfg.competition + ".yaml");
+        std::ifstream file(std::string(K1SIM_GC_CONFIG_DIR) + "/" + cfg.competition + "/params.yaml");
         std::stringstream content;
         content << file.rdbuf();
         return content.str();

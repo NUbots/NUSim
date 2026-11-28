@@ -2,8 +2,7 @@
 # NUSim runs the game itself and broadcasts the same UDP control messages an external GameController
 # would, so don't run the GameController app alongside sim/match. Team numbers come from the roster.
 
-# Competition rules: a GameController config directory name, staged by
-# tools/install_game_controller_api.sh. middle_foundation is 3 a side on the M-Field.
+# Competition rules: a directory in the GameController's config/. middle_foundation is 3 a side on the M-Field.
 competition: middle_foundation
 kick_off_side: home # home or away; home is --game's first team, in the -x half
 
@@ -62,7 +61,8 @@ autoreferee:
   stand_height: 0.555 # metres, root height a robot is placed at (the "ready" keyframe's)
 
 # Head cameras (module::MatchCameras). Resolution and segment names come from camera.yaml.
-cameras_fps: 30
+# Every frame is a Yolo run on every robot, which is most of a match's load, so this is below a real camera's 30.
+cameras_fps: 10
 
 # HSL M-Field, matching models/k1/k1_scene_robocup_middle.xml. Letters are the rule book's.
 field:

@@ -37,6 +37,7 @@ list(APPEND CMAKE_PREFIX_PATH "${CMAKE_CURRENT_SOURCE_DIR}/.deps/install" "/opt/
 include(cmake/FetchNUClear.cmake)
 include(cmake/FetchJson.cmake)
 include(cmake/FetchGlfw.cmake)
+include(cmake/FetchImGui.cmake)
 include(cmake/MuJoCoTarget.cmake)
 
 find_package(Threads REQUIRED)
@@ -46,6 +47,22 @@ if(NOT TARGET yaml-cpp::yaml-cpp)
 endif()
 find_package(fastcdr REQUIRED)
 find_package(fastrtps REQUIRED) # Fast-DDS 2.x exports the 'fastrtps' package
+
+# The RoboCup GameController's C API, with its competitions and teams.yaml in share/GameController/config beside it. The
+# docker image has it (docker/Dockerfile). Without it MatchReferee and sim/match are skipped and --referee says so.
+find_library(GC_API_LIBRARY game_controller_api)
+find_path(GC_API_INCLUDE_DIR GameController.h)
+add_library(k1sim_gamecontroller INTERFACE)
+if(GC_API_LIBRARY AND GC_API_INCLUDE_DIR)
+  get_filename_component(GC_CONFIG_DIR "${GC_API_LIBRARY}/../../share/GameController/config" ABSOLUTE)
+  target_include_directories(k1sim_gamecontroller INTERFACE "${GC_API_INCLUDE_DIR}")
+  target_compile_definitions(
+    k1sim_gamecontroller INTERFACE K1SIM_GC_LIBRARY="${GC_API_LIBRARY}" K1SIM_GC_CONFIG_DIR="${GC_CONFIG_DIR}"
+  )
+else()
+  message(STATUS "GameController API not found: skipping MatchReferee and sim/match (./b image has it)")
+  target_compile_definitions(k1sim_gamecontroller INTERFACE K1SIM_GC_LIBRARY="" K1SIM_GC_CONFIG_DIR="")
+endif()
 
 # Single include root: every include is written relative to mujoco/ (e.g. "shared/k1/JointIndex.hpp",
 # "module/Simulation/src/Simulation.hpp").
@@ -70,7 +87,9 @@ add_subdirectory(module/Camera)
 add_subdirectory(module/Supervisor)
 add_subdirectory(module/Viewer)
 add_subdirectory(module/MatchCameras)
-add_subdirectory(module/MatchReferee) # Optional: skipped unless the GameController API is staged
+add_subdirectory(module/MatchReferee) # Optional: skipped without the GameController API
+add_subdirectory(module/WebViewer)
+add_subdirectory(module/Referee)
 
 # --- Roles → bin/<role_path>/<role_name> (see cmake/K1SimRole.cmake) ---
 set(K1SIM_ROLE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/cmake)

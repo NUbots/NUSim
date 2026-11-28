@@ -43,11 +43,10 @@ namespace k1sim::module {
         }
 
         std::string read_competition(const std::string& name) {
-            const std::string path = std::string(K1SIM_GC_PARAMS_DIR) + "/" + name + ".yaml";
+            const std::string path = std::string(K1SIM_GC_CONFIG_DIR) + "/" + name + "/params.yaml";
             std::ifstream file(path);
             if (!file) {
-                throw std::runtime_error("MatchReferee: can't read " + path
-                                         + " (see tools/install_game_controller_api.sh)");
+                throw std::runtime_error("MatchReferee: can't read " + path + ", no such GameController competition");
             }
             std::stringstream content;
             content << file.rdbuf();
@@ -84,8 +83,8 @@ namespace k1sim::module {
         if (cli().game == 0) {
             throw std::runtime_error("sim/match needs --game <n> (see --help)");
         }
-        // Nothing can press Start without a window.
-        if (cli().headless && cfg_->auto_start_after < 0.0) {
+        // Nothing can press Start without a window or the browser viewer.
+        if (cli().headless && !cli().web && cfg_->auto_start_after < 0.0) {
             cfg_->auto_start_after = 30.0;
         }
 
@@ -125,6 +124,9 @@ namespace k1sim::module {
         // Each controller goes back to Simulation wrapped, so the game can hold its robot. Sent
         // from the update reaction below: Simulation must get the original first, or it would
         // overwrite the wrapper.
+        if (cli().free_robots) {
+            cfg_->hold_robots = false;
+        }
         if (cfg_->hold_robots) {
             on<Trigger<message::ControllerHandle>, Sync<MatchReferee>>().then(
                 [this](const message::ControllerHandle& handle) {
@@ -166,8 +168,11 @@ namespace k1sim::module {
                         custom_robots_.insert(robot.identity.robot_id);
                     }
                 }
-                if (cfg_->auto_start_when_connected && connected_ == static_cast<int>(states.robots.size())) {
-                    logic_->start();
+                // With a window or the browser viewer, its Start button decides; without either the game
+                // starts by itself.
+                if (cfg_->auto_start_when_connected && cli().headless && !cli().web
+                    && connected_ == static_cast<int>(states.robots.size())) {
+                    logic_->start_kick_off();
                 }
 
                 // gc_seek takes whole milliseconds, so carry the remainder over. Sim time rewinds
@@ -211,6 +216,24 @@ namespace k1sim::module {
             }
             if (command.action == message::MatchCommand::Action::PRIMARY) {
                 logic_->primary_action();
+            }
+            else if (command.action == message::MatchCommand::Action::SET_PLAY) {
+                const bool called = logic_->call_set_play(command.side == 0 ? RoboCup::Side::home : RoboCup::Side::away,
+                                                          static_cast<RoboCup::SetPlay>(command.set_play));
+                log<NUClear::LogLevel::INFO>("MatchReferee: set play",
+                                             command.set_play,
+                                             "for",
+                                             command.side == 0 ? "home" : "away",
+                                             called ? "called" : "refused (not legal right now)");
+            }
+            else if (command.action == message::MatchCommand::Action::READY) {
+                logic_->ready();
+            }
+            else if (command.action == message::MatchCommand::Action::SET) {
+                logic_->set();
+            }
+            else if (command.action == message::MatchCommand::Action::RELEASE) {
+                logic_->play();
             }
             else {
                 reset_world_();
@@ -300,6 +323,12 @@ namespace k1sim::module {
         status->primary_button = logic_->primary_label();
         status->robot_labels   = logic_->robot_labels();
         status->messages       = logic_->messages();
+        status->has_game       = logic_->scoreboard(status->home_score,
+                                              status->away_score,
+                                              status->secs_remaining,
+                                              status->state,
+                                              status->players);
+        status->connected      = connected_;
         emit(status);
     }
 

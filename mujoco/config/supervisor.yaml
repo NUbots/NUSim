@@ -10,6 +10,12 @@
 # Enable only when running the sim STANDALONE (no NUbots GameController on host).
 enabled: false
 gc_port: 3838 # RoboCup GameController broadcast port (protocol version 20)
+# How long the listener waits for a packet before checking whether the sim is shutting down. Shutdown takes up to this.
+listen_timeout_ms: 300
+
+# The GameController's teams.yaml (its config directory), to show team names instead of
+# "Team <number>" on the browser viewer's scoreboard. Empty: the one in the docker image.
+teams_file: ""
 
 # Optional extra ball-centre resets beyond the core kickoff rule (entering
 # READY, or entering PLAYING — see SupervisorLogic::process for why those two
@@ -30,6 +36,15 @@ ball:
   x: 0.0
   y: 0.0
   z: -1.0 # < 0 => rest exactly on the floor at the geom's own radius
+
+# --game <n> matches build the robot list below from simulation.yaml's game spawns instead, with these.
+game:
+  stand_height: 0.555 # metres, root height of the "ready" keyframe's pose, which robots are placed at
+  # Penalised robots wait outside the touchline of their own half, facing the field: the first team behind -y,
+  # the second behind +y. In metres.
+  penalty_first_x: 1.0 # first player's distance from the halfway line
+  penalty_spacing: 0.7 # between players along the touchline
+  penalty_outside_touchline: 0.8 # how far outside the touchline
 
 # One entry per managed robot body. team_id/team_index pick which of the
 # GameController packet's two Team entries governs this robot (team_id >= 0
@@ -52,4 +67,4 @@ robots:
     # exact per-player spacing rules aren't implemented, this is a single
     # configurable spot (see the task brief: "make it general over a
     # configurable list of body names", not exact rule fidelity).
-    penalty_pose: {x: 2.0, y: 3.5, z: 0.555, yaw: 0.0}
+    penalty_pose: {x: -1.0, y: -5.2, z: 0.555, yaw: 1.5708} # outside the M-Field touchline (y = -4.5), facing in

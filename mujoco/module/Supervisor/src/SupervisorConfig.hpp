@@ -48,9 +48,19 @@ namespace k1sim::module::supervisor {
         Pose3 penalty_pose;  // where a penalised robot is moved (side line)
     };
 
+    // How a --game <n> match's robots are placed (see game_robots in Supervisor.cpp).
+    struct GameLayout {
+        double stand_height              = 0.555;  // root height of the "ready" pose
+        double penalty_first_x           = 1.0;    // first penalty spot's distance from the halfway line
+        double penalty_spacing           = 0.7;    // between penalty spots
+        double penalty_outside_touchline = 0.8;    // how far outside the touchline penalty spots are
+    };
+
     struct SupervisorConfig {
-        bool enabled = true;
-        int gc_port  = 3838;
+        bool enabled          = true;
+        int gc_port           = 3838;
+        int listen_timeout_ms = 300;  // the listener checks for shutdown this often
+        std::string teams_file;       // the GameController's teams.yaml (team number -> name); empty = "Team <number>"
 
         // Extra ball-centre resets beyond the core kickoff rule (entering READY,
         // or entering PLAYING) — see SupervisorLogic::process. All optional.
@@ -59,6 +69,7 @@ namespace k1sim::module::supervisor {
         bool reset_ball_on_half_change = true;
 
         BallConfig ball;
+        GameLayout game;
         std::vector<RobotConfig> robots;
     };
 
@@ -76,8 +87,18 @@ namespace k1sim::module::supervisor {
 
     inline SupervisorConfig load_config(const YAML::Node& root) {
         SupervisorConfig cfg;
-        cfg.enabled = root["enabled"].as<bool>(cfg.enabled);
-        cfg.gc_port = root["gc_port"].as<int>(cfg.gc_port);
+        cfg.enabled           = root["enabled"].as<bool>(cfg.enabled);
+        cfg.gc_port           = root["gc_port"].as<int>(cfg.gc_port);
+        cfg.teams_file        = root["teams_file"].as<std::string>(cfg.teams_file);
+        cfg.listen_timeout_ms = root["listen_timeout_ms"].as<int>(cfg.listen_timeout_ms);
+
+        if (const auto& game = root["game"]) {
+            cfg.game.stand_height    = game["stand_height"].as<double>(cfg.game.stand_height);
+            cfg.game.penalty_first_x = game["penalty_first_x"].as<double>(cfg.game.penalty_first_x);
+            cfg.game.penalty_spacing = game["penalty_spacing"].as<double>(cfg.game.penalty_spacing);
+            cfg.game.penalty_outside_touchline =
+                game["penalty_outside_touchline"].as<double>(cfg.game.penalty_outside_touchline);
+        }
 
         if (const auto& reset = root["reset_ball_on"]) {
             cfg.reset_ball_on_finished    = reset["finished"].as<bool>(cfg.reset_ball_on_finished);
