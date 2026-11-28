@@ -15,9 +15,13 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(onnxruntime_prebuilt)
 
+# The nupkg ships only libonnxruntime.so; add the SONAME link the loader looks for.
+set(ORT_LIB_DIR "${onnxruntime_prebuilt_SOURCE_DIR}/runtimes/linux-x64/native")
+file(CREATE_LINK libonnxruntime.so "${ORT_LIB_DIR}/libonnxruntime.so.1" SYMBOLIC)
+
 add_library(onnxruntime::onnxruntime SHARED IMPORTED)
 set_target_properties(
     onnxruntime::onnxruntime
-    PROPERTIES IMPORTED_LOCATION "${onnxruntime_prebuilt_SOURCE_DIR}/runtimes/linux-x64/native/libonnxruntime.so"
+    PROPERTIES IMPORTED_LOCATION "${ORT_LIB_DIR}/libonnxruntime.so"
                INTERFACE_INCLUDE_DIRECTORIES "${onnxruntime_prebuilt_SOURCE_DIR}/build/native/include"
 )
