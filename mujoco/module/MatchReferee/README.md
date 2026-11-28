@@ -9,7 +9,7 @@ robot has a label like `Home 1`.
 
 ## Usage
 
-Linux only. Build NUbots_K1 first (`./b target generic`, `./b build`), then, in NUSim:
+Linux only. Build the NUbots `nusim/*` roles first (`./b target generic`, `./b configure --set_nusim_roles`, `./b build`), then, in NUSim:
 
 ```bash
 mujoco/tools/install_game_controller_api.sh [path to GameController]   # needs cargo; default ../GameController
@@ -28,7 +28,7 @@ time: both use port 3939.
 
 ## Stock NUbots
 
-`./b match` needs no NUbots_K1 changes. Each container gets files that point stock binaries at their own robot:
+`./b match` needs no NUbots changes. Each container gets files that point stock binaries at their own robot:
 
 - A FastDDS profile whose `portBase` is that of the robot's domain. NUbots always joins domain 0 and the SDK ignores a
   `domainId` in the profile, but ports are all that separates domains on the wire.

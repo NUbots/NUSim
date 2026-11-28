@@ -3,15 +3,15 @@
 A self-contained **MuJoCo** simulator for the **Booster Robotics K1** humanoid, used by
 [NUbots](https://nubook.nubots.net) for RoboCup development. It replaces **both** Booster's gated Webots build
 **and** their closed-source `mck` motion runner with one inspectable, NUClear-based simulator that speaks
-the **Booster SDK over FastDDS** — the same wire protocol as the real robot — so `NUbots_K1` binaries drive
-it **unchanged**.
+the **Booster SDK over FastDDS** — the same wire protocol as the real robot — so the
+[NUbots](https://github.com/NUbots/NUbots) codebase drives it through its `nusim/*` roles.
 
 ```
 sim/soccer  (native macOS / Linux docker container, NUClear)
    MuJoCo physics + servo/mode machine + head camera + GLFW viewer + GameController supervisor
         │  Booster SDK over FastDDS (domain 0)            │  camera frames → shared memory
         ▼                                                 ▼
- NUbots_K1  (K1WalkPolicy / K1GetUpPolicy, behaviour)   input::K1Camera → ImageCompressor → NUsight
+ NUbots  (nusim/* roles: SimK1Walk / SimK1Kick / SimK1GetUp)   input::NUSimCamera → ImageCompressor → NUsight
         ▲
         │  RoboCup GameController (UDP, direct)
 ```
@@ -19,40 +19,29 @@ sim/soccer  (native macOS / Linux docker container, NUClear)
 - **One process** simulates the K1 body — physics, servos, mode machine and fall detection — while the
   locomotion policies run on the NUbots side and drive it through CUSTOM mode + `rt/joint_ctrl`, exactly as
   they drive the real robot. No Booster downloads, no separate motion runner.
-- **Vision** is rendered by MuJoCo and handed to NUbots' *unchanged* `input::K1Camera` over shared memory,
-  so `CompressedImage` reaches **NUsight** exactly as on the real robot.
+- **Vision** is rendered by MuJoCo and handed to NUbots' `input::NUSimCamera` over shared memory, so
+  `CompressedImage` reaches **NUsight** exactly as on the real robot.
 - **GameController** is heard directly by NUbots over the network; the sim additionally runs a supervisor
   that places the ball/robots per game phase.
 
-## Refereed matches (`layton/sim-match`)
+## Refereed matches
 
-This branch adds `./b match`, which plays a 1v1, 2v2 or 3v3 game with one command: the GameController and an automatic
-referee run inside the sim, and every robot gets its own NUbots process with the right team and player number. It
-works toward [NUSim#10](https://github.com/NUbots/NUSim/issues/10). Linux only.
-
-It's built on rUNSWift's multi-robot work, which gives each robot its own control, sensors and DDS domain:
-
-```
-NUbots/NUSim  main
-  └─ UNSWComputing/NUSim  feature/multi-robot-ground-truth   (rUNSWift, not yet merged into NUbots)
-       └─ papazed/NUSim  layton/sim-match                    (this branch)
-```
-
-A pull request from this branch into `NUbots/NUSim` would also carry rUNSWift's commits unless theirs merges first.
+`./b match` plays a 1v1, 2v2 or 3v3 game with one command: the GameController and an automatic referee run inside the
+sim, and every robot gets its own NUbots process with the right team and player number. Linux only.
 
 ### Repositories needed
 
 | Repository | Used for |
 | --- | --- |
 | This one | The sim, GameController, referee and launcher |
-| [NUbots_K1](https://github.com/NUbots/NUbots_K1) | The robot code, unchanged. `./b match` runs its docker image, so it can be anywhere |
+| [NUbots](https://github.com/NUbots/NUbots) | The robot code. `./b match` runs its docker image, so it can be anywhere |
 | [GameController](https://github.com/RoboCup-HumanoidSoccerLeague/GameController) | Its C API is built into the sim once. Put it next to this checkout, at the commit pinned in [`install_game_controller_api.sh`](mujoco/tools/install_game_controller_api.sh) |
 
 ### Running a match
 
 ```bash
-# Once: build NUbots_K1 (in NUbots_K1)
-./b target generic && ./b build
+# Once: build the nusim roles (in NUbots)
+./b target generic && ./b configure --set_nusim_roles && ./b build
 
 # Once: build the sim with the GameController API (in this repo, needs cargo)
 mujoco/tools/install_game_controller_api.sh   # or pass the path to a GameController checkout
@@ -96,29 +85,27 @@ See [native macOS setup](docs/K1_MUJOCO_SETUP.md#native-macos) for prerequisites
 the networking/camera limitations when connecting to a Linux container. Use `K1SIM_BACKEND=docker`
 to select Docker explicitly, or `K1SIM_BACKEND=native` for a native Linux build.
 
-Then drive it from **[`NUbots_K1`](https://github.com/NUbots/NUbots_K1)** exactly as against the real robot:
+Then drive it from **[NUbots](https://github.com/NUbots/NUbots)** with the `nusim/*` roles:
 
 ```bash
-cd ~/NUbots_K1
-./b run keyboardwalk
-# e = walk on/off, w/s/a/d = velocity (0.01 m/s per press — tap ~10x), z/x = turn, arrows = head
+cd ~/NUbots
+./b target generic
+./b configure --set_nusim_roles
+./b build
+./b run nusim/localisation   # drive with the keyboard while vision and localisation run
+# e = walk on/off, w/s/a/d = velocity (tap ~10x), z/x = turn
+./b run nusim/behaviour      # autonomous: find the ball by vision and dribble it goalward
+./b run nusim/robocup        # the competition role, obeying the GameController
 ```
 
+The sim ignores the firmware `Move`/`VisualKick` RPCs, so roles built on `skill::Walk` (e.g. the top-level
+`keyboardwalk`) won't move the robot. The `nusim/*` roles run walk, kick and get-up as ONNX policies
+(`skill::SimK1Walk`, `skill::SimK1Kick`, `skill::SimK1GetUp`) and read the camera with `input::NUSimCamera`.
+
 The Booster SDK **requires** a FastDDS profiles file (participant profile `booster_dds`) or it refuses to
-create its DDS participant (`Failed to create participant`). `./b run` now defaults
-`FASTRTPS_DEFAULT_PROFILES_FILE` to the repo's copy, so no flag is needed — see
+create its DDS participant (`Failed to create participant`). NUbots' `./b run` defaults
+`FASTRTPS_DEFAULT_PROFILES_FILE` to its repo's copy, so no flag is needed — see
 [Networking](#networking) for the caveat if you pass `--environment` yourself.
-
-The full autonomous stack works too — `./b run nusim/behaviour` has the robot find the ball by vision and
-dribble it goalward. See [docs/K1_MUJOCO_SETUP.md](docs/K1_MUJOCO_SETUP.md) for the end-to-end walkthrough
-and the NUbots_K1-side requirements (`skill::K1WalkPolicy` + `skill::K1GetUpPolicy` in the role,
-`VisualMesh.yaml` camera entry).
-
-> Older revisions of this README told you to mount an OpenVINO overlay over the image, because the
-> NUbots_K1 image was built with `ENABLE_INTEL_CPU=OFF` and had no CPU inference device at all
-> (`Device with "CPU" name is not registered`). Fixed upstream — the image now ships
-> `libopenvino_intel_cpu_plugin.so`, and inference prefers TensorRT on the GPU anyway. No overlay,
-> no `--volume`, no `LD_LIBRARY_PATH`.
 
 ## Ground truth and ball commands (testing)
 
@@ -196,8 +183,8 @@ switch is exposed yet.
 
 ## Networking
 
-The sim speaks the **Booster SDK wire protocol over FastDDS**, so `NUbots_K1` binaries connect to it with
-no build flag, no shim and no code change — the same code path they use against the real robot.
+The sim speaks the **Booster SDK wire protocol over FastDDS**, so NUbots' `platform::Booster::HardwareIO`
+connects to it with no build flag or shim — the same code path it uses against the real robot.
 
 - **DDS domain 0**, because NUbots' `platform::Booster::HardwareIO` hardcodes `ChannelFactory::Init(0)`.
   Configurable in [`mujoco/config/dds.yaml`](mujoco/config/dds.yaml), but changing it means changing NUbots too.
@@ -218,11 +205,9 @@ no build flag, no shim and no code change — the same code path they use agains
   (`Failed to create participant`). `./b run` sets it for you. If you pass `--environment` yourself, note it
   takes ONE comma-separated argument and **replaces** the default — re-include the FastDDS var or all DDS dies.
 - **Vision is not DDS.** Head-camera frames are rendered offscreen and written to a Boost.Interprocess
-  shared-memory segment (`_boostercamera_head_rgb`, rgb8 544×448 @ 30 Hz) whose header matches NUbots'
-  `input::K1Camera` byte-for-byte; head pose goes to a second segment (`_head_pose`, `K1Sensors` "NBPO"
-  layout) and is the only path torso tilt takes into NUbots, i.e. what makes fall detection and the get-up
-  chain work. Segment names must match `K1Camera.yaml` / `K1Sensors.yaml` on the NUbots side. Only the left
-  camera is rendered — `K1Camera` warn-retries harmlessly on the right one; stereo is future work.
+  shared-memory segment (`_boostercamera_head_rgb`, rgb8 544×448 @ 30 Hz) read by NUbots'
+  `input::NUSimCamera`. The segment name must match `NUSimCamera.yaml` on the NUbots side. Only the left
+  camera is rendered; stereo is future work.
 
 ## GameController
 
@@ -230,7 +215,7 @@ no build flag, no shim and no code change — the same code path they use agains
 [MatchReferee](mujoco/module/MatchReferee/README.md). The rest of this section is about `sim/soccer`.
 
 This is the **RoboCup GameController** (the UDP match-control broadcast), not a USB gamepad — there is no
-joypad/SDL input path in NUSim, and manual driving is done from `NUbots_K1`'s `keyboardwalk` role.
+joypad/SDL input path in NUSim, and manual driving is done from NUbots' `nusim/localisation` role.
 
 - **NUbots hears the GameController itself**, directly and independently over its own socket. That path
   needs nothing from the sim.
@@ -251,8 +236,7 @@ joypad/SDL input path in NUSim, and manual driving is done from `NUbots_K1`'s `k
 
 NUSim does **one thing: simulate**. It neither trains nor runs locomotion policies: the sim is a
 servo-command listener (CUSTOM mode + `rt/joint_ctrl` LowCmd, PD-tracked at 1 kHz), and inference runs on
-the NUbots side (`NUbots_K1` `module/skill/K1WalkPolicy` and `module/skill/K1GetUpPolicy`, OpenVINO,
-50 Hz). Policies are trained in the NUbots
+the NUbots side (`module/skill/SimK1Walk`, `SimK1Kick` and `SimK1GetUp`). Policies are trained in the NUbots
 **[mujoco_playground fork](https://github.com/Tom0Brien/mujoco_playground)** (branch `feat/k1-training`,
 `K1JoystickFlatTerrain` / `K1Getup` tasks) and exported to ONNX with `learning/export_k1_onnx.py`. The
 walk observation/action interface is pinned in
@@ -271,7 +255,7 @@ MuJoCo remains the default for this interactive simulator.
 | `mujoco/module/` | NUClear modules: `Simulation`, `SdkBridge` (DDS), `Locomotion`, `Camera`, `Supervisor`, `Viewer`. |
 | `mujoco/models/k1/` | Vendored MuJoCo K1 model (BSD-3, `booster_assets`) + RoboCup/flat scenes. |
 | `mujoco/docker/` | Toolchain image + `k1sim.sh` (the container workflow `./b` wraps). |
-| `docs/K1_MUJOCO_SETUP.md` | Setup, config reference, end-to-end with `NUbots_K1`, and troubleshooting. |
+| `docs/K1_MUJOCO_SETUP.md` | Setup, config reference, end-to-end with NUbots, and troubleshooting. |
 | `docs/OBS_ACTION_CONTRACT.md` | ONNX policy interface contract (obs/action layout the sim expects). |
 | [docs/MULTI_ROBOT_DATA_CONTRACT.md](docs/MULTI_ROBOT_DATA_CONTRACT.md) | Multi-robot roster, independent control and sensors, and planned ground-truth snapshots. |
 | `mujoco/module/SdkBridge/PROTOCOL.md` | Booster SDK DDS wire surface: topics, message layouts, RPC `api_id`s. |
