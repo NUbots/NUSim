@@ -557,6 +557,7 @@ def run_once(setup, session, nubots_target, headless, rtf, web):
         roles = None
     players = (setup.get("home_players"), setup.get("away_players"))
     robots = roster(setup["game"], team_numbers(setup), players) if roles else []
+
     # With a team whose motion runs at 500 Hz (B-Human) the sim publishes LowState at that rate. Every other robot still
     # gets the usual 50 Hz (every 10th): NUbots at 500 Hz loads its stack, and its mode requests start timing out.
     def fast(codebase):

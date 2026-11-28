@@ -19,8 +19,8 @@ namespace k1sim::module::camera {
             throw std::runtime_error("SharedImageWriter: width/height must be positive");
         }
 
-        const auto data_size =
-            static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * static_cast<std::size_t>(bytes_per_pixel);
+        const auto data_size = static_cast<std::size_t>(width) * static_cast<std::size_t>(height)
+                               * static_cast<std::size_t>(bytes_per_pixel);
         const auto total_size = sizeof(SharedImageHeader) + data_size;
 
         // Discard any stale segment (e.g. left behind by a crashed previous run) so we

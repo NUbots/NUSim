@@ -13,6 +13,10 @@
 #include "ButtonEventPubSubTypes.h"
 #include "FallDownState.h"
 #include "FallDownStatePubSubTypes.h"
+#include "Imu.h"
+#include "ImuPubSubTypes.h"
+#include "JointState.h"
+#include "JointStatePubSubTypes.h"
 #include "LowState.h"
 #include "LowStatePubSubTypes.h"
 #include "Odometer.h"
@@ -21,10 +25,6 @@
 #include "OdometryPubSubTypes.h"
 #include "Pose.h"
 #include "PosePubSubTypes.h"
-#include "JointState.h"
-#include "Imu.h"
-#include "ImuPubSubTypes.h"
-#include "JointStatePubSubTypes.h"
 #include "shared/k1/BoosterApi.hpp"
 #include "shared/k1/JointIndex.hpp"
 
@@ -96,8 +96,8 @@ namespace k1sim::module::sdkbridge {
             dds.create_writer<Pose_PubSubType>(k1sim::booster::TOPIC_HEAD_POSE, DdsParticipant::state_writer_qos());
         joint_states_writer_ = dds.create_writer<JointState_PubSubType>(k1sim::booster::TOPIC_JOINT_STATES,
                                                                         DdsParticipant::state_writer_qos());
-        imu_writer_ = dds.create_writer<Imu_PubSubType>(k1sim::booster::TOPIC_IMU_DATA,
-                                                        DdsParticipant::state_writer_qos());
+        imu_writer_ =
+            dds.create_writer<Imu_PubSubType>(k1sim::booster::TOPIC_IMU_DATA, DdsParticipant::state_writer_qos());
         fall_down_writer_ = dds.create_writer<FallDownState_PubSubType>(k1sim::booster::TOPIC_FALL_DOWN,
                                                                         DdsParticipant::state_writer_qos());
         battery_writer_   = dds.create_writer<BatteryState_PubSubType>(k1sim::booster::TOPIC_BATTERY_STATE,

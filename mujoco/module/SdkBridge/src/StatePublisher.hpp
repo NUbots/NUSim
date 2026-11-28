@@ -19,8 +19,8 @@ namespace k1sim::module::sdkbridge {
         StatePublisher(DdsParticipant& dds, double battery_soc, const OdometryModel::Config& odometry);
 
         // Called at the LowState cadence (50 Hz, on<Trigger<SimStateUpdate>>): writes
-        // rt/low_state, rt/odometer_state, rt/odom, rt/head_pose, rt/joint_states and rt/imu/data every call, and rt/fall_down
-        // whenever fall_state changes or >=1s has elapsed since the last publish (keepalive).
+        // rt/low_state, rt/odometer_state, rt/odom, rt/head_pose, rt/joint_states and rt/imu/data every call, and
+        // rt/fall_down whenever fall_state changes or >=1s has elapsed since the last publish (keepalive).
         void publish(const k1sim::message::SimStateUpdate& update);
 
         // Called on<Every<1, std::chrono::seconds>>: writes the constant-SOC rt/battery_state.

@@ -81,12 +81,12 @@ namespace k1sim::module::sdkbridge {
                                                       outcome.status);
             }
 
-            outcome.action.mode_change.robot_id = robot_id_;
-            outcome.action.walk.robot_id        = robot_id_;
-            outcome.action.head.robot_id        = robot_id_;
-            outcome.action.get_up.robot_id      = robot_id_;
-            outcome.action.lie_down.robot_id    = robot_id_;
-            outcome.action.visual_kick.robot_id = robot_id_;
+            outcome.action.mode_change.robot_id    = robot_id_;
+            outcome.action.walk.robot_id           = robot_id_;
+            outcome.action.head.robot_id           = robot_id_;
+            outcome.action.get_up.robot_id         = robot_id_;
+            outcome.action.lie_down.robot_id       = robot_id_;
+            outcome.action.visual_kick.robot_id    = robot_id_;
             outcome.action.reset_odometry.robot_id = robot_id_;
 
             switch (outcome.action.kind) {

@@ -86,8 +86,12 @@ namespace k1sim::module {
                                                                         cfg.width,
                                                                         cfg.height);
             // The K1's camera is a stereo pair: its depth, for players that read it
-            camera.depth_writer = std::make_unique<camera::SharedImageWriter>(
-                segment(cfg.segment, robot.robot_id) + "_depth", cfg.width, cfg.height, 2, "16UC1");
+            camera.depth_writer =
+                std::make_unique<camera::SharedImageWriter>(segment(cfg.segment, robot.robot_id) + "_depth",
+                                                            cfg.width,
+                                                            cfg.height,
+                                                            2,
+                                                            "16UC1");
 
             // See Camera.cpp: pinhole intrinsics from the MJCF camera and the render size.
             const double focal_px    = (cfg.height * 0.5) / std::tan(model->cam_fovy[camera.id] * M_PI / 360.0);
